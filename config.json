@@ -1,0 +1,76 @@
+{
+  "maxGrids": 4,
+  "gridValueUsd": 2500,
+  "takeProfitPct": 10,
+  "stopLossPct": 6,
+  "exitBufferPct": 1,
+  "liqDangerPct": 12,
+  "leverageCap": 10,
+  "minQvol24h": 800000,
+  "analysisMaxAgeMin": 30,
+  "riskBudgetPct": 80,
+  "warnDrawdownPct": 40,
+  "minScore": 5,
+  "maxPerEcosystem": 2,
+  "ecosystems": {
+    "solana": [
+      "PENGU",
+      "PUMP",
+      "WIF",
+      "BONK",
+      "kBONK",
+      "JUP",
+      "JTO",
+      "PYTH",
+      "RAY",
+      "FARTCOIN",
+      "MEW",
+      "POPCAT",
+      "MOODENG",
+      "GRIFFAIN",
+      "ZEREBRO",
+      "AI16Z",
+      "ARC"
+    ],
+    "sui": [
+      "SUI",
+      "CETUS",
+      "DEEP",
+      "WAL",
+      "SCA",
+      "AXOL"
+    ],
+    "hyperliquid": [
+      "HYPE",
+      "PURR"
+    ],
+    "eth_l1": [
+      "ETH",
+      "UNI",
+      "AAVE",
+      "LDO",
+      "ENA",
+      "ETHFI",
+      "EZS",
+      "PENDLE"
+    ],
+    "btc": [
+      "BTC"
+    ],
+    "bnb": [
+      "BNB",
+      "CAKE"
+    ],
+    "tron": [
+      "TRX",
+      "SUN",
+      "JST"
+    ]
+  },
+  "tradeUrlBase": "https://backpack.exchange/trade/",
+  "watch": {
+    "spaceId": 8,
+    "page": "p1"
+  },
+  "exitCostBufferUsd": 15
+}

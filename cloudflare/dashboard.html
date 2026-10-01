@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backpack 网格巡检</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0e14; color: #d7dde8; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8b94a7; font-size: 12px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 12px 14px; }
+  .card .k { color: #8b94a7; font-size: 11px; letter-spacing: .05em; }
+  .card .v { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .pos { color: #4ade80; } .neg { color: #f87171; }
+  .section { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .section h2 { font-size: 13px; margin: 0 0 10px; color: #aab3c5; }
+  .gridcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .gcard { background: #0f1522; border: 1px solid #1f2737; border-radius: 8px; padding: 10px 12px; }
+  .ghead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+  .gmkt { font-weight: 600; font-size: 14px; }
+  .gdir { color: #8b94a7; font-size: 12px; }
+  .grow { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; }
+  .grow .k { color: #8b94a7; }
+  @media (max-width: 640px) {
+    .wrap { padding: 10px 8px 24px; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .card { padding: 10px; }
+    .card .v { font-size: 17px; }
+    .section { padding: 10px; }
+    .gridcards { grid-template-columns: 1fr; gap: 8px; }
+    .gcard { padding: 8px 10px; }
+  }
+  .bar { background: #1f2737; border-radius: 99px; height: 10px; overflow: hidden; margin: 8px 0 4px; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #3b82f6, #4ade80); }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin-right: 6px; border: 1px solid #1f2737; color: #8b94a7; }
+  .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
+  .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
+  .muted { color: #8b94a7; }
+  svg { width: 100%; height: 120px; }
+  .err { color: #f87171; padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Backpack 网格巡检</h1>
+  <div class="sub">每 15 分钟自动更新 · 数据来自巡检执行层快照 · <span id="ago">-</span></div>
+  <div id="content" class="err">加载中…</div>
+</div>
+<script>
+const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pnlCls = (v) => v >= 0 ? "pos" : "neg";
+function render(s) {
+  const c = document.getElementById("content");
+  c.classList.remove("err"); // the loading/错误样式带 40px padding，渲染后必须移除
+  if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
+  const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
+  document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
+  const g = s.grids || [];
+  const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
+  const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
+  const pct = Math.min(100, camp / tier * 100);
+  const chips = [];
+  chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>` : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>` : `<span class="chip ok">风控正常</span>`));
+  chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
+  chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
+  chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
+  // equity sparkline
+  const curve = s.curve || [];
+  let svg = "";
+  if (curve.length > 1) {
+    const vals = curve.map((c) => c[1]);
+    const min = Math.min(...vals), max = Math.max(...vals), span = (max - min) || 1;
+    const W = 900, H = 100, step = W / (curve.length - 1);
+    const pts = vals.map((v, i) => `${(i * step).toFixed(1)},${(H - 6 - (v - min) / span * (H - 12)).toFixed(1)}`);
+    svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      <polyline fill="none" stroke="#3b82f6" stroke-width="2" points="${pts.join(" ")}"/>
+      <text x="4" y="12" fill="#8b94a7" font-size="10">max ${fmt(max)}</text>
+      <text x="4" y="${H - 4}" fill="#8b94a7" font-size="10">min ${fmt(min)}</text></svg>`;
+  }
+  c.innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="k">总权益</div><div class="v">${fmt(s.equity)}</div></div>
+      <div class="card"><div class="k">可用</div><div class="v">${fmt(s.available)}</div></div>
+      <div class="card"><div class="k">网格总盈亏</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
+      <div class="card"><div class="k">回撤</div><div class="v">${fmt(s.drawdownPct, 1)}%</div></div>
+    </div>
+    <div class="section">
+      <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="muted">${pct.toFixed(1)}%${s.tier1Secured ? " · 第 1 档已锁定" : ""} · 活动截止 10-06 23:59 UTC</div>
+    </div>
+    <div class="section">
+      <h2>网格（${g.length}）</h2>
+      <div class="gridcards">
+        ${g.map((x) => `<div class="gcard">
+          <div class="ghead"><span class="gmkt">${x.market}</span><span class="gdir">${x.direction} · ${x.count} 格 · 投入 ${fmt(x.value, 0)}</span>
+            <span class="${x.status === "Triggered" ? "chip ok" : "chip bad"}" style="margin-left:auto">${x.status === "Triggered" ? "运行" : "已停止"}</span></div>
+          <div class="grow"><span class="k">区间</span><span>${x.range}</span></div>
+          <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
+        </div>`).join("")}
+        ${g.length === 0 ? `<div class="muted">空仓（全部轮换出去/主动空仓）</div>` : ""}
+      </div>
+    </div>
+    <div class="section"><h2>权益曲线（巡检轮次）</h2>${svg || `<div class="muted">样本积累中</div>`}</div>
+    <div class="section"><h2>状态</h2>${chips.join(" ") || '<span class="chip">正常</span>'}
+      ${(s.pending || []).length ? `<div class="muted" style="margin-top:8px">待清理：${s.pending.join(", ")}</div>` : ""}
+      ${(s.orphans || []).length ? `<div class="muted" style="margin-top:8px">孤儿持仓：${s.orphans.join(", ")}</div>` : ""}
+      ${s.lastActionNote ? `<div class="muted" style="margin-top:8px">${s.lastActionNote}</div>` : ""}
+    </div>`;
+}
+async function load() {
+  try {
+    const r = await fetch(`/api/snapshot`);
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch (e) { document.getElementById("content").textContent = "加载失败：" + e.message; }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

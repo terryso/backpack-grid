@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+
+# runtime state (account snapshots, campaign trackers, logs, locks) — never commit
+state/
+
+# unrelated tool caches that predate this project
+.v2c/
+.video_agent/
+
+# agent-local wiring (symlinks to skills/, recreate after clone)
+.zcode/
+
+# editor/agent noise
+.zcodeignore
+*.tmp
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
