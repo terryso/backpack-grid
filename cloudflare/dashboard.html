@@ -140,24 +140,25 @@ async function load() {
     render(await r.json());
   } catch (e) { document.getElementById("content").textContent = "加载失败：" + e.message; }
 }
+function markLiked() {
+  const btn = document.getElementById("likeBtn");
+  btn.disabled = true;
+  btn.firstChild.textContent = "已点赞 ";
+}
 async function loadLikes() {
   try {
     const j = await (await fetch(`/api/likes`)).json();
-    const btn = document.getElementById("likeBtn");
     document.getElementById("likeCount").textContent = j.likes;
-    const today = new Date().toISOString().slice(0, 10);
-    if (localStorage.getItem("bg-liked") === today) { btn.disabled = true; btn.firstChild.textContent = "已点赞 "; }
+    if (j.alreadyLiked) markLiked(); // 服务端判定：该访客今天已点过 → 置灰不给点
   } catch {}
 }
 document.getElementById("likeBtn").addEventListener("click", async () => {
   const btn = document.getElementById("likeBtn");
-  const today = new Date().toISOString().slice(0, 10);
-  if (btn.disabled || localStorage.getItem("bg-liked") === today) return;
+  if (btn.disabled) return;
   try {
-    const j = await (await fetch(`/api/likes`, { method: "POST" })).json();
+    const j = await (await fetch(`/api/like`, { method: "POST" })).json(); // 必定 +1
     document.getElementById("likeCount").textContent = j.likes;
-    localStorage.setItem("bg-liked", today);
-    btn.disabled = true; btn.firstChild.textContent = "已点赞 ";
+    markLiked();
   } catch {}
 });
 load();

@@ -17,26 +17,31 @@ export default {
       return new Response("ok");
     }
 
-    if (url.pathname === "/api/likes" && request.method === "POST") {
-      // 每 IP 每天 1 次赞（IP 哈希 + 日期记录，自动清理过期项）
-      const day = new Date().toISOString().slice(0, 10);
+    // 点赞：GET 返回计数 + 该访客（IP+日）是否已点过；POST 必定 +1。
+    // 客户端据 alreadyLiked 置灰按钮——"点过不给点"，而不是点了被静默吞掉。
+    const likeDay = new Date().toISOString().slice(0, 10);
+    const visitorHash = async () => {
       const ip = request.headers.get("cf-connecting-ip") || "unknown";
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip + "|like-salt-v1|" + day));
-      const h = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ip + "|like-salt-v1|" + likeDay));
+      return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+    };
+
+    if (url.pathname === "/api/like" && request.method === "POST") {
+      const h = await visitorHash();
       const ips = JSON.parse((await env.DASH.get("like_ips")) || "{}");
-      for (const k of Object.keys(ips)) if (ips[k] !== day) delete ips[k];
-      const likes = Number((await env.DASH.get("likes")) || 0);
-      if (ips[h] === day) return new Response(JSON.stringify({ likes, already: true }), { headers: { "content-type": "application/json" } });
-      ips[h] = day;
-      const next = likes + 1;
+      for (const k of Object.keys(ips)) if (ips[k] !== likeDay) delete ips[k];
+      ips[h] = likeDay;
+      const next = Number((await env.DASH.get("likes")) || 0) + 1; // 无条件 +1
       await env.DASH.put("likes", String(next));
       await env.DASH.put("like_ips", JSON.stringify(ips));
-      return new Response(JSON.stringify({ likes: next, already: false }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ likes: next }), { headers: { "content-type": "application/json" } });
     }
 
     if (url.pathname === "/api/likes") {
+      const h = await visitorHash();
+      const ips = JSON.parse((await env.DASH.get("like_ips")) || "{}");
       const likes = Number((await env.DASH.get("likes")) || 0);
-      return new Response(JSON.stringify({ likes }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ likes, alreadyLiked: ips[h] === likeDay }), { headers: { "content-type": "application/json" } });
     }
 
     if (url.pathname === "/api/snapshot") {
