@@ -505,6 +505,32 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
   T("INT11b total planned notional stays within balance x leverage", sizes.reduce((s, v) => s + v, 0) <= 700 * 10);
 }
 
+// INT12: shrink-to-fit — risk budget binds, grid created at reduced size instead of skipped
+{
+  const keepRow = { market: "KEEP-PERP", symbol: "KEEP_USDC_PERP", direction: "中性",
+    range: ["1", "1.2"], count: 20, value: "$1800.00", allocationRaw: 1800,
+    pnlRaw: 18, pnl: "$18.00", pnlPct: 1, status: "Triggered", control: "开启",
+    nativeTP: 10, nativeSL: 6, nativeCloseOnStop: true };
+  const dir = makeFixture({
+    "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
+      gridRows: [keepRow], positions: [],
+      margin: { totalEquity: "$300.00", availableEquity: "$300.00", openPnl: "$0.00", initMarginPct: "0%" },
+      badges: {}, ledger: [] }),
+    "state/analysis.json": { generatedAt: new Date().toISOString(),
+      top: [{ symbol: "ETH_USDC_PERP", score: 14, chop: 14, range24: 3.4, qvol24: 30000000,
+        grid: { lower: 2500, upper: 2700, count: 20, widthPct: 7.5, spacingPct: 0.4 } }],
+      directional: [] },
+  });
+  const tickersPath = path.join(dir, "state", "tickers.json");
+  fs.writeFileSync(tickersPath, JSON.stringify([{ symbol: "KEEP_USDC_PERP", lastPrice: "1.1" }, { symbol: "ETH_USDC_PERP", lastPrice: "2600" }]));
+  const r = runDecide(dir, false, tickersPath);
+  const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+  const creates = actions.filter((a) => a.act === "create");
+  T("INT12a risk-shrunk grid created (not skipped)", r.status === 0 && creates.length === 1);
+  T("INT12b shrunk value = 1950", creates.length === 1 && Number(creates[0].value) === 1950);
+  T("INT12c shrink reported", r.stdout.includes("PLAN shrink"));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 });

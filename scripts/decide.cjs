@@ -306,12 +306,20 @@ const writeAtomic = (p, data) => {
       const eco = ecoOf(cand.symbol);
       if ((ecoCount[eco] || 0) >= (cfg.maxPerEcosystem || 2)) { lines.push(`PLAN skip ${mkt}: ecosystem "${eco}" already at cap ${cfg.maxPerEcosystem}`); continue; }
       // account-level forward-risk invariant: kept risk + this grid's SL amount + buffer <= budget
-      const candRisk = Number(cfg.gridValueUsd) * (wantSL / 100);
-      if (usedRisk + plannedRisk + candRisk > budget) {
-        lines.push(`PLAN stop: risk budget exhausted (used ${usedRisk.toFixed(0)} + planned ${plannedRisk.toFixed(0)} + ${candRisk.toFixed(0)} > ${budget.toFixed(0)}) — slot stays empty`);
-        break;
+      // Full size first; if it doesn't fit the remaining risk budget, SHRINK to the
+      // largest 50-multiple that does (>=500) instead of abandoning the slot —
+      // a smaller compliant grid beats an empty one.
+      let value = Number(cfg.gridValueUsd);
+      const budgetRoom = budget - usedRisk - plannedRisk;
+      const maxByRisk = Math.floor(budgetRoom / (wantSL / 100) / 50) * 50;
+      if (maxByRisk < value) {
+        if (maxByRisk < 500) {
+          lines.push(`PLAN stop: risk budget exhausted (used ${usedRisk.toFixed(0)} + planned ${plannedRisk.toFixed(0)}; room ${budgetRoom.toFixed(0)} fits < 500 min grid) — slot stays empty`);
+          break;
+        }
+        value = maxByRisk;
+        lines.push(`PLAN shrink: full ${cfg.gridValueUsd} exceeds remaining risk budget — creating ${value} instead`);
       }
-      let value = cfg.gridValueUsd;
       const estMargin = value / cfg.leverageCap;
       const numAvail = num(obs.margin.availableEquity);
       // cumulative reservation: N planned grids must not all size against the same balance
