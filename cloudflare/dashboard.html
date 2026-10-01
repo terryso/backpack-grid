@@ -42,12 +42,26 @@
   .muted { color: #8b94a7; }
   svg { width: 100%; height: 120px; }
   .err { color: #f87171; padding: 40px; text-align: center; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar a, .toolbar button {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #131824; color: #d7dde8; border: 1px solid #1f2737; border-radius: 99px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; text-decoration: none;
+    transition: border-color .15s, background .15s;
+  }
+  .toolbar a:hover, .toolbar button:hover { border-color: #3b82f6; background: #182031; }
+  .toolbar button:disabled { opacity: .55; cursor: default; border-color: #14532d; color: #4ade80; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Backpack 网格巡检</h1>
   <div class="sub">每 15 分钟自动更新 · 数据来自巡检执行层快照 · <span id="ago">-</span></div>
+  <div class="toolbar">
+    <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
+    <a href="https://github.com/terryso/backpack-grid/fork" target="_blank" rel="noopener">🍴 Fork on GitHub</a>
+    <a href="https://github.com/terryso/backpack-grid" target="_blank" rel="noopener">📦 代码仓库</a>
+  </div>
   <div id="content" class="err">加载中…</div>
 </div>
 <script>
@@ -119,7 +133,28 @@ async function load() {
     render(await r.json());
   } catch (e) { document.getElementById("content").textContent = "加载失败：" + e.message; }
 }
+async function loadLikes() {
+  try {
+    const j = await (await fetch(`/api/likes`)).json();
+    const btn = document.getElementById("likeBtn");
+    document.getElementById("likeCount").textContent = j.likes;
+    const today = new Date().toISOString().slice(0, 10);
+    if (localStorage.getItem("bg-liked") === today) { btn.disabled = true; btn.firstChild.textContent = "已点赞 "; }
+  } catch {}
+}
+document.getElementById("likeBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("likeBtn");
+  const today = new Date().toISOString().slice(0, 10);
+  if (btn.disabled || localStorage.getItem("bg-liked") === today) return;
+  try {
+    const j = await (await fetch(`/api/likes`, { method: "POST" })).json();
+    document.getElementById("likeCount").textContent = j.likes;
+    localStorage.setItem("bg-liked", today);
+    btn.disabled = true; btn.firstChild.textContent = "已点赞 ";
+  } catch {}
+});
 load();
+loadLikes();
 setInterval(load, 60000);
 </script>
 </body>
