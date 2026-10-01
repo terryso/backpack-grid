@@ -135,7 +135,7 @@ function render(s) {
 }
 async function load() {
   try {
-    const r = await fetch(`/api/snapshot`);
+    const r = await fetch(`/api/snapshot?t=${Date.now()}`);
     if (!r.ok) throw new Error(r.status);
     render(await r.json());
   } catch (e) { document.getElementById("content").textContent = "加载失败：" + e.message; }
@@ -164,6 +164,9 @@ document.getElementById("likeBtn").addEventListener("click", async () => {
 load();
 loadLikes();
 setInterval(load, 60000);
+// iOS/浏览器用页面缓存恢复时（主屏幕打开、切标签页回来），定时器不会触发——强制拉取
+window.addEventListener("pageshow", (e) => { if (e.persisted) { load(); loadLikes(); } });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { load(); loadLikes(); } });
 </script>
 </body>
 </html>
