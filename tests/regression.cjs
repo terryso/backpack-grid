@@ -429,7 +429,7 @@ function mockIo({ positionQty = 0, pollsUntilFlat = 1, deleteStatus = 200, gridP
 })().then(() => {
   // ---------- T22 (round-8): PID lock ----------
 T("T22a lock liveness-checked via kill -0", runRoundSrc.includes('kill -0 "$HOLDER"'));
-T("T22b self-release only (pid match, ln lock)", runRoundSrc.includes('[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]'));
+T("T22b self-release only (pid match)", runRoundSrc.includes('if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]'));
 T("T22c no age-based takeover left", !runRoundSrc.includes("AGE -lt 480"));
 
 // ---------- T23 (round-8): two-phase execution ----------
@@ -591,10 +591,10 @@ T("T31a health uses funding-adjusted effPnlPct (observe)", observeSrc.includes("
 T("T31b last_round_status written by runner and read by dashboard_data",
   runRoundSrc.includes('echo "ok" > state/last_round_status') && fs.readFileSync(path.join(ROOT, "scripts", "dashboard_data.cjs"), "utf8").includes("last_round_status"));
 
-// ---------- T32 (round-9 F04): atomic ln lock ----------
-T("T32a ln-based atomic acquisition", runRoundSrc.includes('ln "$CAND" "$LOCK"'));
-T("T32b takeover: rm dead lock then retry ln", runRoundSrc.includes('rm -f "$LOCK" 2>/dev/null') && runRoundSrc.includes('if ln "$CAND" "$LOCK" 2>/dev/null'));
-T("T32c self-release only (pid match)", runRoundSrc.includes('[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]'));
+// ---------- T32 (round-9 F04): mv-based atomic takeover ----------
+T("T32a atomic mkdir acquisition", runRoundSrc.includes('if mkdir "$LOCK" 2>/dev/null; then'));
+T("T32b stale takeover via atomic mv", runRoundSrc.includes('mv "$LOCK" "$QUAR" 2>/dev/null'));
+T("T32c takeover liveness recheck (restore if owner alive)", runRoundSrc.includes('mv "$QUAR" "$LOCK" 2>/dev/null'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
