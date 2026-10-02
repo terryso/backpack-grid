@@ -1,0 +1,40 @@
+{
+  "reviewDate": "2026-10-03",
+  "entries": [
+    {
+      "file": "/Users/nick/Library/LaunchAgents/com.backpack-grid-peak.plist",
+      "label": "com.backpack-grid-peak",
+      "configuredArguments": [
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/peak_probe.sh"
+      ],
+      "loadedReadExit": 0,
+      "loadedFields": [
+        "program = /bin/bash",
+        "argument: /bin/bash",
+        "argument: /Users/nick/CascadeProjects/backpack_grid/scripts/peak_probe.sh",
+        "last exit code = 0"
+      ]
+    },
+    {
+      "file": "/Users/nick/Library/LaunchAgents/com.backpack.grid-monitor.plist",
+      "label": "com.backpack.grid-monitor",
+      "configuredArguments": [
+        "/usr/bin/python3",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/with_lock.py",
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/run_round.sh"
+      ],
+      "loadedReadExit": 0,
+      "loadedFields": [
+        "program = /usr/bin/python3",
+        "argument: /usr/bin/python3",
+        "argument: /Users/nick/CascadeProjects/backpack_grid/scripts/with_lock.py",
+        "argument: /bin/bash",
+        "argument: /Users/nick/CascadeProjects/backpack_grid/scripts/run_round.sh",
+        "last exit code = 0"
+      ]
+    }
+  ],
+  "boundary": "Read-only plist and whitelisted loaded launchd metadata; no task restart or signal."
+}

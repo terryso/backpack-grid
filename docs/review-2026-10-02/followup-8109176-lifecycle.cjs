@@ -1,0 +1,17 @@
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{spawn,spawnSync}=require('node:child_process');
+const ROOT=process.cwd(),PY='/Users/nick/.browser-use-env/bin/python3',NODE=process.execPath,dir=fs.mkdtempSync('/private/tmp/review-flock-life-');fs.mkdirSync(path.join(dir,'scripts'));fs.mkdirSync(path.join(dir,'state'));const lockScript=path.join(dir,'scripts/with_lock.py');fs.copyFileSync(path.join(ROOT,'scripts/with_lock.py'),lockScript);const body=path.join(dir,'body.cjs');fs.writeFileSync(body,"require('node:fs').writeFileSync(process.argv[2],JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);\n");const wrappers=[],business=[];
+function start(marker){const c=spawn(PY,[lockScript,NODE,body,marker],{stdio:['pipe','pipe','pipe']});wrappers.push(c);c.out='';c.err='';c.stdout.on('data',x=>c.out+=x);c.stderr.on('data',x=>c.err+=x);c.terminated=new Promise(r=>c.once('exit',(code,signal)=>r({code,signal})));return c;}
+async function waitFile(p){const end=Date.now()+3000;while(!fs.existsSync(p)){if(Date.now()>end)throw Error('marker timeout: '+p);await new Promise(r=>setTimeout(r,10));}const pid=JSON.parse(fs.readFileSync(p,'utf8')).pid;business.push(pid);return pid;}
+const alive=pid=>{try{process.kill(pid,0);return true}catch{return false}};
+(async()=>{try{
+ const p1=path.join(dir,'job1.json'),p2=path.join(dir,'job2.json'),w1=start(p1),b1=await waitFile(p1);
+ const blocked=spawnSync(PY,[lockScript,NODE,body,p2],{encoding:'utf8',timeout:2000});assert.equal(blocked.status,3);assert(!fs.existsSync(p2));
+ // Execute the documented manual body under safe shell mocks while the flock is held.
+ const runner=path.join(dir,'scripts/run_round.sh');fs.copyFileSync(path.join(ROOT,'scripts/run_round.sh'),runner);fs.writeFileSync(path.join(dir,'scripts/observe.mjs'),'');fs.writeFileSync(path.join(dir,'scripts/upload_dashboard.sh'),'echo upload > state/upload_marker\n');
+ const mocks='ego-browser(){ return 0; }; node(){ printf "[]" > state/actions.json; echo entered > state/manual_entered; }; osascript(){ return 0; };\n';
+ const manual=spawnSync('/bin/bash',['-c',mocks+'source "$1"',runner,runner],{cwd:dir,env:{...process.env,DRYRUN:'0'},encoding:'utf8',timeout:3000});assert.equal(manual.status,0);assert(fs.existsSync(path.join(dir,'state/manual_entered')));
+ w1.kill('SIGKILL');await w1.terminated;assert(alive(b1));
+ const w2=start(p2),b2=await waitFile(p2);assert(alive(b1)&&alive(b2));
+ const result={normalConcurrentContenderSkipped:true,skipExit:blocked.status,documentedManualBodyEnteredWhileFlockHeld:true,wrapperKilledButOriginalBusinessAlive:true,secondWrapperEnteredWithOriginalBusinessAlive:true,businessPids:[b1,b2],boundary:'Production with_lock.py copied to isolated fixture, real kernel flock. Actual runner only uses fixture files and safe shell command mocks. SIGKILL affects only review-created wrapper; all review child processes cleaned up. No real launchd task, trading or original state changed.'};fs.writeFileSync(path.join(process.env.REVIEW_OUTPUT_DIR||dir,'lifecycle-results.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));
+ }finally{for(const pid of business)if(alive(pid))process.kill(pid,'SIGTERM');for(const c of wrappers)if(c.exitCode===null&&!c.signalCode)c.kill('SIGTERM');await Promise.all(wrappers.map(c=>c.terminated));}
+})().catch(e=>{console.error(e);process.exitCode=1});

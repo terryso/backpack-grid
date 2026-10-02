@@ -1,0 +1,5 @@
+{
+  "exitCode": 1,
+  "stateMissingError": true,
+  "boundary": "Fresh temporary checkout without state directory; copied production wrapper and inert child only."
+}

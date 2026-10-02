@@ -249,6 +249,42 @@ function runDecide(dir, offline, tickersFile) {
     && !r.stdout.includes("RISK STATE CORRUPT") && after.peakEquity === 556.91);
 }
 
+// ---------- RWP: risk_write.py 单一写入通道（F01 事务 + 合并语义） ----------
+function runRiskWrite(dir, payload) {
+  return spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
+    { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
+}
+{
+  const dir = makeFixture({ "state/risk.json": { peakEquity: 600, paused: null } });
+  T("RWP1 lower probe sample cannot lower peak (ratchet)", runRiskWrite(dir, { peakEquity: 550 }).status === 0
+    && JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8")).peakEquity === 600);
+  T("RWP2 write without paused keeps latest latch verbatim", (() => {
+    runRiskWrite(dir, { peakEquity: 610, paused: { at: "T0", reason: "drawdown 21% >= budget 20%" } });
+    const r = runRiskWrite(dir, { peakEquity: 620 });
+    const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
+    return r.status === 0 && after.peakEquity === 620 && after.paused && after.paused.reason === "drawdown 21% >= budget 20%";
+  })());
+  T("RWP3 corrupt file refused, original kept, rc=2", (() => {
+    const raw = "NOT JSON{";
+    fs.writeFileSync(path.join(dir, "state", "risk.json"), raw);
+    const r = runRiskWrite(dir, { peakEquity: 999 });
+    return r.status === 2 && fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8") === raw;
+  })());
+}
+{
+  // RWP4: 熔断后 12 个并发探测提交交错 — paused 必须存活、峰值只能串行上升
+  const dir = makeFixture({ "state/risk.json": { peakEquity: 600, paused: null } });
+  runRiskWrite(dir, { peakEquity: 600, paused: { at: "T0", reason: "trip" } });
+  const kids = [];
+  for (let i = 1; i <= 12; i++) {
+    kids.push(spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
+      { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 }));
+  }
+  const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
+  T("RWP4 concurrent probe commits: latch survives, peak = max", kids.every((k) => k.status === 0)
+    && after.peakEquity === 610 && after.paused && after.paused.reason === "trip");
+}
+
 // ---------- T19 (round-5 #1): protection-verify stage funnels into cleanup ----------
 T("T19a protectionConfirmed flow present", actSrc.includes("let protectionConfirmed = false;")
   && actSrc.includes("protectionConfirmed = await backstopsOk();"));

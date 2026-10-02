@@ -1,0 +1,12 @@
+{
+  "normalConcurrentContenderSkipped": true,
+  "skipExit": 3,
+  "documentedManualBodyEnteredWhileFlockHeld": true,
+  "wrapperKilledButOriginalBusinessAlive": true,
+  "secondWrapperEnteredWithOriginalBusinessAlive": true,
+  "businessPids": [
+    66503,
+    66690
+  ],
+  "boundary": "Production with_lock.py copied to isolated fixture, real kernel flock. Actual runner only uses fixture files and safe shell command mocks. SIGKILL affects only review-created wrapper; all review child processes cleaned up. No real launchd task, trading or original state changed."
+}

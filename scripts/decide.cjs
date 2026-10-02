@@ -6,6 +6,7 @@
 // run BEFORE market-data-dependent logic, and a tickers failure only blocks NEW risk.
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const { getTickers } = require("./api.cjs");
 
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
@@ -95,14 +96,25 @@ const writeAtomic = (p, data) => {
   const effPeak = risk ? Number(risk.peakEquity) : 0;
   const ddPct = effPeak ? ((effPeak - eq) / effPeak) * 100 : 0;
   let breaker = null; // null | "warn" | "trip" | "paused"
+  let justTripped = false;
   if (risk && risk.paused) breaker = "paused";
   else if (risk && isFinite(ddPct) && ddPct >= cfg.riskBudgetPct) {
     risk.paused = { at: obs.at, reason: `drawdown ${ddPct.toFixed(1)}% >= budget ${cfg.riskBudgetPct}%`, peakEquity: risk.peakEquity, equity: eq };
+    justTripped = true;
     breaker = "trip";
   } else if (risk && isFinite(ddPct) && ddPct >= cfg.warnDrawdownPct) breaker = "warn";
-  // persist only when the file was readable/valid; a CORRUPT file is never
-  // overwritten — it is kept for manual recovery and blocks new risk until fixed
-  if (!riskCorrupt && risk) writeAtomic(riskPath, JSON.stringify(risk, null, 2));
+  // persist via the single risk-write channel: kernel-flock transaction with
+  // merge semantics (peak ratchet; paused preserved on disk unless tripped
+  // HERE — probe/latch updates from concurrent processes are never clobbered).
+  // A corrupt/invalid file is refused by the helper and kept for manual recovery.
+  if (!riskCorrupt && risk) {
+    const payload = { peakEquity: risk.peakEquity };
+    if (risk.lastEquity !== undefined) payload.lastEquity = risk.lastEquity;
+    if (risk.lastAt !== undefined) payload.lastAt = risk.lastAt;
+    if (justTripped) payload.paused = risk.paused;
+    const w = spawnSync("python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8" });
+    if (w.status !== 0) lines.push(`RISK WRITE REFUSED (status ${w.status}): ${String(w.stderr || w.stdout || "").trim().slice(0, 140)} — kept for manual recovery`);
+  }
   if (riskCorrupt) {
     breaker = breaker || "warn";
     lines.push(`RISK STATE CORRUPT: state/risk.json unparseable or invalid shape — kept for manual recovery; NO new grids until fixed`);

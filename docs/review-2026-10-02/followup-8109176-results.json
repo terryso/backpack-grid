@@ -1,0 +1,53 @@
+{
+  "baseline": "81091769536384c596d296ffdd4921aae0e86535",
+  "reports": [
+    {
+      "id": "C01_merge_and_log_correct",
+      "error": null,
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T18:14:08.217Z"
+      }
+    },
+    {
+      "id": "F01_peak_job_without_lock_still_clears_latch",
+      "error": null,
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": null,
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T18:14:08.222Z"
+      }
+    },
+    {
+      "id": "C02_unknown_quantity_matrix_blocked",
+      "verified": true
+    },
+    {
+      "id": "C06_full_slice_not_counted_twice",
+      "verified": true
+    }
+  ],
+  "boundary": "Production source with memory-only account/API/state I/O; no live trades or deployment."
+}

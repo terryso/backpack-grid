@@ -25,5 +25,5 @@ lock.seek(0)
 lock.truncate()
 lock.write(str(os.getpid()))
 
-rc = subprocess.call(sys.argv[1:])
+rc = subprocess.call(sys.argv[1:], env={**os.environ, "BG_LOCKED": "1"})
 sys.exit(rc)

@@ -7,6 +7,13 @@ cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
 
+# 入口自锁：无论从 round_locked.sh（launchd）还是手动调用，一轮巡检全程持有
+# 内核 flock（state/round.lock）；持有者死亡自动释放，无陈旧锁接管路径。
+# 已在锁内（BG_LOCKED=1）则直接继续，避免递归。
+if [ "${BG_LOCKED:-}" != "1" ]; then
+  exec python3 scripts/with_lock.py bash scripts/run_round.sh "$@"
+fi
+
 # 通知辅助：由外层 flock 包装（with_lock.py）提供互斥；本脚本只负责轮次主体与状态
 write_status() { echo "$1" > state/last_round_status 2>/dev/null || true; }
 upload_dashboard() { [ -f scripts/upload_dashboard.sh ] && bash scripts/upload_dashboard.sh || true; }
@@ -36,6 +43,7 @@ fi
 if ! grep -q '"act"' state/actions.json 2>/dev/null; then
   echo "ok" > state/last_round_status
   write_status "ok"
+  upload_dashboard
   echo "no actions to execute."
   exit 0
 fi

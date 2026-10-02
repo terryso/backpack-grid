@@ -1,16 +1,15 @@
-// 轻量峰值采样：只调权益接口，棘轮更新 state/risk.json 的 peakEquity。
-// 独立于 15 分钟巡检（巡检进行中自动避让），让回撤指标的采样粒度从 15 分钟提升到 1 分钟。
+// 轻量峰值采样：只调权益接口，经唯一写入通道 risk_write.py 棘轮更新 peakEquity。
+// 独立于 15 分钟巡检，采样粒度 1 分钟；risk.json 的事务互斥由 risk_write.py 的
+// 内核 flock 保证（采样可与巡检重叠，提交窗口互斥），无需再检查轮次锁。
 const fs = await import("node:fs/promises");
 const path = await import("node:path");
+const { spawnSync } = await import("node:child_process");
 const ROOT = "/Users/nick/CascadeProjects/backpack_grid";
 const RISK = path.join(ROOT, "state/risk.json");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
 const SUB = cfg.subaccountId || 3;
 
-// 巡检轮次进行中 → 避让（防止与 decide 的 risk.json 写入竞争）
-const lockExists = await fs.access(path.join(ROOT, "state/lock")).then(() => true).catch(() => false);
-if (lockExists) { console.log("round in progress — probe skips"); process.exit(0); }
-
+// 采样前的本地快检：损坏/形状非法时不采样也不写（与 risk_write.py 的拒写规则一致）
 let risk = null, fileState = "missing";
 try { risk = JSON.parse(await fs.readFile(RISK, "utf8")); fileState = "present"; }
 catch (e) { fileState = e.code === "ENOENT" ? "missing" : "corrupt"; }
@@ -24,7 +23,6 @@ if (!pkTypeOk || !Number.isFinite(pkNum) || pkNum < 0 || (risk.paused !== null &
   console.log("risk.json invalid shape — probe skips (manual recovery)");
   process.exit(0);
 }
-risk.peakEquity = pkNum;
 
 const task = await taskSpace(cfg.watch?.spaceId || 8);
 const page = task.page(cfg.watch?.page || "p1");
@@ -37,14 +35,9 @@ const entry = col[Object.keys(col).find((k) => k.endsWith("-" + SUB))];
 const eq = Number(entry?.netEquity);
 if (!isFinite(eq) || eq <= 0) { console.log("bad equity:", eq); process.exit(0); }
 
-// 提交前重读最新 risk（网络等待期间巡检可能已写入熔断锁存）：
-// 峰值取 max（探测采样, 磁盘最新）、paused 逐字保留最新值——消除丢失更新窗口
-const latest = JSON.parse(await fs.readFile(RISK, "utf8")); // rename 原子性保证读到完整文件
-const { mergeProbe } = await import(path.join(ROOT, "scripts", "peak_merge.cjs").replace("file://", ""));
-const merged = mergeProbe(latest, eq);
-if (JSON.stringify(merged) !== JSON.stringify(latest)) {
-  await fs.writeFile(RISK + ".probe." + process.pid + ".tmp", JSON.stringify(merged, null, 2)).then(() => fs.rename(RISK + ".probe." + process.pid + ".tmp", RISK));
-  console.log("peak merged:", latest.peakEquity, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused));
-} else {
-  console.log("peak unchanged:", merged.peakEquity, "| equity:", eq);
-}
+// 提交走唯一写入通道：flock 事务内重读磁盘最新值，峰值取 max（较低采样不回退）、
+// paused 逐字保留最新——重读之后发生的熔断写入不可能被本进程覆盖
+const w = spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: eq })], { encoding: "utf8" });
+if (w.status !== 0) { console.log("risk write refused (status", w.status, ") — kept for manual recovery"); process.exit(0); }
+const merged = JSON.parse(String(w.stdout).trim());
+console.log("peak:", pkNum, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused), "| equity:", eq);
