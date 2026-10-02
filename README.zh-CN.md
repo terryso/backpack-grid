@@ -10,12 +10,12 @@
 下方截图即线上仪表盘的实时画面（权益、网格盈亏、活动进度每 15 分钟自动更新）：
 
 <p align="center">
-  <a href="https://backpack-grid-dashboard.oxtiger.workers.dev">
+  <a href="https://grid.terryso.dev">
     <img src="docs/dashboard.png" alt="实盘仪表盘截图" width="860">
   </a>
 </p>
 
-🔗 **[打开实时仪表盘](https://backpack-grid-dashboard.oxtiger.workers.dev)**（公开只读，无需登录/密钥；数据上传通道独立密钥保护）
+🔗 **[打开实时仪表盘](https://grid.terryso.dev)**（公开只读，无需登录/密钥；数据上传通道独立密钥保护）
 
 > ⚠️ 本项目为个人实盘实验记录，不构成投资建议。加密合约交易风险极高，据此操作后果自负。
 

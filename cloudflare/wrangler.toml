@@ -6,6 +6,10 @@ rules = [
   { type = "Text", globs = ["**/*.html"] },
 ]
 
+routes = [
+  { pattern = "grid.terryso.dev", custom_domain = true }
+]
+
 [[kv_namespaces]]
 binding = "DASH"
 id = "40e078ae20c84612bce7ddfb711f7992"

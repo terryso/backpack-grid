@@ -5,12 +5,12 @@
 An autonomous crypto grid-trading system that designs its own strategy, runs on a **live Backpack perpetual-futures account with real money**, and re-balances itself every 15 minutes — no human in the loop.
 
 <p align="center">
-  <a href="https://backpack-grid-dashboard.oxtiger.workers.dev">
+  <a href="https://grid.terryso.dev">
     <img src="docs/dashboard.png" alt="Live dashboard" width="860">
   </a>
 </p>
 
-🔗 **[Live dashboard](https://backpack-grid-dashboard.oxtiger.workers.dev)** — real equity, positions, per-grid health and volume progress, updated every 15 minutes. Public, read-only.
+🔗 **[Live dashboard](https://grid.terryso.dev)** — real equity, positions, per-grid health and volume progress, updated every 15 minutes. Public, read-only.
 
 > ⚠️ This is a personal live-trading experiment, not financial advice. Perps trading is extremely risky.
 

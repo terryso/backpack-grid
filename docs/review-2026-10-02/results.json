@@ -1,0 +1,101 @@
+{
+  "reviewDate": "2026-10-02",
+  "baseline": "225176db5c5d007dcccefc8e4684b47a0670de01",
+  "reports": [
+    {
+      "id": "R1_peak_probe_overwrites_breaker_latch",
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "test",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": null,
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T10:12:40.281Z"
+      }
+    },
+    {
+      "id": "R2_ledger_inventory_without_position_mark",
+      "error": null,
+      "displayPrice": 100,
+      "pnlPct": -20
+    },
+    {
+      "id": "R2b_empty_ledger_fields_accepted",
+      "error": null,
+      "pnlRaw": 0
+    },
+    {
+      "id": "R2c_null_quantity_treated_as_flat",
+      "done": true,
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "R3_nonatomic_stale_lock_takeover",
+      "twoLiveOwners": true,
+      "finalPid": "11073",
+      "boundary": "Original lock block; dead-holder checks synchronized to expose a valid concurrent takeover interleaving. Only temporary files and subprocesses."
+    },
+    {
+      "id": "R4_phase2_skips_new_liquidation_danger",
+      "phase1": [
+        [
+          "stop",
+          "OLD-PERP"
+        ]
+      ],
+      "phase2": [
+        [
+          "create",
+          "NEW-PERP"
+        ]
+      ]
+    },
+    {
+      "id": "R5_orphan_blocks_observation",
+      "error": "exit 1",
+      "detail": "validation: more positions than grids (manual positions?)"
+    },
+    {
+      "id": "R6_fee_history_cursor_skips_later_windows",
+      "requests": [
+        {
+          "from": 1790726400000,
+          "to": 1790812800000,
+          "limit": 1000
+        }
+      ],
+      "lastTo": 1790942400000,
+      "skippedHours": 36
+    },
+    {
+      "id": "R6b_full_page_has_no_pagination",
+      "requests": [
+        {
+          "from": 1790935200000,
+          "to": 1790942400000,
+          "limit": 1000
+        }
+      ],
+      "captured": 1000
+    },
+    {
+      "id": "R7_dashboard_reports_healthy_on_corrupt_state",
+      "riskPaused": false,
+      "pending": [],
+      "includesObservationError": false,
+      "greenNormal": true
+    },
+    {
+      "id": "R8_repeated_same_visitor_like_accepted",
+      "likeCount": 2
+    }
+  ],
+  "boundary": "Production source and functions with injected memory-only I/O. No real trading, browser navigation, dashboard writes or deployment. Temporary process tests do not represent malicious same-user races."
+}
