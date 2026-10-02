@@ -43,12 +43,22 @@ if (lastActionEntry && actAgeH < 24) {
 const strategy = obs.strategyEquity || null;
 const feesStats = obs.feesStats || null;
 // 运行统计：天数（自策略基线日）、巡检轮次（equity_curve 行数）、自动换仓次数（log 中 stop 动作计数）
-let runDays = null, rounds = 0, rotations = 0;
+let runDays = null, rounds = 0, rotations = 0, change24h = null, change24hPct = null;
 try {
   const startAt = (strategy && strategy.baselineAt) || (obs.strategyEquity && obs.strategyEquity.baselineAt);
   if (startAt) runDays = +((Date.now() - new Date(startAt).getTime()) / 86400000).toFixed(1);
+  const cur = num(obs.margin && obs.margin.totalEquity);
   const curveLines = fs.readFileSync(path.join(ROOT, "state/equity_curve.jsonl"), "utf8").trim().split("\n");
   rounds = curveLines.length;
+  // 24h 权益变化：取最接近 24 小时前的采样点对比
+  try {
+    const pts = curveLines.map((l) => { try { const r = JSON.parse(l); return { t: new Date(r.at).getTime(), eq: num(r.equity) }; } catch { return null; } }).filter(Boolean);
+    const now = Date.now();
+    const dayAgo = now - 86400000;
+    let ref = null;
+    for (const p of pts) if (p.t <= dayAgo && (!ref || p.t > ref.t)) ref = p;
+    if (ref) { change24h = +(num(cur) - ref.eq).toFixed(2); change24hPct = +((num(cur) - ref.eq) / ref.eq * 100).toFixed(2); }
+  } catch {}
   const logText = fs.readFileSync(path.join(ROOT, "state/log.md"), "utf8");
   for (const line of logText.split("\n")) {
     const m = line.match(/actions=([^\n]*)/);
@@ -64,6 +74,7 @@ const snapshot = {
   strategyBaselineAt: strategy ? strategy.baselineAt : null,
   fees: feesStats && !feesStats.error ? { feeUsd: +feesStats.feeUsd.toFixed(2), makerPct: feesStats.makerPct, fills: feesStats.fills } : null,
   runStats: { days: runDays, rounds, rotations },
+  change24h, change24hPct,
   drawdownPct: Math.max(0, risk.peakEquity ? ((risk.peakEquity - num(obs.margin && obs.margin.totalEquity)) / risk.peakEquity) * 100 : 0),
   riskPaused: !!(risk.paused),
   campaignVolume: Math.round(num(campaign.campaignVolume)),
