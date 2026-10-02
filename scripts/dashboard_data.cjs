@@ -40,6 +40,20 @@ if (lastActionEntry && actAgeH < 24) {
 }
 
 const strategy = obs.strategyEquity || null;
+const feesStats = obs.feesStats || null;
+// 运行统计：天数（自策略基线日）、巡检轮次（equity_curve 行数）、自动换仓次数（log 中 stop 动作计数）
+let runDays = null, rounds = 0, rotations = 0;
+try {
+  const startAt = (strategy && strategy.baselineAt) || (obs.strategyEquity && obs.strategyEquity.baselineAt);
+  if (startAt) runDays = +((Date.now() - new Date(startAt).getTime()) / 86400000).toFixed(1);
+  const curveLines = fs.readFileSync(path.join(ROOT, "state/equity_curve.jsonl"), "utf8").trim().split("\n");
+  rounds = curveLines.length;
+  const logText = fs.readFileSync(path.join(ROOT, "state/log.md"), "utf8");
+  for (const line of logText.split("\n")) {
+    const m = line.match(/actions=([^\n]*)/);
+    if (m) rotations += (m[1].match(/stop:/g) || []).length;
+  }
+} catch {}
 const snapshot = {
   updatedAt: obs.at || new Date().toISOString(),
   equity: num(obs.margin && obs.margin.totalEquity),
@@ -47,6 +61,8 @@ const snapshot = {
   strategyTotalPnl: strategy && strategy.totalPnl != null ? strategy.totalPnl : null,
   strategyBaseline: strategy ? strategy.baseline : null,
   strategyBaselineAt: strategy ? strategy.baselineAt : null,
+  fees: feesStats && !feesStats.error ? { feeUsd: +feesStats.feeUsd.toFixed(2), makerPct: feesStats.makerPct, fills: feesStats.fills } : null,
+  runStats: { days: runDays, rounds, rotations },
   drawdownPct: Math.max(0, risk.peakEquity ? ((risk.peakEquity - num(obs.margin && obs.margin.totalEquity)) / risk.peakEquity) * 100 : 0),
   riskPaused: !!(risk.paused),
   campaignVolume: Math.round(num(campaign.campaignVolume)),

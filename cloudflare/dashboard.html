@@ -60,7 +60,7 @@
 <body>
 <div class="wrap">
   <h1>Backpack 网格巡检</h1>
-  <div class="sub">每 15 分钟自动更新 · 数据来自巡检执行层快照 · <span id="ago">-</span></div>
+  <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
     <a href="https://github.com/terryso/backpack-grid/fork" target="_blank" rel="noopener">🍴 Fork on GitHub</a>
@@ -80,7 +80,9 @@ function render(s) {
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
+  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 巡检 ${s.runStats.rounds} 轮 · 自动换仓 ${s.runStats.rotations} 次`;
   const g = s.grids || [];
+  const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
   const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
   const pct = Math.min(100, camp / tier * 100);
@@ -89,6 +91,7 @@ function render(s) {
   chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
+  if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct}% · ${s.fees.fills} 笔</span>`);
   // equity sparkline
   const curve = s.curve || [];
   let svg = "";
@@ -127,6 +130,23 @@ function render(s) {
           <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
         </div>`).join("")}
         ${g.length === 0 ? `<div class="muted">空仓（全部轮换出去/主动空仓）</div>` : ""}
+      </div>
+    </div>
+    <div class="section">
+      <h2>持仓（${pos.length}）</h2>
+      <div class="gridcards">
+        ${pos.map((p) => {
+          const pnlNum = Number(String(p.pnl).replace(/[$,]/g, ""));
+          const liqNum = Number(p.liq);
+          const liqDist = isFinite(liqNum) && liqNum > 0 ? Math.abs(p.mark - liqNum) / p.mark * 100 : null;
+          return `<div class="gcard">
+            <div class="ghead"><span class="gmkt">${p.market}</span><span class="gdir">${p.side === "long" ? "多单" : "空单"} · ${p.size}</span></div>
+            <div class="grow"><span class="k">标记价</span><span>${p.mark}</span></div>
+            <div class="grow"><span class="k">浮动盈亏</span><span class="${pnlCls(pnlNum)}">${p.pnl} USD</span></div>
+            ${liqDist !== null ? `<div class="grow"><span class="k">距强平</span><span>${liqDist.toFixed(0)}%</span></div>` : ""}
+          </div>`;
+        }).join("")}
+        ${pos.length === 0 ? `<div class="muted">当前无持仓（各网格库存已全部换手）</div>` : ""}
       </div>
     </div>
     <div class="section"><h2>权益曲线（巡检轮次）</h2>${svg || `<div class="muted">样本积累中</div>`}</div>

@@ -116,6 +116,48 @@ const margin = {
   initMarginPct: Math.round(((netEquity - netEquityAvailable) / netEquity) * 100) + "%",
 };
 const badges = { "持仓": positions.length, "当前委托": Number(account.limitOrders), "网格": gridRows.length };
+// 手续费/maker 占比统计：增量拉取成交历史（分 24h 窗口规避 1000 条上限），累计到 state/fees.json
+let feesStats = null;
+try {
+  const CAMPAIGN_START_MS = Date.UTC(2026, 8, 30, 0, 0, 0);
+  const feesPath = path.join(ROOT, "state/fees.json");
+  let fees = { symbols: {} };
+  try { fees = JSON.parse(await fs.readFile(feesPath, "utf8")); } catch {}
+  const nowMs = Date.now();
+  const symbols = new Set([...(auto.params?.symbols || []).map((s) => s.symbol), ...Object.keys(fees.symbols)]);
+  for (const symbol of symbols) {
+    const rec = fees.symbols[symbol] || { lastTo: CAMPAIGN_START_MS, feeUsd: 0, makerVol: 0, takerVol: 0, makerN: 0, takerN: 0 };
+    let cursor = Math.max(rec.lastTo, CAMPAIGN_START_MS);
+    // 分 24h 窗口前进，直到追平当前时间
+    while (cursor < nowMs - 1000) {
+      const to = Math.min(cursor + 24 * 3600 * 1000, nowMs);
+      const fr = await page.fetch(`https://api.backpack.exchange/wapi/v1/history/fills?subaccountId=${SUB}&symbol=${symbol}&from=${cursor}&to=${to}&limit=1000`, { credentials: "include", timeout: 20000 });
+      const fills = JSON.parse(fr.body);
+      for (const f of fills) {
+        const vol = Number(f.price) * Number(f.quantity);
+        const feeVal = Number(f.fee) || 0;
+        if (f.feeSymbol === "USDC") rec.feeUsd += feeVal;
+        if (f.isMaker) { rec.makerVol += vol; rec.makerN++; } else { rec.takerVol += vol; rec.takerN++; }
+      }
+      if (fills.length < 1000) { cursor = to; break; }
+      cursor = to;
+    }
+    rec.lastTo = nowMs;
+    fees.symbols[symbol] = rec;
+  }
+  await fs.writeFile(feesPath, JSON.stringify(fees, null, 2));
+  let feeUsd = 0, makerVol = 0, totalVol = 0, makerN = 0, totalN = 0;
+  for (const rec of Object.values(fees.symbols)) {
+    feeUsd += rec.feeUsd; makerVol += rec.makerVol; totalVol += rec.makerVol + rec.takerVol;
+    makerN += rec.makerN; totalN += rec.makerN + rec.takerN;
+  }
+  feesStats = {
+    feeUsd: +feeUsd.toFixed(2),
+    makerPct: totalVol > 0 ? +(makerVol / totalVol * 100).toFixed(1) : null,
+    fills: totalN,
+  };
+} catch (e) { feesStats = { error: String(e).slice(0, 100) }; }
+
 // 策略累计盈亏：当前权益相对系统接管基线（config.strategyBaselineUsd = 接管日首次观测权益）
 // 口径含已落袋（已删除网格）+ 浮动 + 资金费 + 借贷利息 —— 唯一不随网格删除而失真的总账
 const curEquity = netEquity;
@@ -127,7 +169,7 @@ const strategyEquity = {
 
 const observed = {
   at: new Date().toISOString(), source: "api",
-  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity,
+  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity, feesStats,
   // per-symbol strategy ledger volumes (bought+sold) for campaign volume tracking
   ledger: snapshot.map((s) => ({
     symbol: s.symbol,
