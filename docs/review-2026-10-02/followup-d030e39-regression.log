@@ -1,0 +1,130 @@
+PASS T1a PENGU-PERP -> solana
+PASS T1b PENGU_USDC_PERP -> solana
+PASS T1c SUI-PERP -> sui
+PASS T1d solana cap blocks BONK
+PASS T9a SL grid gets stop, protect dropped
+PASS T9b no suppress-guard on stop (old bug gone)
+PASS T9c act phases: stop before protect before create
+PASS T9d act wires production core
+PASS T10a decide no longer auto-clears vanished-grid pending
+PASS T10c pendCorrupt blocks mayCreate
+PASS T8b act checks stopGrid return value
+PASS T8c emergency stop verified before claiming success
+PASS T17a gate includes emergency cleanup
+PASS T17b gate includes failed protect
+PASS T17c gate re-reads live pending per create
+PASS T17d skipped create is recorded in results ledger
+PASS T5a stop intent persisted before first exchange write
+PASS T5b position-poll errors treated as unconfirmed
+PASS T18a loadPending distinguishes ENOENT from corrupt
+PASS T18b corrupt ledger archived + flag file
+PASS T6a analyze wrapped, stops survive
+PASS T6b planning loop guarded on ana
+PASS T11a object ticker -> finite number
+PASS T11b missing symbol -> NaN
+PASS T11c invalid opens quarantined (slot freed)
+PASS T12a JSON null -> corrupt
+PASS T12b peakEquity null rejected (Number(null)===0 trap)
+PASS T12b2 peakEquity boolean rejected
+PASS T12b3 peakEquity empty string rejected
+PASS T12c numeric string accepted
+PASS T12d valid shape passes
+PASS T12e array -> corrupt
+PASS T12f init gated on not-corrupt
+PASS T13a breaker trip blocks create
+PASS T13b riskCorrupt blocks create
+PASS T13c ticker outage blocks create
+PASS T13d pending blocks create
+PASS T13e corrupt-flag file blocks create
+PASS T13f healthy allows create
+PASS T14a stored SL=8 budgets as 8 even though config says 6
+PASS T14b stored SL=6 budgets as 6
+PASS T14c missing SL falls back to config
+PASS T14d 4th 2500 grid exceeds budget
+PASS T15 no 'no grid rows' validation error
+PASS T16 breaker loop has no Disabled filter
+PASS INT1a vanished-grid pending -> stop verify action
+PASS INT1b decide does not clear the ledger itself
+PASS INT2a corrupt risk flagged
+PASS INT2b corrupt risk file untouched
+PASS INT2c no create planned under corrupt risk
+PASS INT3 peakEquity null -> corrupt + untouched
+PASS INT4a invalid opens quarantined into closed
+PASS INT4b quarantine reported
+PASS INT5 numeric-string peak normalized, not corrupt
+PASS T19a protectionConfirmed flow present
+PASS T19b verify-stage errors funnel to emergency cleanup
+PASS T19c incomplete emergency still blocks creates
+PASS T20a array ledger rejected
+PASS T20b null rejected
+PASS T20c string values rejected
+PASS T20d valid ledger accepted
+PASS T20e act validates structure
+PASS T20f decide validates structure
+PASS INT6a array ledger -> invalid, no create planned
+PASS INT6b decide leaves the file for act to archive
+PASS INT7a-1 healthy control: stop now, create deferred (marker)
+PASS INT7a-2 phase 2 plans the replacement create
+PASS INT7c fault isolation: no ticker error in fault run
+PASS INT7b same scenario + corrupt risk -> stop kept, create blocked, file untouched
+STOP X-PERP: position still open after timeout — persisted to pending_stops.json, will retry next round (no delete/create this round)
+PASS M1a timeout -> done:false
+PASS M1b write-ahead intent persisted
+PASS M1c no delete attempted while position open
+STOPPED X-PERP — test success
+PASS M2a flat -> done:true
+PASS M2b ledger cleared after verified cleanup
+PASS M2c disable+delete both called
+PASS M3a gone+residue -> manual intervention
+PASS M3b intent retained
+PASS M4 gone+flat -> done:true, ledger cleared
+STOP X-PERP: position flat but delete failed 500 — persisted, retry next round
+PASS M5a delete failure retried once then persisted
+PASS M5b ledger keeps delete-failed intent
+PASS M6a stop-incomplete blocks
+PASS M6b protect-incomplete blocks
+PASS M6c emergency-unresolved blocks
+PASS M6d pending non-empty blocks
+PASS M6e corrupt flag blocks
+PASS M6f clean state allows
+PASS M6g why mentions budget premise for protect
+PASS T22a lock liveness-checked via kill -0
+PASS T22b self-release only (pid match)
+PASS T22c no age-based takeover left
+PASS T23a phase-2 marker flow
+PASS T23b decide reads BG_PHASE
+PASS T23c phase 2 runs full per-grid risk re-eval (F03)
+PASS T24a missing ledger snapshot is fatal
+PASS T24b live position without mark is fatal
+PASS T24c core: malformed position != flat
+PASS T25a minQvol24h wired into analyzer
+PASS T25b cumulative margin reservation
+PASS T25c stale observation gate
+PASS T25d orphan positions veto create
+PASS T25e BG_OFFLINE implemented in decide
+PASS T25f actions staleness gate in act
+PASS INT9 stale snapshot -> refuse to plan
+PASS INT10a orphan warned, round completes
+PASS INT10b orphan vetoes create
+PASS INT11a cumulative reservation: sizes are 2500/2500/1800 (not 3x2500)
+PASS INT11b total planned notional stays within balance x leverage
+PASS INT12a risk-shrunk grid created (not skipped)
+PASS INT12b shrunk value = 1950
+PASS INT12c shrink reported
+PASS T26a breaker latch survives probe commit
+PASS T26b lower sample cannot lower peak
+PASS T26c probe strict shape: null peak rejected
+PASS T27a phase 2 no longer skips per-grid loop
+PASS T27b phase 2 defer writes marker
+PASS T27c create requires zero stops in the round
+PASS T29 complete window advances cursor exactly to window end (resumable)
+PASS T29b fees loop: slices + verified-only cursor advance
+PASS T30a deploy uses DASH_WRITE_TOKEN
+PASS T30b deploy pins --config
+PASS T31a health uses funding-adjusted effPnlPct (observe)
+PASS T31b last_round_status written by runner and read by dashboard_data
+PASS T32a atomic mkdir acquisition
+PASS T32b stale takeover via atomic mv
+PASS T32c takeover liveness recheck (restore if owner alive)
+
+125 passed, 0 failed

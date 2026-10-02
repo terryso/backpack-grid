@@ -50,7 +50,12 @@ try {
   riskStateValid = !!r && typeof r === "object" && Number.isFinite(Number(r.peakEquity));
 } catch { riskStateValid = fs.existsSync(path.join(ROOT, "state/risk.json")) ? false : true; }
 let pendingCorrupt = false;
-try { JSON.parse(fs.readFileSync(path.join(ROOT, "state/pending_stops.json"), "utf8")); } catch { pendingCorrupt = fs.existsSync(path.join(ROOT, "state/pending_stops.json")); }
+try { JSON.parse(fs.readFileSync(path.join(ROOT, "state/pending_stops.json"), "utf8")); }
+catch {
+  // 解析失败或持久损坏标志文件存在都视为异常
+  pendingCorrupt = fs.existsSync(path.join(ROOT, "state/pending_stops.json"))
+    || fs.existsSync(path.join(ROOT, "state/pending_corrupt.json"));
+}
 let feesStats = null;
 try {
   const feesFile = JSON.parse(fs.readFileSync(path.join(ROOT, "state/fees.json"), "utf8"));

@@ -43,8 +43,9 @@ function makeStopGrid(io) {
       const p = pos.find((x) => x.symbol === symbol);
       if (p) {
         const raw = p.netQuantity;
-        // 平仓判定只接受明确的数值 0：null/布尔/空串/非有限值一律 = 未知
-        const nqKnown = raw !== null && raw !== undefined && raw !== "" && Number.isFinite(Number(raw));
+        // 平仓判定只接受明确的数值 0：先限类型（拒绝 null/布尔/对象/数组），再限数值
+        const nqKnown = (typeof raw === "number" && Number.isFinite(raw))
+          || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
         const nq = nqKnown ? Number(raw) : NaN;
         if (!nqKnown) {
           pending[market] = { at: new Date().toISOString(), reason: reason + " (netQuantity unreadable)" };
@@ -77,9 +78,11 @@ function makeStopGrid(io) {
         const p = pos.find((x) => x.symbol === symbol);
         if (!p) return true; // 条目消失 = 无持仓
         const raw = p.netQuantity;
-        if (raw === null || raw === undefined || raw === "") return false; // 未知 ≠ 已平仓
+        const typeOk = (typeof raw === "number" && Number.isFinite(raw))
+          || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+        if (!typeOk) return false; // 未知 ≠ 已平仓
         const nq = Number(raw);
-        return Number.isFinite(nq) && nq === 0;
+        return nq === 0;
       }, 20000);
     } catch { posGone = false; }
     if (!posGone) {

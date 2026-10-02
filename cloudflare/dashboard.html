@@ -105,7 +105,7 @@ function render(s) {
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
-  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 巡检 ${s.runStats.rounds} 轮 · 自动换仓 ${s.runStats.rotations} 次`;
+  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 巡检约 ${s.runStats.rounds} 轮 · 自动换仓 ${s.runStats.rotations} 次`;
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
@@ -120,7 +120,11 @@ function render(s) {
   if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
   if (s.riskStateValid === false) chips.push(`<span class="chip bad">risk.json 异常（新开仓已锁）</span>`);
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
-  chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>` : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>` : `<span class="chip ok">风控正常</span>`));
+  const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
+    s.dataValid === false, s.riskStateValid === false, s.pendingCorrupt].filter(Boolean).length;
+  chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>`
+    : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>`
+    : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`)));
   chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);

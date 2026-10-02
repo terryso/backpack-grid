@@ -1,0 +1,9 @@
+{
+  "twoLiveOwners": true,
+  "bRestoredIntoNewOwnersDirectory": true,
+  "aPid": 1981,
+  "cPid": 2240,
+  "currentLockPid": "2240",
+  "bOutput": "SKIP: stale lock owner came back alive (pid 1981)",
+  "boundary": "Original production lock protocol in temporary directory, three normal actors. Hooks synchronize stale contender B moving new owner A before C acquires. No account, browser or project-state operations."
+}

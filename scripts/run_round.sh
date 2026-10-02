@@ -13,6 +13,10 @@ LOCK=state/lock
 release_lock() {
   if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$LOCK" 2>/dev/null; fi
 }
+write_status() { echo "$1" > state/last_round_status 2>/dev/null || true; }
+upload_dashboard() {
+  [ -f scripts/upload_dashboard.sh ] && bash scripts/upload_dashboard.sh || true
+}
 if mkdir "$LOCK" 2>/dev/null; then
   echo $$ > "$LOCK/pid"
 else
@@ -36,7 +40,7 @@ else
     echo "SKIP: lost fresh-lock race"; exit 0
   fi
 fi
-trap 'release_lock' EXIT
+trap 'release_lock; upload_dashboard' EXIT
 
 echo "=== ROUND $(date '+%F %T') dryrun=${DRYRUN:-0} ==="
 echo "--- observe ---"

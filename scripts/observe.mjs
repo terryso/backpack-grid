@@ -192,12 +192,13 @@ try {
         hi = Math.floor((lo + hi) / 2);
         if (hi <= lo) break;
       }
+      // F06 修正：满页（可能被 1000 上限截断）不累计不推进，下轮重采本切片
+      if (fills.length >= 1000) break;
       for (const f of fills) {
         const vol = Number(f.price) * Number(f.quantity);
         if (f.feeSymbol === "USDC") rec.feeUsd = (rec.feeUsd || 0) + (Number(f.fee) || 0);
         if (f.isMaker) { rec.makerVol += vol; rec.makerN++; } else { rec.takerVol += vol; rec.takerN++; }
       }
-      if (fills.length >= 1000) break; // 6h 切片仍满页：异常密集，下轮从 lo 续采（防御）
       lo = hi; // 切片完整，推进
     }
     if (lo > rec.lastTo) rec.lastTo = lo; // 只推进已确认完整的区间

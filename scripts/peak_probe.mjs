@@ -44,7 +44,7 @@ const { mergeProbe } = await import(path.join(ROOT, "scripts", "peak_merge.cjs")
 const merged = mergeProbe(latest, eq);
 if (JSON.stringify(merged) !== JSON.stringify(latest)) {
   await fs.writeFile(RISK + ".probe." + process.pid + ".tmp", JSON.stringify(merged, null, 2)).then(() => fs.rename(RISK + ".probe." + process.pid + ".tmp", RISK));
-  console.log("peak merged:", latest.peakEquity, "->", mergedPeak, "| paused 保留:", JSON.stringify(merged.paused));
+  console.log("peak merged:", latest.peakEquity, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused));
 } else {
-  console.log("peak unchanged:", mergedPeak, "| equity:", eq);
+  console.log("peak unchanged:", merged.peakEquity, "| equity:", eq);
 }

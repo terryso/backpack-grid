@@ -1,0 +1,174 @@
+{
+  "baseline": "d030e392f3bf61401a2fddd656d142fd37eb1578",
+  "reports": [
+    {
+      "id": "C01_network_period_latch_preserved_but_runtime_error",
+      "error": "mergedPeak is not defined",
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T16:57:35.179Z"
+      }
+    },
+    {
+      "id": "F01_after_latest_read_still_clears_latch",
+      "error": "mergedPeak is not defined",
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": null,
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T16:57:35.187Z"
+      }
+    },
+    {
+      "id": "C02_inventory_missing_position_rejected",
+      "error": "exit 1"
+    },
+    {
+      "id": "C02_quantity_unknown_blocked",
+      "raw": null,
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T16:57:35.190Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_quantity_unknown_blocked",
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T16:57:35.191Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_quantity_unknown_blocked",
+      "raw": "",
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T16:57:35.191Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "F02_non_numeric_zero_coercion_still_flat",
+      "raw": false,
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "F02_non_numeric_zero_coercion_still_flat",
+      "raw": "   ",
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "F02_non_numeric_zero_coercion_still_flat",
+      "raw": [],
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "C02_numeric_string_zero_accepted",
+      "raw": "0",
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "C05_orphan_observation_now_allowed",
+      "error": null,
+      "positions": 1
+    },
+    {
+      "id": "C03_both_phases_still_recheck",
+      "phase1": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ],
+      "phase2": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ]
+    },
+    {
+      "id": "F06_full_slice_still_counted_again",
+      "firstFee": 99.9999999999986,
+      "secondFee": 199.99999999999292,
+      "cursor": 1790726400000
+    },
+    {
+      "id": "C07_ZEC_numeric_range_no_false_99_percent",
+      "snapshotAt": "2026-10-02T16:47:16.759Z",
+      "item": {
+        "rangeLow": 1218.7,
+        "rangeHigh": 1549.78,
+        "price": 1372.53,
+        "pnlPct": 0.21,
+        "effPnlPct": 0.21
+      },
+      "html": "<div class=\"health\"><span class=\"dot g\"></span><span>健康</span>\n    <span style=\"margin-left:auto;color:#8b94a7\">距止损 6.21%</span></div>"
+    }
+  ],
+  "boundary": "Production source with memory-only account/API/state I/O. No live trades or deployment."
+}

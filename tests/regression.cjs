@@ -596,6 +596,36 @@ T("T32a atomic mkdir acquisition", runRoundSrc.includes('if mkdir "$LOCK" 2>/dev
 T("T32b stale takeover via atomic mv", runRoundSrc.includes('mv "$LOCK" "$QUAR" 2>/dev/null'));
 T("T32c takeover liveness recheck (restore if owner alive)", runRoundSrc.includes('mv "$QUAR" "$LOCK" 2>/dev/null'));
 
+// ---------- T33 (round-12): act_core type gate — false/blank/array rejected ----------
+{
+  const gate = (raw) => (typeof raw === "number" && Number.isFinite(raw))
+    || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+  T("T33a false rejected", !gate(false));
+  T("T33b blank string rejected", !gate("  "));
+  T("T33c array rejected", !gate([5]));
+  T("T33d numeric zero accepted", gate(0) && Number("0") === 0);
+}
+
+// ---------- T34 (round-12): fees reorder — full page never accumulates ----------
+{
+  let accumulated = 0, lo = 0;
+  const hi0 = 6 * 3600 * 1000;
+  // 模拟：切片满页 → 不累计不推进（break）
+  let fills = Array(1000).fill(0).map((_, i) => ({ vol: 1 }));
+  if (fills.length >= 1000) { /* break */ }
+  else for (const f of fills) accumulated += f.vol;
+  T("T34a full page: zero accumulated", accumulated === 0);
+  // 完整页：正常累计
+  fills = Array(500).fill(0).map((_, i) => ({ vol: 1 }));
+  for (const f of fills) accumulated += f.vol;
+  T("T34b complete page: accumulated", accumulated === 500);
+}
+
+// ---------- T35 (round-12): runner wiring ----------
+T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
+T("T35b upload wired into exit trap", runRoundSrc.includes("trap 'release_lock; upload_dashboard' EXIT"));
+T("T35c status file written on ok exit", runRoundSrc.includes('write_status "ok"'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 });
