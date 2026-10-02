@@ -8,10 +8,10 @@ export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
 
 # 入口自锁：无论从 round_locked.sh（launchd）还是手动调用，一轮巡检全程持有
-# 内核 flock（state/round.lock）；持有者死亡自动释放，无陈旧锁接管路径。
-# 已在锁内（BG_LOCKED=1）则直接继续，避免递归。
+# 内核 flock（state/round.lock，业务子进程树共同持有 fd）；持有者死亡自动释放，
+# 无陈旧锁接管路径。已在锁内（BG_LOCKED=1）则直接继续，避免递归。
 if [ "${BG_LOCKED:-}" != "1" ]; then
-  exec python3 scripts/with_lock.py bash scripts/run_round.sh "$@"
+  exec /usr/bin/python3 scripts/with_lock.py --wait 45 bash scripts/run_round.sh "$@"
 fi
 
 # 通知辅助：由外层 flock 包装（with_lock.py）提供互斥；本脚本只负责轮次主体与状态

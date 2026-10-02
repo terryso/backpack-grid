@@ -37,7 +37,7 @@ if (!isFinite(eq) || eq <= 0) { console.log("bad equity:", eq); process.exit(0);
 
 // 提交走唯一写入通道：flock 事务内重读磁盘最新值，峰值取 max（较低采样不回退）、
 // paused 逐字保留最新——重读之后发生的熔断写入不可能被本进程覆盖
-const w = spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: eq })], { encoding: "utf8" });
+const w = spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: eq })], { encoding: "utf8" });
 if (w.status !== 0) { console.log("risk write refused (status", w.status, ") — kept for manual recovery"); process.exit(0); }
 const merged = JSON.parse(String(w.stdout).trim());
 console.log("peak:", pkNum, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused), "| equity:", eq);

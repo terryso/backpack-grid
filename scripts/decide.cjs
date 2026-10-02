@@ -112,7 +112,7 @@ const writeAtomic = (p, data) => {
     if (risk.lastEquity !== undefined) payload.lastEquity = risk.lastEquity;
     if (risk.lastAt !== undefined) payload.lastAt = risk.lastAt;
     if (justTripped) payload.paused = risk.paused;
-    const w = spawnSync("python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8" });
+    const w = spawnSync("/usr/bin/python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8" });
     if (w.status !== 0) lines.push(`RISK WRITE REFUSED (status ${w.status}): ${String(w.stderr || w.stdout || "").trim().slice(0, 140)} — kept for manual recovery`);
   }
   if (riskCorrupt) {

@@ -22,8 +22,8 @@
 ## 常用命令
 
 ```bash
-bash scripts/run_round.sh            # 手动跑一轮完整巡检（执行换仓）
-DRYRUN=1 bash scripts/run_round.sh   # 只观察+判定，不动手
+bash scripts/run_round.sh            # 手动跑一轮完整巡检（入口自锁，与定时轮互斥）
+DRYRUN=1 bash scripts/run_round.sh   # 只观察+判定，不动手（同样持锁）
 node scripts/analyze.cjs             # 单独看选币排名 Top10
 node tests/regression.cjs            # 回归测试（106 用例，~10 秒）
 bash scripts/upload_dashboard.sh     # 手动刷新线上仪表盘数据
@@ -109,7 +109,8 @@ decide 另支持 `BG_TICKERS_FILE`（确定性免网络行情）。改完代码�
 ## 文件清单
 
 ```
-scripts/   run_round.sh（编排+PID锁） observe.mjs decide.cjs act.mjs act_core.cjs
+scripts/   run_round.sh（编排+内核flock自锁） with_lock.py（统一锁包装） risk_write.py（risk.json唯一写通道）
+           observe.mjs decide.cjs act.mjs act_core.cjs peak_probe.mjs
            analyze.cjs api.cjs dashboard_data.cjs upload/deploy_dashboard.sh
 cloudflare/ worker.js + dashboard.html + wrangler.toml（仪表盘 Worker）
 tests/     regression.cjs（回归套件）

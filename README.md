@@ -44,7 +44,7 @@ Engineering details that survived 8 rounds of adversarial AI code review (~25 re
 - **Two-phase execution**: risk exits execute immediately; replacement creation waits for a re-observation — a stop is never delayed by market analysis
 - **Write-ahead intent ledger**: disable/delete/create intents persist before any exchange write; a lost response can always be recovered
 - **Shrink-to-fit risk budget**: if the portfolio stop-loss budget can't fit a full-size grid, it creates a smaller one instead of skipping
-- **PID lock + state validation**: concurrent rounds are blocked; corrupt state files quarantine new risk instead of silently resetting
+- **Kernel flock, whole lifetime**: all entries (scheduled, manual, peak probe) share one `fcntl` lock whose fd is inherited by the whole business process tree — a killed wrapper can't release the lock while the round is still running; corrupt state files quarantine new risk instead of silently resetting
 - **Budget semantics note**: the forward position budget (≤ equity×80%) and the peak-drawdown breaker are two DIFFERENT mechanisms — the former is a nominal constraint that loosens as profits grow, the latter is the true equity-floor guarantee
 
 ## Selection logic

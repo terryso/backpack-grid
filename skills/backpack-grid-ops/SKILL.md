@@ -19,8 +19,8 @@ description: Backpack 网格巡检系统（~/CascadeProjects/backpack_grid）的
 ## 巡检轮次
 
 ```bash
-bash scripts/run_round.sh            # 手动跑一轮（会执行换仓）
-DRYRUN=1 bash scripts/run_round.sh   # 空跑：只观察+判定
+bash scripts/run_round.sh            # 手动跑一轮（入口自锁——被持有时等待45s后跳过exit 3）
+DRYRUN=1 bash scripts/run_round.sh   # 空跑：只观察+判定（同样持锁）
 node tests/regression.cjs            # 回归测试，改代码后必须全绿再提交
 ```
 

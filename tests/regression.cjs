@@ -10,7 +10,8 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { spawnSync, spawn } = require("node:child_process");
+const sleepSync = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 const ROOT = path.join(__dirname, "..");
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const actSrc = fs.readFileSync(path.join(ROOT, "scripts", "act.mjs"), "utf8");
@@ -251,7 +252,7 @@ function runDecide(dir, offline, tickersFile) {
 
 // ---------- RWP: risk_write.py 单一写入通道（F01 事务 + 合并语义） ----------
 function runRiskWrite(dir, payload) {
-  return spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
+  return spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -277,12 +278,60 @@ function runRiskWrite(dir, payload) {
   runRiskWrite(dir, { peakEquity: 600, paused: { at: "T0", reason: "trip" } });
   const kids = [];
   for (let i = 1; i <= 12; i++) {
-    kids.push(spawnSync("python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
+    kids.push(spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
       { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 }));
   }
   const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
   T("RWP4 concurrent probe commits: latch survives, peak = max", kids.every((k) => k.status === 0)
     && after.peakEquity === 610 && after.paused && after.paused.reason === "trip");
+}
+
+// ---------- LC: with_lock.py 锁生命周期（14 轮复核三场景） ----------
+function runWithLock(dir, args) {
+  return spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), ...args],
+    { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
+}
+{
+  const dir = makeFixture({});
+  // LC3: 首次运行无 state/ 目录 → 自动创建并成功
+  fs.rmSync(path.join(dir, "state"), { recursive: true, force: true });
+  const r3 = runWithLock(dir, ["echo", "boot"]);
+  T("LC3 missing state/ dir: wrapper boots and creates lock file", r3.status === 0
+    && fs.existsSync(path.join(dir, "state", "round.lock")));
+
+  // LC1: SIGKILL 包装器 → 业务子进程树存活并共同持锁 → 第二包装器被拒（exit 3）
+  const biz = spawn("/usr/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), "sleep", "4"],
+    { env: { ...process.env, BG_ROOT: dir }, stdio: "ignore" });
+  sleepSync(800);
+  const bizAlive = spawnSync("/usr/bin/pgrep", ["-f", "sleep 4"]).status === 0;
+  biz.kill("SIGKILL");
+  const r1 = runWithLock(dir, ["echo", "intruder"]);
+  T("LC1 wrapper SIGKILLed, business alive: second wrapper rejected (lock fd inherited)",
+    bizAlive && r1.status === 3);
+  // LC2: 业务自然退出 → 锁释放、可再次获取
+  sleepSync(4200);
+  T("LC2 after business exits, lock is acquirable again",
+    runWithLock(dir, ["echo", "after-exit"]).status === 0);
+
+  // LC4: --wait 短持锁等待后获取；长持锁超时跳过（不排队）
+  const lockFile = JSON.stringify(path.join(dir, "state", "round.lock"));
+  const holder = spawn("/usr/bin/python3", ["-c",
+    `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(2)`],
+    { stdio: "ignore" });
+  sleepSync(300);
+  const t0 = Date.now();
+  const r4a = runWithLock(dir, ["--wait", "5", "echo", "waited"]);
+  T("LC4a --wait waits out a short holder then acquires",
+    r4a.status === 0 && Date.now() - t0 >= 1200);
+  const holder2 = spawn("/usr/bin/python3", ["-c",
+    `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(30)`],
+    { stdio: "ignore" });
+  sleepSync(300);
+  const t1 = Date.now();
+  const r4b = runWithLock(dir, ["--wait", "1", "echo", "never"]);
+  T("LC4b --wait times out with skip (no queue behind long rounds)",
+    r4b.status === 3 && Date.now() - t1 < 4000);
+  try { holder.kill("SIGKILL"); holder2.kill("SIGKILL"); } catch {}
 }
 
 // ---------- T19 (round-5 #1): protection-verify stage funnels into cleanup ----------
