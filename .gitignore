@@ -21,3 +21,5 @@ state/
 !.dev.vars.example
 .env*
 !.env.example
+
+coverage/

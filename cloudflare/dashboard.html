@@ -116,6 +116,10 @@ function render(s) {
   if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
   if (s.riskStateValid === false) chips.push(`<span class="chip bad">risk.json 异常（新开仓已锁）</span>`);
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
+  if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
+  if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
+  if (s.riskStateValid === false) chips.push(`<span class="chip bad">risk.json 异常（新开仓已锁）</span>`);
+  if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
   chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>` : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>` : `<span class="chip ok">风控正常</span>`));
   chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");

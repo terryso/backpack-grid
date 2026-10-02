@@ -69,7 +69,7 @@
   },
   "tradeUrlBase": "https://backpack.exchange/trade/",
   "watch": {
-    "spaceId": 8,
+    "spaceId": 42,
     "page": "p1"
   },
   "exitCostBufferUsd": 15,

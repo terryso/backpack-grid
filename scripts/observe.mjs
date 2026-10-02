@@ -168,38 +168,37 @@ await fs.writeFile(path.join(ROOT, "state/observed.json"), JSON.stringify(observ
 // 不满页 = 窗口已完整，游标推进到窗口终点。只有确认完整的区间才推进游标。
 try {
   const feesPath = path.join(ROOT, "state/fees.json");
-  let fees = { symbols: {}, acquiredAt: null };
+  let fees = { symbols: {}, acquiredAt: null, incomplete: false };
   try { fees = JSON.parse(await fs.readFile(feesPath, "utf8")); } catch {}
+  fees.incomplete = false;
   const nowMs = Date.now();
   const symbols = new Set([...(auto.params?.symbols || []).map((s) => s.symbol), ...Object.keys(fees.symbols || {})]);
   for (const symbol of symbols) {
     const rec = fees.symbols[symbol] || { lastTo: Date.UTC(2026, 8, 30, 0, 0, 0), feeUsd: 0, makerVol: 0, takerVol: 0, makerN: 0, takerN: 0 };
-    let cursor = Math.max(Number(rec.lastTo) || 0, Date.UTC(2026, 8, 30, 0, 0, 0));
-    const seen = new Set();
+    // 逐 6h 切片回补：满页(1000)时二分缩窗重取（切片互不重叠，tradeId 兜底去重）；
+    // 只有确认完整的切片（<1000）才推进游标；本轮未追平的部分下轮续采
+    let lo = Math.max(Number(rec.lastTo) || 0, Date.UTC(2026, 8, 30, 0, 0, 0));
     let guard = 0;
-    while (cursor < nowMs - 1000 && guard++ < 50) {
-      const to = Math.min(cursor + 24 * 3600 * 1000, nowMs);
-      const fr = await page.fetch(`https://api.backpack.exchange/wapi/v1/history/fills?subaccountId=${SUB}&symbol=${symbol}&from=${cursor}&to=${to}&limit=1000`, { credentials: "include", timeout: 20000 });
-      const fills = JSON.parse(fr.body);
-      let lastFillTs = 0;
+    while (lo < nowMs - 1000 && guard++ < 30) {
+      let hi = Math.min(lo + 6 * 3600 * 1000, nowMs);
+      let fills = [];
+      // 满页则二分缩窗（最多 5 次），确保每个请求都完整
+      for (let shrink = 0; shrink < 5; shrink++) {
+        const fr = await page.fetch(`https://api.backpack.exchange/wapi/v1/history/fills?subaccountId=${SUB}&symbol=${symbol}&from=${lo}&to=${hi}&limit=1000`, { credentials: "include", timeout: 20000 });
+        fills = JSON.parse(fr.body);
+        if (fills.length < 1000) break;
+        hi = Math.floor((lo + hi) / 2);
+        if (hi <= lo) break;
+      }
       for (const f of fills) {
-        if (seen.has(f.tradeId)) continue; // 重叠窗口去重
-        seen.add(f.tradeId);
         const vol = Number(f.price) * Number(f.quantity);
         if (f.feeSymbol === "USDC") rec.feeUsd = (rec.feeUsd || 0) + (Number(f.fee) || 0);
         if (f.isMaker) { rec.makerVol += vol; rec.makerN++; } else { rec.takerVol += vol; rec.takerN++; }
-        lastFillTs = Math.max(lastFillTs, Number(new Date(f.timestamp).getTime()) || 0);
       }
-      if (fills.length >= 1000) {
-        // 满页：窗口可能被截断，游标推进到最后一条成交（tradeId 去重保证不重复计）
-        if (lastFillTs <= cursor) break; // 无进展防御
-        cursor = lastFillTs;
-        continue;
-      }
-      cursor = to; // 窗口完整（<1000）
-      break;
+      if (fills.length >= 1000) break; // 6h 切片仍满页：异常密集，下轮从 lo 续采（防御）
+      lo = hi; // 切片完整，推进
     }
-    rec.lastTo = cursor;
+    if (lo > rec.lastTo) rec.lastTo = lo; // 只推进已确认完整的区间
     fees.symbols[symbol] = rec;
   }
   fees.acquiredAt = new Date().toISOString();

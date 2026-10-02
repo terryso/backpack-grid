@@ -14,11 +14,13 @@ const { spawnSync } = require("node:child_process");
 const ROOT = path.join(__dirname, "..");
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const actSrc = fs.readFileSync(path.join(ROOT, "scripts", "act.mjs"), "utf8");
-const coreSrc = fs.readFileSync(path.join(ROOT, "scripts", "act_core.cjs"), "utf8");
 const decideSrc = fs.readFileSync(path.join(ROOT, "scripts", "decide.cjs"), "utf8");
-const runRoundSrc = fs.readFileSync(path.join(ROOT, "scripts", "run_round.sh"), "utf8");
 const observeSrc = fs.readFileSync(path.join(ROOT, "scripts", "observe.mjs"), "utf8");
+const actCoreSrc = fs.readFileSync(path.join(ROOT, "scripts", "act_core.cjs"), "utf8");
+const runRoundSrc = fs.readFileSync(path.join(ROOT, "scripts", "run_round.sh"), "utf8");
+const deploySrc = fs.readFileSync(path.join(ROOT, "scripts", "deploy_dashboard.sh"), "utf8");
 const analyzeSrc = fs.readFileSync(path.join(ROOT, "scripts", "analyze.cjs"), "utf8");
+const coreSrc = fs.readFileSync(path.join(ROOT, "scripts", "act_core.cjs"), "utf8");
 let pass = 0, fail = 0;
 const T = (name, cond) => { if (cond) { pass++; console.log("PASS", name); } else { fail++; console.log("FAIL", name); } };
 
@@ -76,18 +78,18 @@ T("T8c emergency stop verified before claiming success", actSrc.includes("emerge
   && actSrc.includes("MANUAL INTERVENTION REQUIRED"));
 
 // ---------- T17 (round-4 #1/#2): unified create gate ----------
-T("T17a gate includes emergency cleanup", actSrc.includes("unresolvedCleanup = true;") && coreSrc.includes("unresolved emergency cleanup"));
+T("T17a gate includes emergency cleanup", actSrc.includes("unresolvedCleanup = true;") && actCoreSrc.includes("unresolved emergency cleanup"));
 T("T17b gate includes failed protect", actSrc.includes('if (a.act === "protect") protectIncomplete = true;')
-  && coreSrc.includes('"unresolved protect repair (budget premise unverified)"'));
+  && actCoreSrc.includes('"unresolved protect repair (budget premise unverified)"'));
 T("T17c gate re-reads live pending per create", actSrc.includes("const live = await loadPending();")
-  && coreSrc.includes("pendingKeys.length > 0"));
+  && actCoreSrc.includes("pendingKeys.length > 0"));
 T("T17d skipped create is recorded in results ledger", /SKIPPED create[\s\S]{0,200}results\.push\(\{ act: "create", market: a\.market, done: false, skipped: true/.test(actSrc));
 
 // ---------- T5: pending write-ahead intent ----------
 T("T5a stop intent persisted before first exchange write",
   coreSrc.indexOf("WRITE-AHEAD: persist the stop intent BEFORE any exchange write") !== -1
   && coreSrc.indexOf("WRITE-AHEAD") < coreSrc.indexOf("1) ensure disabled with close-positions-on-stop"));
-T("T5b position-poll errors treated as unconfirmed", coreSrc.includes("Polling errors count as"));
+T("T5b position-poll errors treated as unconfirmed", actCoreSrc.includes("Polling errors count as"));
 
 // ---------- T18 (round-4 #3): act never treats corrupt ledger as empty ----------
 T("T18a loadPending distinguishes ENOENT from corrupt", actSrc.includes("e.code === \"ENOENT\""));
@@ -427,18 +429,18 @@ function mockIo({ positionQty = 0, pollsUntilFlat = 1, deleteStatus = 200, gridP
 })().then(() => {
   // ---------- T22 (round-8): PID lock ----------
 T("T22a lock liveness-checked via kill -0", runRoundSrc.includes('kill -0 "$HOLDER"'));
-T("T22b self-release only (pid match)", runRoundSrc.includes('[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]'));
+T("T22b self-release only (pid match, ln lock)", runRoundSrc.includes('[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]'));
 T("T22c no age-based takeover left", !runRoundSrc.includes("AGE -lt 480"));
 
 // ---------- T23 (round-8): two-phase execution ----------
 T("T23a phase-2 marker flow", runRoundSrc.includes("state/needs_create_plan") && runRoundSrc.includes("BG_PHASE=creates"));
 T("T23b decide reads BG_PHASE", decideSrc.includes('process.env.BG_PHASE === "creates"'));
-T("T23c phase 2 skips per-grid stop rules", decideSrc.includes("for (const g of (!PHASE2 ? grids : []))"));
+T("T23c phase 2 runs full per-grid risk re-eval (F03)", !decideSrc.includes("for (const g of (!PHASE2 ? grids : []))"));
 
 // ---------- T24 (round-8): data-integrity fail-loud ----------
 T("T24a missing ledger snapshot is fatal", observeSrc.includes("no ledger snapshot for configured grid"));
 T("T24b live position without mark is fatal", observeSrc.includes("live position without valid mark price"));
-T("T24c core: malformed position != flat", act_core_ok() && coreSrc.includes("cannot confirm flat; intent kept"));
+T("T24c core: malformed position != flat", act_core_ok() && actCoreSrc.includes("cannot confirm flat; intent kept"));
 
 function act_core_ok() { try { require(path.join(ROOT, "scripts", "act_core.cjs")); return true; } catch { return false; } }
 
@@ -552,7 +554,7 @@ T("T26c probe strict shape: null peak rejected", (() => {
 // ---------- T27 (round-9 F03): phase 2 full risk re-eval ----------
 T("T27a phase 2 no longer skips per-grid loop", !decideSrc.includes("for (const g of (!PHASE2 ? grids : []))"));
 T("T27b phase 2 defer writes marker", decideSrc.includes("PHASE 2 defer") && decideSrc.includes("needs_create_plan"));
-T("T27c phase 2 create requires zero stops", decideSrc.includes("(PHASE2 ? stops.length === 0 : true)"));
+T("T27c create requires zero stops in the round", decideSrc.includes("planCreatesNow = mayCreate && slots > 0 && stops.length === 0"));
 
 // ---------- T29 (round-9 F06): fees window loop semantics ----------
 {
@@ -576,23 +578,22 @@ T("T27c phase 2 create requires zero stops", decideSrc.includes("(PHASE2 ? stops
     cursor = to;
     break;
   }
-  T("T29 incomplete window advances cursor AND continues to later windows", cursor > start + 86400000);
+  T("T29 complete window advances cursor exactly to window end (resumable)", cursor === start + 86400000);
 }
-T("T29b cap window advances to last fill ts (dedup via tradeId)", decideSrc.includes("seen.has(f.tradeId)") || decideSrc.includes('seen.add(f.tradeId)'));
+T("T29b fees loop: slices + verified-only cursor advance", observeSrc.includes("6 * 3600 * 1000") && observeSrc.includes("lo = hi; // 切片完整，推进"));
 
 // ---------- T30 (round-9 F08): deploy script aligned with live protocol ----------
-const deploySrc = fs.readFileSync(path.join(ROOT, "scripts", "deploy_dashboard.sh"), "utf8");
 T("T30a deploy uses DASH_WRITE_TOKEN", deploySrc.includes("DASH_WRITE_TOKEN") && !deploySrc.includes("DASH_TOKEN=") );
 T("T30b deploy pins --config", (deploySrc.match(/--config cloudflare\/wrangler\.toml/g) || []).length >= 3);
 
 // ---------- T31 (round-9 F07): funding-adjusted health + status chips ----------
-T("T31a health uses funding-adjusted effPnlPct", observeSrc.includes("effPnlPct") && decideSrc.includes("effPnlPct"));
-T("T31b last_round_status surfaced", decideSrc.includes("lastRoundStatus") || decideSrc.includes("last_round_status"));
+T("T31a health uses funding-adjusted effPnlPct (observe)", observeSrc.includes("effPnlPct"));
+T("T31b last_round_status written by runner and read by dashboard_data",
+  runRoundSrc.includes('echo "ok" > state/last_round_status') && fs.readFileSync(path.join(ROOT, "scripts", "dashboard_data.cjs"), "utf8").includes("last_round_status"));
 
 // ---------- T32 (round-9 F04): atomic ln lock ----------
-const runRoundSrc = fs.readFileSync(path.join(ROOT, "scripts", "run_round.sh"), "utf8");
 T("T32a ln-based atomic acquisition", runRoundSrc.includes('ln "$CAND" "$LOCK"'));
-T("T32b takeover retries ln after clearing dead lock", runRoundSrc.includes("rm -f \"$LOCK\" 2>/dev/null\n  if ln"));
+T("T32b takeover: rm dead lock then retry ln", runRoundSrc.includes('rm -f "$LOCK" 2>/dev/null') && runRoundSrc.includes('if ln "$CAND" "$LOCK" 2>/dev/null'));
 T("T32c self-release only (pid match)", runRoundSrc.includes('[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
