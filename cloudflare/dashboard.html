@@ -77,11 +77,12 @@
   <div id="content" class="err">加载中…</div>
 </div>
 <script>
-const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const pnlCls = (v) => v >= 0 ? "pos" : "neg";
+const fmt = (n, d = 2) => n == null || !Number.isFinite(Number(n)) ? "未知" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const pnlCls = (v) => v == null ? "muted" : v >= 0 ? "pos" : "neg";
 // 健康徽标：距最近触发条件（止盈/止损/出界）的余量，三档颜色
 function healthRow(x, s) {
   // 与决策同口径：资金费调整后的盈亏百分比
+  if (x.effPnlPct == null && x.pnlPct == null) return `<div class="health">盈亏未知</div>`;
   const pnl = x.effPnlPct != null ? Number(x.effPnlPct) : (Number(x.pnlPct) || 0);
   const tp = s.tpPct ?? 10, sl = s.slPct ?? 6;
   const dists = [
@@ -89,7 +90,7 @@ function healthRow(x, s) {
     { name: "止损", left: +(pnl + sl).toFixed(2) },
   ];
   const lo = Number(x.rangeLow), hi = Number(x.rangeHigh), px = Number(x.price);
-  if (isFinite(px) && isFinite(lo) && isFinite(hi) && hi > lo) {
+  if (x.price != null && x.rangeLow != null && x.rangeHigh != null && isFinite(px) && px > 0 && isFinite(lo) && isFinite(hi) && hi > lo) {
     const edge = Math.min(px - lo, hi - px);
     dists.push({ name: "出界", left: +(edge / px * 100).toFixed(2) });
   }
@@ -100,31 +101,37 @@ function healthRow(x, s) {
     <span style="margin-left:auto;color:#8b94a7">距${nearest.name} ${nearest.left}%</span></div>`;
 }
 function render(s) {
+  const escape = (v) => typeof v === "string" ? v.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))
+    : Array.isArray(v) ? v.map(escape) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, escape(x)])) : v;
+  s = escape(s);
   const c = document.getElementById("content");
   c.classList.remove("err"); // the loading/错误样式带 40px padding，渲染后必须移除
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
-  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 巡检约 ${s.runStats.rounds} 轮 · 自动换仓 ${s.runStats.rotations} 次`;
+  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 确认轮次 ${s.runStats.rounds} · 确认停止 ${s.runStats.exits} 次（事件账本）`;
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
   const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
   const pct = Math.min(100, camp / tier * 100);
   const chips = [];
+  if (s.quotaExceeded) chips.push(`<span class="chip bad">动态接口不可用：显示部署时的历史快照</span>`);
   if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
   if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
   if (s.riskStateValid === false) chips.push(`<span class="chip bad">risk.json 异常（新开仓已锁）</span>`);
+  if (ageMin > 20 || !Number.isFinite(ageMin)) chips.push(`<span class="chip bad">快照已过期</span>`);
+  if (s.riskWriteValid !== true) chips.push(`<span class="chip bad">风控写入未确认</span>`);
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
-    s.dataValid === false, s.riskStateValid === false, s.pendingCorrupt].filter(Boolean).length;
+    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded].filter(Boolean).length;
   chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>`
     : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>`
     : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`)));
-  chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
+  chips.push(s.pendingCorrupt ? `<span class="chip bad">待清理状态未知</span>` : (s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
-  if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct}% · ${s.fees.fills} 笔</span>`);
+  if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct == null ? "未知" : fmt(s.fees.makerPct, 1) + "%"} · ${s.fees.fills} 笔 · ${s.fees.incomplete ? "历史未收齐" : "已追平"}</span>`);
   // equity sparkline
   const curve = s.curve || [];
   let svg = "";
@@ -139,15 +146,16 @@ function render(s) {
       <text x="4" y="${H - 4}" fill="#8b94a7" font-size="10">min ${fmt(min)}</text></svg>`;
   }
   c.innerHTML = `
+    ${s.quotaExceeded ? `<div class="section"><span class="chip bad">动态接口不可用：以下是部署时的历史快照，不能视为当前实盘状态</span></div>` : ""}
     <div class="cards">
       <div class="card"><div class="k">总权益</div><div class="v">${fmt(s.equity)}</div></div>
-      <div class="card"><div class="k">24h 变化</div><div class="v ${pnlCls(s.change24h ?? 0)}">${(s.change24h ?? 0) >= 0 ? "+" : ""}${fmt(s.change24h ?? 0)}</div><div class="muted" style="font-size:10px">较 24h 前 ${s.change24hPct != null ? (s.change24hPct >= 0 ? "+" : "") + fmt(s.change24hPct) + "%" : "-"}</div></div>
-      <div class="card"><div class="k">策略累计盈亏 <span class="muted" style="font-size:10px">自 ${s.strategyBaselineAt || "09-30"}</span></div>
-        <div class="v ${pnlCls(s.strategyTotalPnl ?? 0)}">${(s.strategyTotalPnl ?? 0) >= 0 ? "+" : ""}${fmt(s.strategyTotalPnl ?? 0)}</div>
-        <div class="muted" style="font-size:10px">含已落袋 + 浮动</div></div>
+      <div class="card"><div class="k">24h 变化</div><div class="v ${pnlCls(s.change24h)}">${s.change24h != null && s.change24h >= 0 ? "+" : ""}${fmt(s.change24h)}</div><div class="muted" style="font-size:10px">较 24h 前 ${s.change24hPct != null ? (s.change24hPct >= 0 ? "+" : "") + fmt(s.change24hPct) + "%" : "-"}</div></div>
+      <div class="card"><div class="k">${s.strategyTotalPnl == null ? "权益变化（未扣出入金）" : "净现金流调整后盈亏"} <span class="muted" style="font-size:10px">自 ${s.strategyBaselineAt || "09-30"}</span></div>
+        <div class="v ${pnlCls(s.strategyTotalPnl ?? s.equityChange)}">${fmt(s.strategyTotalPnl ?? s.equityChange)}</div>
+        <div class="muted" style="font-size:10px">${s.strategyTotalPnl == null ? "归因账本待核对，暂不作为策略收益" : "资金费／奖励归因另列"}</div></div>
       <div class="card"><div class="k">在跑网格盈亏（${g.length} 格）</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
       <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div><div class="muted" style="font-size:10px">峰值采样 1 分钟 · 曲线 15 分钟</div></div>
-      <div class="card"><div class="k">历史最大回撤 <span class="muted" style="font-size:10px">自策略启动 · 曲线口径</span></div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div></div>
+      <div class="card"><div class="k">历史最大回撤 <span class="muted" style="font-size:10px">最近 400 点 · 曲线口径</span></div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div></div>
     </div>
     <div class="section">
       <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>
@@ -160,7 +168,7 @@ function render(s) {
         ${g.map((x) => `<div class="gcard">
           <div class="ghead"><span class="gmkt">${x.market}</span><span class="gdir">${x.direction} · ${x.count} 格 · 投入 ${fmt(x.value, 0)}</span>
             <span class="${x.status === "Triggered" ? "chip ok" : "chip bad"}" style="margin-left:auto">${x.status === "Triggered" ? "运行" : "已停止"}</span></div>
-          ${(x.price && Number(x.pnlPct) !== null) ? healthRow(x, s) : ""}
+          ${(x.price != null && x.pnlPct != null && s.dataValid) ? healthRow(x, s) : ""}
           <div class="grow"><span class="k">区间</span><span>${x.rangeLow} ~ ${x.rangeHigh}</span></div>
           <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
         </div>`).join("")}
@@ -194,9 +202,12 @@ function render(s) {
 async function load() {
   try {
     const r = await fetch(`/api/snapshot?t=${Date.now()}`);
-    if (!r.ok) throw new Error(r.status);
+    if (!r.ok) throw new Error(r.status === 429 ? "Cloudflare 每日请求额度已耗尽（1027）" : "HTTP " + r.status);
     render(await r.json());
-  } catch (e) { document.getElementById("content").textContent = "加载失败：" + e.message; }
+  } catch (e) {
+    if (window.__SNAPSHOT_FALLBACK__) render({ ...window.__SNAPSHOT_FALLBACK__, quotaExceeded: true, dataValid: false, lastRoundStatus: "snapshot_unavailable" });
+    else document.getElementById("content").textContent = "加载失败：" + e.message;
+  }
 }
 function markLiked() {
   const btn = document.getElementById("likeBtn");
@@ -214,14 +225,16 @@ document.getElementById("likeBtn").addEventListener("click", async () => {
   const btn = document.getElementById("likeBtn");
   if (btn.disabled) return;
   try {
-    const j = await (await fetch(`/api/like`, { method: "POST" })).json(); // 必定 +1
+    const response = await fetch(`/api/like`, { method: "POST" });
+    if (!response.ok) throw new Error("点赞失败");
+    const j = await response.json();
     document.getElementById("likeCount").textContent = j.likes;
     markLiked();
   } catch {}
 });
 load();
 loadLikes();
-setInterval(load, 60000);
+setInterval(() => { if (!document.hidden) load(); }, 15 * 60000);
 // iOS/浏览器用页面缓存恢复时（主屏幕打开、切标签页回来），定时器不会触发——强制拉取
 window.addEventListener("pageshow", (e) => { if (e.persisted) { load(); loadLikes(); } });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) { load(); loadLikes(); } });

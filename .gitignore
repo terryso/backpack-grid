@@ -23,3 +23,8 @@ state/
 !.env.example
 
 coverage/
+
+node_modules/
+.wrangler/
+
+cloudflare/public/

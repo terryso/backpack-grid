@@ -5,18 +5,21 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { getMarkets, getTickers, getKlines, getFunding, perpMarkets } = require("./api.cjs");
-const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "config.json"), "utf8"));
+const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
+const { finiteNumber } = require("./state_schema.cjs");
+const { tickDecimals } = require("./grid_sizing.cjs");
+const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 
 const TOP_N = Number(process.argv[2] || 15);
 const MIN_QVOL = Number(cfg.minQvol24h) || 800_000; // 24h quote volume floor (liquidity)
-const EXCLUDE = (process.env.EXCLUDE || "MON_USDC_PERP,PENGU_USDC_PERP,PUMP_USDC_PERP").split(",");
+const EXCLUDE = (process.env.EXCLUDE || "").split(",");
 
 function analyze(symbol, kl) {
   const num = (k, objKey, arrIdx) => (k[objKey] !== undefined ? Number(k[objKey]) : Number(k[arrIdx]));
   const closes = kl.map((k) => num(k, "close", 4));
   const highs = kl.map((k) => num(k, "high", 2));
   const lows = kl.map((k) => num(k, "low", 3));
-  if (closes.length < 72 || closes.some((c) => !isFinite(c))) return null;
+  if (closes.length < 72 || closes.some((c) => !isFinite(c) || c <= 0) || highs.some((c) => !isFinite(c) || c <= 0) || lows.some((c) => !isFinite(c) || c <= 0)) return null;
   const logRet = [];
   for (let i = 1; i < closes.length; i++) logRet.push(Math.abs(Math.log(closes[i] / closes[i - 1])));
   const path24 = logRet.slice(-24).reduce((s, x) => s + x, 0);
@@ -54,7 +57,9 @@ function analyze(symbol, kl) {
     const a = analyze(sym, kl);
     if (!a) continue;
     const f = await getFunding(sym);
-    const fundingRate = f && f.length ? Number(f[f.length - 1].rate ?? f[f.length - 1].fundingRate ?? 0) : 0;
+    const fundingRaw = Array.isArray(f) && f.length ? f[f.length - 1].rate ?? f[f.length - 1].fundingRate : null;
+    if (!finiteNumber(fundingRaw)) continue; // unknown funding cannot score as free
+    const fundingRate = Number(fundingRaw);
 
     const liq = Math.min(2.2, Math.log10(qvol / 1e6 + 1));
     // cap chop so a near-zero net displacement (one big round-trip back to start)
@@ -68,7 +73,7 @@ function analyze(symbol, kl) {
     // exchange constraints
     const tickSize = Number(m.filters?.price?.tickSize || 0) || null;
     const minQuantity = Number(m.filters?.quantity?.minQuantity || 0) || 0;
-    const decimals = tickSize ? Math.max(0, Math.ceil(-Math.log10(tickSize))) : 6;
+    const decimals = tickSize ? tickDecimals(tickSize) : 6;
     const rnd = (v, up) => {
       if (!tickSize) return +v.toPrecision(6);
       const t = up ? Math.ceil(v / tickSize) : Math.floor(v / tickSize);
@@ -88,7 +93,7 @@ function analyze(symbol, kl) {
       sDrift24: a.sDrift24, sDrift72: a.sDrift72,
       range24: +(a.range24 * 100).toFixed(1), range7d: +(a.range7d * 100).toFixed(1),
       drift24: +(a.drift24 * 100).toFixed(2), fundingRate,
-      qvol24: Math.round(qvol), tickSize, minQuantity,
+      qvol24: Math.round(qvol), tickSize, minQuantity, minOrderUsd,
       grid: { lower, upper, count, widthPct: +(widthPct * 100).toFixed(1), spacingPct: +((widthPct / count) * 100).toFixed(3) },
     });
   }
@@ -106,7 +111,10 @@ function analyze(symbol, kl) {
     .slice(0, 5)
     .map((r) => ({ symbol: r.symbol, dir: r.sDrift24 > 0 ? "long" : "short", drift24: +(r.sDrift24 * 100).toFixed(2), price: r.price }));
   const out = { generatedAt: new Date().toISOString(), top, directional };
-  fs.writeFileSync(path.join(__dirname, "..", "state", "analysis.json"), JSON.stringify(out, null, 2));
+  const target = path.join(ROOT, "state", "analysis.json");
+  const tmp = target + `.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(out, null, 2));
+  fs.renameSync(tmp, target);
 
   console.log("rank symbol            score chop r24%  r7d%  drift24% funding   qvol24       grid lower~upper / count (width%)");
   top.forEach((r, i) => {

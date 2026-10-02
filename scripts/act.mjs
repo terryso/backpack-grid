@@ -21,9 +21,16 @@ if (ageMin > 15) {
   // a stale plan was written by an older decide round (decide failed midway?) — executing
   // it against current state would be blind. Let the next decide round re-plan instead.
   console.log(`STALE ACTIONS: actions.json is ${ageMin.toFixed(1)} min old — refusing to execute; next decide round will re-plan`);
-  process.exit(0); // not a failure: nothing was executed, next round re-plans
+  process.exit(2); // report refused execution, do not mark the round successful
 }
 const actions = JSON.parse(await fs.readFile(actionsFile, "utf8"));
+const { createHash } = await import("node:crypto");
+const meta = JSON.parse(await fs.readFile(path.join(ROOT, "state/actions_meta.json"), "utf8"));
+const hash = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+if (meta.configHash !== hash(cfg) || meta.actionsHash !== hash(actions) || meta.subaccountId !== SUB
+  || !Number.isFinite(Date.parse(meta.at)) || Date.now() - Date.parse(meta.at) > 10 * 60000 || Date.parse(meta.at) > Date.now() + 60000) {
+  throw new Error("action plan binding/staleness check failed");
+}
 const results = [];
 if (!actions.length) { console.log("no actions"); process.exit(0); }
 
@@ -62,7 +69,7 @@ const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.re
 const { createRequire } = await import("node:module");
 // import.meta.url is an eval artifact under the ego-browser runner — anchor the require
 // base to the real file location (round-7 #1: MODULE_NOT_FOUND before any action)
-const { makeStopGrid, evaluateCreateGate } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
+const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
 
 async function currentMark(symbol) {
   const marks = await jget("/api/v1/markPrices");
@@ -84,8 +91,7 @@ async function loadPending() {
   const p = path.join(ROOT, "state/pending_stops.json");
   try {
     const parsed = JSON.parse(await fs.readFile(p, "utf8"));
-    const structOk = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      && Object.values(parsed).every((v) => v !== null && typeof v === "object" && !Array.isArray(v));
+    const structOk = pendingStructOk(parsed);
     if (!structOk) throw Object.assign(new Error("invalid pending ledger structure"), { code: "EBADSTRUCT" });
     return { pending: parsed, corrupt: false };
   } catch (e) {
@@ -171,12 +177,33 @@ for (const a of actions) {
           anyFailure = true;
           return { done: false, skipped: true, error: `skipped: ${gate.why}` };
         }
+        if (!meta.riskWriteOk) throw new Error("risk state write unconfirmed");
+        const { riskStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./state_schema.cjs");
+        const risk = JSON.parse(await fs.readFile(path.join(ROOT, "state/risk.json"), "utf8"));
+        if (!riskStructOk(risk) || risk.paused) throw new Error("risk state invalid or paused");
         const symbol = symOf(a.market);
         const auto1 = await getAutomation();
+        if (!Array.isArray(auto1.params?.symbols)) throw new Error("invalid automation config");
         if ((auto1.params?.symbols || []).some((s) => s.symbol === symbol))
           throw new Error(`create ${a.market}: already configured — refusing to overwrite`);
+        if (auto1.params.symbols.length >= cfg.maxGrids) throw new Error("live grid slot cap reached");
+        const livePositions = await jget(`/api/v1/position?subaccountId=${SUB}`);
+        if (!Array.isArray(livePositions) || livePositions.some((p) => !auto1.params.symbols.some((g) => g.symbol === p.symbol))) throw new Error("live orphan/unknown positions: new risk blocked");
+        const colAll = await jget("/wapi/v1/portfolio/collateral");
+        const col = colAll[Object.keys(colAll).find((k) => k.endsWith("-" + SUB))];
+        const { finiteNumber } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./state_schema.cjs");
+        if (!finiteNumber(col?.netEquity)) throw new Error("account equity unknown");
+        const eq = Number(col.netEquity);
+        const dd = Number(risk.peakEquity) > 0 ? (Number(risk.peakEquity) - eq) / Number(risk.peakEquity) * 100 : 0;
+        if (dd >= cfg.warnDrawdownPct) throw new Error("account drawdown warning: new risk blocked");
+        let existingRisk = 0;
+        for (const g of auto1.params.symbols) {
+          if (!finiteNumber(g.allocationUsd) || !finiteNumber(g.stopLossPercentage) || g.closePositionsOnStop !== true) throw new Error("existing grid risk premise unconfirmed");
+          existingRisk += Number(g.allocationUsd) * Math.max(Number(g.stopLossPercentage), cfg.stopLossPct) / 100;
+        }
+        if (!finiteNumber(a.value) || Number(a.value) <= 0 || existingRisk + Number(a.value) * cfg.stopLossPct / 100 + cfg.exitCostBufferUsd > eq * cfg.riskBudgetPct / 100) throw new Error("live forward-risk budget exceeded");
         const mark = await currentMark(symbol);
-        if (!mark) throw new Error(`create ${a.market}: no mark price`);
+        if (!Number.isFinite(Number(mark)) || Number(mark) <= 0) throw new Error(`create ${a.market}: no mark price`);
         const base = {
           strategyType: "Grid", symbol,
           priceLow: String(a.lower), priceHigh: String(a.upper),

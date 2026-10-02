@@ -2,10 +2,6 @@ name = "backpack-grid-dashboard"
 main = "worker.js"
 compatibility_date = "2026-09-01"
 
-rules = [
-  { type = "Text", globs = ["**/*.html"] },
-]
-
 routes = [
   { pattern = "grid.terryso.dev", custom_domain = true }
 ]
@@ -16,3 +12,19 @@ workers_dev = true
 [[kv_namespaces]]
 binding = "DASH"
 id = "40e078ae20c84612bce7ddfb711f7992"
+
+[[durable_objects.bindings]]
+name = "LIKES"
+class_name = "LikeCounter"
+
+[[migrations]]
+tag = "likes-v1"
+new_sqlite_classes = ["LikeCounter"]
+
+[assets]
+directory = "./public"
+run_worker_first = ["/api/*"]
+
+[build]
+command = "node scripts/build_dashboard.cjs"
+cwd = "."

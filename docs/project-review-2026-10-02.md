@@ -1,19 +1,75 @@
-# Backpack 网格自动化：当前项目审查与优化建议
+# Backpack 网格自动化：修复、复审与验收记录
 
-初审日期：2026-10-02（Asia/Shanghai）。初审基线：`225176db5c5d007dcccefc8e4684b47a0670de01`。第九轮首次复核基线：`9b83b75` 加当时未提交的工作树。**最新复核日期：2026-10-03，基线 `8109176`，审查前工作区干净。** 本次只更新文档和离线证据，不修改运行代码或真实 launchd 任务。
+最新更新：2026-10-03（Asia/Shanghai）。本轮修复基线 `8cf54e7`，保留此前审查附件和文档改动。
 
-**最新结论：内核 flock 已真实引入，正常竞争时第二个包装器退出 3，旧 mkdir/ln/mv 接管路径已移除。但入口覆盖和锁 FD 生命周期未闭环：峰值任务仍未包装、文档手动命令绕过锁、包装器死亡后业务子进程可继续运行而新包装器进入。** F02/F06 已通过的场景保持有效。用户已确认的 80% 风险预算作为评审约束，不重新调整风险偏好。
+**当前结论：代码修复和离线／本地验收 PASS；生产观察、历史采集和巡检 dry-run PASS；动态接口线上验收被 Cloudflare 免费每日配额阻断（429 / 1027）。首页已通过静态资源方案恢复，两域名 HTTP 200。不能把部署成功称为全部线上验收通过。** 用户的 80% 风险预算、TP=10、SL=6 和既有策略规则未调整。
 
-## 0. 8109176 内核锁实现复核（2026-10-03）
+## 本轮完成与待完成
 
-本次实际回归 **142 passed, 0 failed**，网络拦截为零；PASS 日志有 134 个不同编号，8 个编号重复出现，不应将条数视为独立场景或覆盖率。额外执行真实内核 flock、包装器 SIGKILL、业务子进程存活、手动入口绕过、生产探测器及首次启动场景，并只读核对已加载的 launchd 参数。本次没有重启、停止或触发真实服务。
+| 项目 | 实现与验收 | 当前状态 |
+|---|---|---|
+| F01 风险事务／失败处理 | writer 兼容缺省 paused、保留已有锁存、事务内按最新峰值复评；异常／超时禁止新风险；熔断写入意图先落盘，失败后即使权益恢复也会补写并继续锁存；12 个真正并行进程验证峰值与锁存 | **代码、隔离行为验收通过** |
+| F02 数据与数量契约 | observe、decide、act、dashboard 共用严格数值与结构校验；null／布尔／空白／数组不作为零；畸形 automation 不清 pending；删除后再次确认平仓；零／负权益和 liquidating 继续派发风险退出 | **生产读取与离线验收通过** |
+| F03 两阶段风控 | 两阶段复评；post-exit 读取失败停止补仓，最后确认失败不写 ok；停格优先于保护与创建 | **完整 runner 模拟验收通过** |
+| F04 互斥／真实入口 | 统一指定 Python，主入口经 round_locked 等待 45 秒；fd 传给业务子进程；系统错误不伪装为忙锁；launchd 文件可重建，四个任务 RunAtLoad=false，已恢复加载 | **内核锁、进程级、加载参数验收通过** |
+| F05 孤儿恢复 | 孤儿观察正常落盘，新开仓被否决；执行前也重查孤儿；不自动平掉归属未知的仓位 | **生产观察与 mock 验收通过** |
+| F06 历史手续费 | 从 observe 移至独立 history 锁／Page／任务；原始成交 ID＋游标同一原子快照，边界去重、满页缩窗、异常留游标、incomplete 明示；ISO 时间按 UTC 解析；非 USDC 费用保留原币不假换算 | **离线边界和真实只读采集通过** |
+| F07 状态与显示 | 缺失／损坏／陈旧值为未知；risk 写入状态、persistent pending 标志、整轮动作失败汇总；未知收益不显示 0；HTML 转义；390px 无横向溢出，异常／配额降级无“风控正常” | **本地浏览器与线上降级页面通过** |
+| F08 部署与上传 | 固定 Wrangler 4.147.0；带显式配置；统一 DASH_WRITE_TOKEN；构建静态资源；上传记录 HTTP 与同快照读回；额度恢复后由下一次巡检自动重试 | **编译／部署通过；动态上传和读回待配额恢复** |
+| F09 账本与指标 | run ID、执行确认事件统计，dry-run 不计实盘轮数；权益变化与策略收益分离；导入核对后的现金流／资金费／利息／奖励，缺覆盖或精确基线时间时不算策略收益；最大回撤明确最近 400 点范围 | **代码验收通过；历史归因数据待核对导入** |
+| F10 点赞 | SQLite Durable Object 串行计数＋访客每日幂等，旧 KV 数量一次迁移、每日标记轮换；20 次同访客并发只计一次，20 个不同访客并发不丢更新 | **真实本地 Worker 验收通过；线上 API 待配额恢复** |
+
+附带修复：最终缩容金额重新限制格数和最低订单金额；tickSize=0.25 的小数位修正；分析中的未知资金费不按 0 打分；SOL 归入 Solana；研究缓存独立刷新；手动暂停的存量也占槽位并进入预算；执行前重读权益、原生保护、槽位与配置预算；动作计划绑定配置／账户／观察时间／内容哈希。
+
+## 验收证据与边界
+
+- `npm test`：**151 项既有回归＋60 项生产行为验收**。网络禁止器通过绝对路径传给所有 Node 子进程；没有真实交易接口调用。旧 RWP4 顺序测试已正确更名，新增 12 进程场景确实并行。
+- 新套件直接执行生产 decide、observe 转换、完整 act 入口、stopGrid、完整 shell runner、历史采集、指标、UI 降级及 LikeCounter；模拟 session I/O，覆盖 Upsert 响应丢失、保护读回异常、紧急清理超时、预算变化和过期计划。没有创建实盘测试网格。
+- 本地 `wrangler dev --local` 真正使用 SQLite Durable Object，验证并发、上传认证、畸形 JSON、读回和静态首页；`wrangler deploy --dry-run` 通过。已发布版本 `a561c84b-ac81-49d3-9b4f-4ea69ad0cfa0`。
+- 生产 ego-browser observe 通过；历史采集当次 **9 币种、969 条原始成交**，从 2026-09-30 至采集时刻已追平、无 error。包含已删除的 MON、PENGU。此结论限于已记录币种和接口返回，不等于全账户历史由外部账单独立对账。
+- 完整真实 `DRYRUN=1 bash scripts/run_round.sh` 通过，actions 为空，risk 写入成功，act 未执行。上传返回 429，单独记录为运输失败，不能据 dryrun 返回 0 声称已成功上传。
+- 已重新加载主巡检（900 秒）、峰值（60 秒）、历史（900 秒）、研究（900 秒），均 RunAtLoad=false。没有 kickstart 实盘动作；四个任务恢复后均已自然运行并 exit 0，未强制触发实盘动作。保留原 plist 备份于 ignored state/。
+
+证据：[汇总 JSON](review-2026-10-03/acceptance.json)、[回归日志](review-2026-10-03/acceptance.log)、[任务参数](review-2026-10-03/launch-agents.jsonl)、[健康页](review-2026-10-03/mobile-healthy.png)、[异常页](review-2026-10-03/mobile-errors.png)、[线上配额降级](review-2026-10-03/mobile-quota-online.png)。
+
+从项目根目录复跑：
+
+```bash
+export PATH=/Users/nick/.nvm/versions/node/v22.14.0/bin:$PATH
+npm ci
+npm test
+npx --no-install wrangler deploy --dry-run --config cloudflare/wrangler.toml
+```
+
+本地真实 Worker：使用独立 /tmp 持久目录启动 `wrangler dev --local --port 8793 --var DASH_WRITE_TOKEN:fixture-only --persist-to <独立目录> --config cloudflare/wrangler.toml`，另一个终端运行 `node tests/worker_local.cjs`。只允许 localhost 模拟服务，不得改为真实域名进行并发点赞实验。
+
+## 尚需外部条件的验收
+
+1. **动态线上接口**：Cloudflare 账户当天免费 Workers 请求额度耗尽；部署 API 仍可发布，动态快照／点赞调用返回 1027。已让首页走免费静态资源，并将快照轮询降到 15 分钟、后台页停止轮询；失败时明确显示部署时历史快照。免费额度于 UTC 午夜重置，上海时间 08:00；是否升级账户 Workers Paid 已向用户询问，未擅自开通或付款。下一次成功上传及读回会记录 `state/dashboard_upload.json`。
+2. **历史归因**：新增 [导入样例](ledger-import.example.json) 与 `scripts/import_ledger.cjs`。events 的 amountUsd 为带符号金额，入金／收入为正，出金／支出为负；type 仅 cashflow、funding、interest、reward，需唯一 id、精确 at、source。coverage 每类需核对后的 from／through／source，不能以空数组推断无历史。现有策略基线只有日期，需精确基线时间后才计算净现金流调整收益。未提供的数据保持 null，已有原始成交不替代资金费／出入金证明。
+3. **策略收益实验**：冷却、出界持续确认、止盈处理、震荡评分、盘口深度、真实 IMF、动态滑点／资金费模型及样本外回测继续按活动后安排。它们需要数据与预先固定的验收设计；本轮只修复明确实现缺陷并提供连续采集。回归通过不是盈利保证。
+4. **接口停止原因**：Disabled 的原因仍由阈值启发式判断，交易所未提供明确原因时无法保证识别用户在阈值外的手动暂停；长期暂停意图应明确记录给运维。此边界保留，未虚报已解决。
+
+参考：[Cloudflare 配额与错误](https://developers.cloudflare.com/workers/observability/errors/)、[静态资源计费](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)、[Workers 套餐价格](https://developers.cloudflare.com/workers/platform/pricing/)、[Durable Objects 存储](https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/)。
+
+---
+
+## 历史审查记录（以下状态以各轮日期为准）
+
+初审日期：2026-10-02（Asia/Shanghai）。初审基线：`225176db5c5d007dcccefc8e4684b47a0670de01`。第九轮首次复核基线：`9b83b75` 加当时未提交的工作树。**最新复核日期：2026-10-03，基线 `8cf54e7`（包含 `9d6a4fb`），审查前工作区干净。** 本次只更新文档和离线证据，不修改运行代码或真实 launchd 任务。
+
+**最新结论：上一轮三条锁失败路径已经通过本轮对应验收；真实风险写入通道的并发合并也通过。当前剩余问题转到新通道的错误处理：risk_write 拒写后 decide 仍规划新仓；按既有恢复说明删除 paused 后，下一次熔断无法落盘，权益恢复后会自动重开。** F02/F06 已通过场景保持有效。用户已确认的 80% 风险预算作为评审约束，不重新调整风险偏好。
+
+## 0. 8cf54e7 锁生命周期与风险写入通道复核（2026-10-03）
+
+本次实际回归 **151 passed, 0 failed**，网络拦截为零。按项目要求，审查工具与测试子进程的 Python 调用统一到 `/Users/nick/.browser-use-env/bin/python3`；未对系统自带 Python 做兼容性验收。额外执行真实内核锁及 FD 继承、手动入口等待、初始化、风险通道拒写、暂停恢复后重新熔断，以及 12 个真正并行的生产 risk_write 子进程。本次没有重启、停止或触发真实服务。
 
 | 编号 | 当前状态 | 本轮核验结果 | 剩余验收条件 |
 |---|---|---|---|
-| F01 | **部分完成，峰值任务未进入内核锁** | 巡检已加载 with_lock；峰值已加载参数仍直连 peak_probe.sh，脚本无包装；探测仍检查旧 state/lock，而新锁是 state/round.lock；paused 覆盖仍复现 | 两个真实入口和所有 risk 写入者共用同一内核锁，验证完整入口而非仅包装器 |
+| F01 | **事务互斥已通过，写入失败处理未闭环** | 峰值入口已包装；两个写入者使用 risk_write，12 并发提交保住 paused 和最大峰值；拒写仍生成 create，缺省 paused 导致重新熔断 KeyError | 写入失败必须否决新风险；兼容恢复说明的缺省字段；锁存必须持久化 |
 | F02 | **本轮残余数量类型场景已完成验收** | null、undefined、空串、false、纯空白串、数组均阻断；数值 0 和数字字符串 0 正常平仓 | 保留生产 act_core 的类型矩阵回归，账本其他字段继续使用明确契约 |
 | F03 | **已完成本轮代码与离线验收** | 同一 LIQ_DANGER 场景在两阶段都只输出 stop，无 create；补仓顺延逻辑已存在 | 保留生产行为回归；本次未重新做实盘验收 |
-| F04 | **旧接管缺陷已移除；入口与生命周期仍未闭环** | 正常竞争已跳过；杀死 Python 包装器后旧业务仍活着、新包装器可进入；README 手动入口也可在锁被持有时执行 | 锁必须覆盖实际业务全生命周期；所有受支持入口必须强制互斥 |
+| F04 | **上一轮三条失败路径已通过对应验收** | 手动入口自锁；峰值入口也包装；父包装器被杀后业务直接子进程仍持 FD，第二个包装器退出 3，业务退出后方可进入 | 保留进程级回归；不把这三例通过等同于所有进程树和远程请求故障覆盖 |
 | F05 | **观察原始场景已完成验收** | 零网格＋一个残仓的生产 observe 正常落盘；decide 的 orphan veto 保留 | 保留恢复路径回归，不自动平掉归属未知仓位 |
 | F06 | **满页重复累计已完成验收，采集架构后续完善** | 满页检查已移到累计之前；同页两轮费用均为 0，游标保持；正常历史续采逻辑保留 | 后续完善采集完整性标志、边界去重与独立采集，不重新计入未确认页 |
 | F07 | **字段接线与假出界已完成；其他监控项部分完成** | rangeLow/rangeHigh 与 effPnlPct 已转发，生产健康函数不再显示 -99%；仍需统一未知状态校验 | 完善 pendingCorrupt、状态汇总和缺失值语义 |
@@ -23,24 +79,30 @@
 
 **假出界修复已通过：** 当前数据层提供 rangeLow/rangeHigh、effPnlPct，页面用数值边界计算。读取到的 ZEC 快照区间 `[1218.7,1549.78]`、价格 1372.53，直接执行生产健康函数显示“健康，距止损 6.21%”，不再出现 -99% 假出界。本次未重新查询交易所实盘或线上部署。
 
-最新证据：[生产探测与数据场景](review-2026-10-02/followup-8109176-reproduce.cjs)、[结果](review-2026-10-02/followup-8109176-results.json)、[内核锁生命周期与手动入口](review-2026-10-02/followup-8109176-lifecycle.cjs)、[生命周期结果](review-2026-10-02/followup-8109176-lifecycle-results.json)、[实际入口元数据](review-2026-10-02/followup-8109176-entrypoints.json)、[首次启动结果](review-2026-10-02/followup-8109176-first-run-results.json)、[回归日志](review-2026-10-02/followup-8109176-regression.log)。历史结果保留：[cade83c](review-2026-10-02/followup-cade83c-results.json)、[d030e39](review-2026-10-02/followup-d030e39-results.json)、[ba3f23d](review-2026-10-02/followup-ba3f23d-results.json)、[九轮](review-2026-10-02/followup-9-results.json)。
+最新证据：[风险通道场景](review-2026-10-02/followup-8cf54e7-risk-review.cjs)、[风险结果](review-2026-10-02/followup-8cf54e7-risk-results.json)、[锁生命周期](review-2026-10-02/followup-8cf54e7-lifecycle.cjs)、[生命周期结果](review-2026-10-02/followup-8cf54e7-lifecycle-results.json)、[真正并发写入](review-2026-10-02/followup-8cf54e7-concurrent-risk.cjs)、[并发结果](review-2026-10-02/followup-8cf54e7-concurrent-risk-results.json)、[入口元数据](review-2026-10-02/followup-8cf54e7-entrypoints.json)、[回归日志](review-2026-10-02/followup-8cf54e7-regression.log)。历史结果保留：[8109176](review-2026-10-02/followup-8109176-results.json)、[cade83c](review-2026-10-02/followup-cade83c-results.json)、[d030e39](review-2026-10-02/followup-d030e39-results.json)、[ba3f23d](review-2026-10-02/followup-ba3f23d-results.json)、[九轮](review-2026-10-02/followup-9-results.json)。
 
 **包装层错误已修复：** 探测器日志改为 merged.peakEquity，直接执行不再抛 ReferenceError。write_status 和上传函数／EXIT 钩子已恢复；隔离 runner 无动作路径 stderr 为空、返回 0，并确实调用模拟上传脚本。这不等于本次已部署或上传真实线上数据。
 
-**关于锁语义：** flock 保证持有该 FD 的进程互斥，但不自动保护未使用它的任务，也不保证持锁父进程死亡后子进程停止。当前 with_lock.py 的 subprocess.call 默认关闭其他 FD，子进程不继承锁；包装器被 SIGKILL 后，子进程可能继续执行而锁已释放。这是临时进程的实测结果，不是声称已诱发真实 launchd 故障。巡检默认能执行交易，不能将重叠任务归类为只读或零资金风险。旧 mv 反例已随代码删除而关闭，不再作为当前实现的反例。
+**本轮已关闭的锁场景：** with_lock.py 现在 pass_fds，手动 run_round 自锁，peak_probe.sh 也包装。实测父包装器 SIGKILL 后业务仍存活，第二个竞争者退出 3；手动入口不进入主体，直到原业务退出才恢复执行；首次缺 state 目录自动初始化。临时入口测试仅将 Python 路径规范化并注入 CLI stub，保留生产锁代码与 --wait 行为。没有对真实服务发信号，也未触发真实巡检。
+
+**新增风险通道失败 / P1：** `decide.cjs:115–116` 对 risk_write 的非零状态只记日志，未设置 mayCreate 否决。临时目录把 risk.lock 设为目录，真实 helper 返回 1；生产 decide 返回 0、记录 RISK WRITE REFUSED，仍输出 2500 USD 的 ETH create。无法确认风控状态更新时必须禁止新增风险，已确认的风险退出可以继续执行并明确告警。
+
+**暂停恢复后的重新熔断失败 / P1：** 恢复说明允许删除 paused 字段。risk_write.shape_ok 用 get 接受缺省 paused，但设置新锁存时直接访问 latest["paused"]，导致 KeyError。本轮以 `{peakEquity:1000}`、权益 100 触发熔断：stop 仍生成，paused 未落盘；再模拟权益恢复与空槽，未人工解除这次新熔断却生成 create。应规范化缺省 paused 为 None，持久化新熔断，并测试权益恢复后仍锁存。
+
+建议把写入通道的拒绝、异常和超时纳入新仓 veto；使用成功返回的权威风险状态，不能只打印日志。当前回归 RWP4 虽标“concurrent”，循环使用 spawnSync，实际串行；本次独立测试使用 12 个异步子进程，最终峰值 1210、paused 原文保留，证明正常事务通道已经有效。
 
 **读取的实际入口：**
 
 | 入口 | 当前参数／行为 | 核验 |
 |---|---|---|
-| 已加载巡检 com.backpack.grid-monitor | /usr/bin/python3 → with_lock.py → bash run_round.sh | 有内核锁包装 |
-| 已加载峰值 com.backpack-grid-peak | /bin/bash → peak_probe.sh → ego-browser | 无 with_lock 包装 |
-| README/skill 的手动命令 | bash scripts/run_round.sh | 无内核锁包装，直接进入主体 |
-| 新 round_locked.sh | 裸 python3 → with_lock.py → run_round.sh | 可包装，但目前不是上述文档手动入口；Python 路径需统一 |
+| 已加载巡检 com.backpack.grid-monitor | /usr/bin/python3 → with_lock.py → bash run_round.sh | 有包装；当前加载参数没有 --wait 45 |
+| 已加载峰值 com.backpack-grid-peak | /bin/bash → peak_probe.sh → with_lock.py → ego-browser | shell 内已包装，同 round.lock |
+| README/skill 的手动命令 | bash scripts/run_round.sh | 入口自锁，持锁时等待，不进入主体 |
+| round_locked.sh | /usr/bin/python3 → with_lock.py --wait 45 → run_round.sh | 包装和等待参数已存在；Python 路径仍需按项目约定统一 |
 
-建议把唯一公开巡检入口做成强制包装入口，内部主体单独命名；峰值入口也用相同锁文件，不能用文件存在性代替锁状态。锁持有生命周期应覆盖业务进程，采用经过验证的 FD 继承／直接 exec，或可靠监督进程组并等业务结束后释放。正常竞争、父进程被杀、业务被杀、手动与定时并发都应直接执行生产入口验证。
+已实现的入口和 FD 行为应保持直接生产验证。当前 --wait 45 对手动入口／round_locked 生效，但已加载的主任务直接调 with_lock 且无 wait 参数，默认忙锁即退出 3；不要据此声称定时主轮会等待峰值任务收尾。若该等待语义是运行要求，需要更新实际任务参数并独立验证，本次不重载服务。
 
-**其他实现事项（P2）：** with_lock.py 在打开 state/round.lock 前没有创建 state，首次无状态目录的临时 checkout 复现 FileNotFoundError。round_locked.sh 使用裸 python3，实际主任务使用 /usr/bin/python3，与项目指定的 `/Users/nick/.browser-use-env/bin/python3` 不一致。应统一路径、明确初始化和失败码，并让真正系统错误区别于正常忙锁跳过。
+**其他实现事项（P2）：** 首次 state 初始化已修。生产脚本、回归子进程和已加载主任务仍使用 /usr/bin/python3，与项目指定的 `/Users/nick/.browser-use-env/bin/python3` 不一致；本次测试统一解释器后执行。应统一路径，并让系统错误与正常忙锁跳过有不同状态。
 
 其余正文保留初审背景，并在对应条目中标注最新状态。
 
@@ -62,9 +124,9 @@
 
 ## 2. 高优先级缺陷：建议先处理
 
-### F01 / P1【部分完成】：重读合并仍缺少事务保护
+### F01 / P1【互斥已完成，失败处理待完成】：风险状态唯一写入通道
 
-2026-10-03 / 8109176 核验：日志错误已修，但实际峰值入口未包装，生产探测器仍只检查旧 state/lock，没有获得新 state/round.lock 的 flock。“重读返回后、提交前再写 paused”仍被覆盖。独立临时文件与原子 rename 只保证写入完整，不保证读改写事务互斥。
+2026-10-03 / 8cf54e7 核验：两写入方已使用 risk_write，正常事务与并发锁存保留验证通过。上一轮峰值无锁与旧副本覆盖路径关闭。新增失败在调用方拒写后不禁止创建，以及缺省 paused 导致重新熔断 KeyError，详见最新摘要。
 
 **证据：** `scripts/peak_probe.mjs:11–19, 26–37`。探测器只在开始时检查一次 `state/lock`，随后读取 risk、等待浏览器与接口，最后把最初读取的整个 risk 对象写回。它没有实际取得锁，也没有在提交时重新读取状态。
 
@@ -100,11 +162,11 @@
 
 **验收：** 在第一阶段和第二阶段之间注入新的 SL、资金费调整后 SL、出界及 LIQ_DANGER，均不得继续创建；退出无异常时仍可按预算缩容补位。
 
-### F04 / P1【旧接管已移除，生命周期与入口待完成】：内核锁边界
+### F04 / P1【上一轮三场景已通过】：内核锁边界
 
-**当前证据：** `scripts/with_lock.py:16–29` 使用内核 flock，正常第二个竞争者已退出 3。`subprocess.call` 未传递锁 FD、未管理业务子进程异常退出。README 和 skill 仍推荐直接运行已无锁的 run_round.sh。
+**当前证据：** with_lock 使用 pass_fds，run_round 有入口自锁、peak shell 已包装。生产内核锁在父包装器死亡后仍由业务直接子进程持有，正常竞争者退出 3。
 
-**当前反例：** 真实内核锁被包装器持有时，文档手动主体仍成功进入；随后仅 SIGKILL 临时包装器，旧业务子进程仍存活，第二个包装器成功启动新业务，两业务同时运行。所有进程均是审查创建的临时进程，测试后清理，未对真实服务发信号。
+**本轮对应验收：** 持锁时手动入口等待；仅 SIGKILL 临时包装器后旧业务仍存活，但竞争者被拒；业务退出后手动入口才完成执行，后续业务也可重新取得锁。之前的三个失败条件均已关闭；该结果不宣称覆盖全部后台进程树和远程请求终止语义。
 
 **历史反例已关闭：** 此前 mkdir/ln/mv 的三进程接管已不适用于当前实现，因为该代码已删除。应验收新的入口覆盖与 FD 生命周期，而非继续补 PID 删除条件。
 
@@ -196,7 +258,7 @@
 
 ## 6. 建议实施顺序与验收清单
 
-1. **先补完 F01、F04：**峰值与所有公开巡检入口进入同一内核锁；业务进程全生命周期持锁或受可靠监督。验收父进程异常终止、手动入口和已加载任务配置，不以正常第二个包装器被跳过代替全部互斥验收。
+1. **先补完 F01 的新通道失败处理：**拒写即禁止新增风险；缺省 paused 兼容既有恢复说明；重新熔断成功落盘，权益恢复后仍锁存。F04 三条锁路径已通过，保留对应生产入口与进程级回归。
 2. **保留已通过回归，再完善采集架构：**F02 类型、F03 风控复评、F05 观察降级、F06 满页不累计、F07 字段和 runner 接线、F08 部署接线已完成对应核验。独立采集、完整性状态与统一结构校验按后续计划实施。
 3. **补齐 F09 和研究数据：**不可变成交/资金费/出入金/执行事件，唯一 run ID，连续研究候选。当前曲线和缓存不足以评估长期策略优势。
 4. **按既定复盘安排比较策略：**固定风险预算和成本模型，再决定是否调整格距、评分、冷却或退出规则。

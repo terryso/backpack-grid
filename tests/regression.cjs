@@ -21,6 +21,7 @@ const actCoreSrc = fs.readFileSync(path.join(ROOT, "scripts", "act_core.cjs"), "
 const runRoundSrc = fs.readFileSync(path.join(ROOT, "scripts", "run_round.sh"), "utf8");
 const deploySrc = fs.readFileSync(path.join(ROOT, "scripts", "deploy_dashboard.sh"), "utf8");
 const analyzeSrc = fs.readFileSync(path.join(ROOT, "scripts", "analyze.cjs"), "utf8");
+const historySrc = fs.readFileSync(path.join(ROOT, "scripts", "history_core.cjs"), "utf8");
 const coreSrc = fs.readFileSync(path.join(ROOT, "scripts", "act_core.cjs"), "utf8");
 let pass = 0, fail = 0;
 const T = (name, cond) => { if (cond) { pass++; console.log("PASS", name); } else { fail++; console.log("FAIL", name); } };
@@ -33,15 +34,8 @@ const ecoOf = (m) => {
 };
 const mayCreate = (breaker, riskCorrupt, pendCorrupt, corruptFlag, tickersOk, pendN) =>
   breaker === null && !riskCorrupt && !pendCorrupt && !corruptFlag && tickersOk && pendN === 0;
-// strict replica of decide.cjs risk shape validation (round-4 #4)
-const riskStructOk = (parsed) => {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
-  const pk = parsed.peakEquity;
-  const pkTypeOk = typeof pk === "number" || (typeof pk === "string" && pk.trim() !== "");
-  const pkNum = pkTypeOk ? Number(pk) : NaN;
-  return pkTypeOk && Number.isFinite(pkNum) && pkNum >= 0
-    && (parsed.paused === null || parsed.paused === undefined || typeof parsed.paused === "object");
-};
+// Use the shared PRODUCTION validator rather than a copied predicate.
+const { riskStructOk } = require("../scripts/state_schema.cjs");
 
 // ---------- T22/T32 (round-12): flock 互斥架构 ----------
 T("T22a dedicated flock wrapper exists", fs.existsSync(path.join(ROOT, "scripts", "with_lock.py")));
@@ -53,7 +47,7 @@ T("T32c held lock → skip with exit 3", fs.readFileSync(path.join(ROOT, "script
 // ---------- T35 (round-12): runner wiring ----------
 T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
 T("T35b upload wired into round body", runRoundSrc.includes("upload_dashboard"));
-T("T35c status file written on ok exit", runRoundSrc.includes('write_status "ok"'));
+T("T35c status file written on ok exit", runRoundSrc.includes("finish ok 0"));
 
 // ---------- T1: ecosystem canonical naming ----------
 T("T1a PENGU-PERP -> solana", ecoOf("PENGU-PERP") === "solana");
@@ -252,7 +246,7 @@ function runDecide(dir, offline, tickersFile) {
 
 // ---------- RWP: risk_write.py 单一写入通道（F01 事务 + 合并语义） ----------
 function runRiskWrite(dir, payload) {
-  return spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
+  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -273,22 +267,22 @@ function runRiskWrite(dir, payload) {
   })());
 }
 {
-  // RWP4: 熔断后 12 个并发探测提交交错 — paused 必须存活、峰值只能串行上升
+  // RWP4: 12 个顺序提交；真正的并发交错见 acceptance.cjs
   const dir = makeFixture({ "state/risk.json": { peakEquity: 600, paused: null } });
   runRiskWrite(dir, { peakEquity: 600, paused: { at: "T0", reason: "trip" } });
   const kids = [];
   for (let i = 1; i <= 12; i++) {
-    kids.push(spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
+    kids.push(spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
       { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 }));
   }
   const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
-  T("RWP4 concurrent probe commits: latch survives, peak = max", kids.every((k) => k.status === 0)
+  T("RWP4 sequential probe commits: latch survives, peak = max", kids.every((k) => k.status === 0)
     && after.peakEquity === 610 && after.paused && after.paused.reason === "trip");
 }
 
 // ---------- LC: with_lock.py 锁生命周期（14 轮复核三场景） ----------
 function runWithLock(dir, args) {
-  return spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), ...args],
+  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), ...args],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -300,7 +294,7 @@ function runWithLock(dir, args) {
     && fs.existsSync(path.join(dir, "state", "round.lock")));
 
   // LC1: SIGKILL 包装器 → 业务子进程树存活并共同持锁 → 第二包装器被拒（exit 3）
-  const biz = spawn("/usr/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), "sleep", "4"],
+  const biz = spawn("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), "sleep", "4"],
     { env: { ...process.env, BG_ROOT: dir }, stdio: "ignore" });
   sleepSync(800);
   const bizAlive = spawnSync("/usr/bin/pgrep", ["-f", "sleep 4"]).status === 0;
@@ -315,7 +309,7 @@ function runWithLock(dir, args) {
 
   // LC4: --wait 短持锁等待后获取；长持锁超时跳过（不排队）
   const lockFile = JSON.stringify(path.join(dir, "state", "round.lock"));
-  const holder = spawn("/usr/bin/python3", ["-c",
+  const holder = spawn("/Users/nick/.browser-use-env/bin/python3", ["-c",
     `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(2)`],
     { stdio: "ignore" });
   sleepSync(300);
@@ -323,7 +317,7 @@ function runWithLock(dir, args) {
   const r4a = runWithLock(dir, ["--wait", "5", "echo", "waited"]);
   T("LC4a --wait waits out a short holder then acquires",
     r4a.status === 0 && Date.now() - t0 >= 1200);
-  const holder2 = spawn("/usr/bin/python3", ["-c",
+  const holder2 = spawn("/Users/nick/.browser-use-env/bin/python3", ["-c",
     `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(30)`],
     { stdio: "ignore" });
   sleepSync(300);
@@ -677,7 +671,7 @@ T("T27c create requires zero stops in the round", decideSrc.includes("planCreate
   }
   T("T29 complete window advances cursor exactly to window end (resumable)", cursor === start + 86400000);
 }
-T("T29b fees loop: slices + verified-only cursor advance", observeSrc.includes("6 * 3600 * 1000") && observeSrc.includes("lo = hi; // 切片完整，推进"));
+T("T29b fees loop: slices + verified-only cursor advance", historySrc.includes("6 * 3600 * 1000") && historySrc.includes("rec.lastTo = lo") && !observeSrc.includes("history/fills"));
 
 // ---------- T30 (round-9 F08): deploy script aligned with live protocol ----------
 T("T30a deploy uses DASH_WRITE_TOKEN", deploySrc.includes("DASH_WRITE_TOKEN") && !deploySrc.includes("DASH_TOKEN=") );
@@ -686,7 +680,7 @@ T("T30b deploy pins --config", (deploySrc.match(/--config cloudflare\/wrangler\.
 // ---------- T31 (round-9 F07): funding-adjusted health + status chips ----------
 T("T31a health uses funding-adjusted effPnlPct (observe)", observeSrc.includes("effPnlPct"));
 T("T31b last_round_status written by runner and read by dashboard_data",
-  runRoundSrc.includes('echo "ok" > state/last_round_status') && fs.readFileSync(path.join(ROOT, "scripts", "dashboard_data.cjs"), "utf8").includes("last_round_status"));
+  runRoundSrc.includes("state/last_round_status") && fs.readFileSync(path.join(ROOT, "scripts", "dashboard_data.cjs"), "utf8").includes("last_round_status"));
 
 // ---------- T32 (round-9 F04): mv-based atomic takeover ----------
 T("T32a with_lock uses kernel flock", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("fcntl.flock"));
@@ -720,8 +714,8 @@ T("T32c held lock → skip with exit 3", fs.readFileSync(path.join(ROOT, "script
 
 // ---------- T35 (round-12): runner wiring ----------
 T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
-T("T35b upload wired into round body (direct calls at exits)", runRoundSrc.includes("upload_dashboard") && runRoundSrc.includes('write_status "ok"') && runRoundSrc.includes("upload_dashboard\necho \"=== ROUND END"));
-T("T35c status file written on ok exit", runRoundSrc.includes('write_status "ok"'));
+T("T35b upload wired into round body (direct calls at exits)", runRoundSrc.includes("upload_dashboard") && runRoundSrc.includes("finish ok 0") && runRoundSrc.includes('finish() { write_status "$1"; upload_dashboard; exit "$2"; }'));
+T("T35c status file written on ok exit", runRoundSrc.includes("finish ok 0"));
 
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);

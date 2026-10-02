@@ -1,92 +1,101 @@
-#!/usr/bin/env python3
-"""risk.json 的唯一写入通道：内核 flock 事务 + 合并语义。
-
-用法: risk_write.py '<json>'
-  json 可含 "peakEquity" 和/或 "paused"；缺省的字段保留磁盘最新值。
-
-合并规则（对 decide 与 peak_probe 两个写入方统一生效）：
-  - peakEquity 只升不降（棘轮）：new = max(磁盘最新, 传入值)
-  - paused 未显式提供则逐字保留最新值（探测/巡检不得清除熔断锁存）
-  - 磁盘文件损坏或形状非法 → 拒写、原文保留、退出码 2（禁止自动重播种）
-  - 写入为唯一临时文件 + 原子 rename；锁为内核 flock（持有者死亡自动释放）
+#!/Users/nick/.browser-use-env/bin/python3
+"""Only risk.json writer. Bounded kernel-flock transaction; peak only rises,
+existing latch is never cleared. Manual recovery may omit paused.
+Optional assessment is evaluated using the latest peak INSIDE the transaction.
 """
 import fcntl
 import json
+import math
 import os
+import re
 import sys
 import tempfile
+import time
 
 ROOT = os.environ.get("BG_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 P = os.path.join(ROOT, "state", "risk.json")
 
 
-def shape_ok(o):
-    if not isinstance(o, dict):
-        return False
-    pk = o.get("peakEquity")
-    if isinstance(pk, bool) or pk is None:
-        return False
-    if not (isinstance(pk, (int, float)) or (isinstance(pk, str) and pk.strip() != "")):
-        return False
+def number(v):
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)) or (isinstance(v, str) and not re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?", v.strip(), re.I | re.ASCII)):
+        raise ValueError("invalid numeric type")
+    n = float(v)
+    if not math.isfinite(n):
+        raise ValueError("non-finite number")
+    return n
+
+
+def shape_ok(v):
     try:
-        n = float(pk)
-    except (TypeError, ValueError):
+        return isinstance(v, dict) and number(v.get("peakEquity")) >= 0 and (v.get("paused") is None or isinstance(v.get("paused"), dict))
+    except ValueError:
         return False
-    if n != n or n in (float("inf"), float("-inf")) or n < 0:
-        return False
-    return o.get("paused") is None or isinstance(o.get("paused"), dict)
 
 
 def main():
     arg = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
-    lock = open(os.path.join(ROOT, "state", "risk.lock"), "a+")
-    fcntl.flock(lock, fcntl.LOCK_EX)
-    try:
+    if not isinstance(arg, dict):
+        raise ValueError("payload must be an object")
+    if "peakEquity" in arg and number(arg["peakEquity"]) < 0:
+        raise ValueError("negative peak")
+    if "paused" in arg and not isinstance(arg["paused"], dict):
+        raise ValueError("latch cannot be cleared through the writer")
+    assessment = arg.get("assessment")
+    if assessment is not None:
+        if not isinstance(assessment, dict):
+            raise ValueError("invalid assessment")
+        eq, budget = number(assessment.get("equity")), number(assessment.get("budgetPct"))
+        if not 0 < budget <= 100 or not isinstance(assessment.get("at"), str):
+            raise ValueError("invalid assessment values")
+    os.makedirs(os.path.dirname(P), exist_ok=True)
+    with open(os.path.join(ROOT, "state", "risk.lock"), "a+") as lock:
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("risk lock acquisition timed out")
+                time.sleep(0.05)
         if os.path.exists(P):
-            raw = open(P, encoding="utf8").read()
-            try:
-                latest = json.loads(raw)
-            except ValueError:
-                print("RISK_WRITE_REFUSED_CORRUPT")
-                return 2
+            with open(P, encoding="utf8") as f:
+                latest = json.load(f)
             if not shape_ok(latest):
-                print("RISK_WRITE_REFUSED_INVALID_SHAPE")
-                return 2
+                raise ValueError("RISK_WRITE_REFUSED_INVALID_SHAPE")
         else:
-            latest = {"peakEquity": 0, "paused": None}  # 首次初始化（无文件时）
-        changed = False
-        if "peakEquity" in arg:
-            try:
-                new = float(arg["peakEquity"])
-            except (TypeError, ValueError):
-                new = float("nan")
-            cur_raw = latest["peakEquity"]
-            cur = float(cur_raw)
-            if new == new and new not in (float("inf"), float("-inf")) and new > cur:
-                latest["peakEquity"] = new
-                changed = True
-            elif isinstance(cur_raw, str):
-                latest["peakEquity"] = cur  # 一次性规范化：磁盘上的数字字符串形态归一为数值
-                changed = True
-        if "paused" in arg:
-            if arg["paused"] != latest["paused"]:
-                latest["paused"] = arg["paused"]
-                changed = True
-        for k in ("lastEquity", "lastAt"):  # 巡检回写最新权益观测（透传，无合并语义）
-            if k in arg and arg[k] != latest.get(k):
+            latest = {"peakEquity": 0, "paused": None}
+        before = json.dumps(latest, sort_keys=True)
+        latest["peakEquity"] = max(number(latest["peakEquity"]), number(arg.get("peakEquity", 0)))
+        latest.setdefault("paused", None)
+        if "paused" in arg and latest["paused"] is None:
+            latest["paused"] = arg["paused"]
+        if assessment is not None and latest["paused"] is None:
+            peak = latest["peakEquity"]
+            dd = (peak - eq) / peak * 100 if peak else 0
+            if dd >= budget:
+                latest["paused"] = {"at": assessment["at"], "reason": f"drawdown {dd:.1f}% >= budget {budget}%", "peakEquity": peak, "equity": eq}
+        for k in ("lastEquity", "lastAt"):
+            if k in arg:
                 latest[k] = arg[k]
-                changed = True
-        if changed or not os.path.exists(P):
-            d = os.path.dirname(P)
-            fd, tmp = tempfile.mkstemp(dir=d, prefix=".risk.", suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf8") as f:
-                f.write(json.dumps(latest, indent=2))
-            os.rename(tmp, P)
-        print(json.dumps(latest))
-        return 0
-    finally:
-        fcntl.flock(lock, fcntl.LOCK_UN)
+        if before != json.dumps(latest, sort_keys=True) or not os.path.exists(P):
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(P), prefix=".risk.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf8") as f:
+                    json.dump(latest, f, indent=2, allow_nan=False)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, P)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+        print(json.dumps(latest, allow_nan=False))
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as e:
+        print("RISK_WRITE_FAILED: " + str(e), file=sys.stderr)
+        sys.exit(2)

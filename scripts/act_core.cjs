@@ -3,12 +3,7 @@
 // suite). act.mjs wires the live io (page.fetch based) into makeStopGrid().
 "use strict";
 
-// Shared pending-ledger structure rule with decide.cjs (canary string must stay aligned:
-// "invalid pending ledger structure").
-function pendingStructOk(parsed) {
-  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-    && Object.values(parsed).every((v) => v !== null && typeof v === "object" && !Array.isArray(v));
-}
+const { pendingStructOk } = require("./state_schema.cjs");
 
 // io: {
 //   jget(pathname), jpatch(pathname, body),      — session-authenticated exchange access
@@ -28,7 +23,8 @@ function makeStopGrid(io) {
       await io.savePending(pending);
     }
     const auto1 = await io.getAutomation();
-    const entry = (auto1.params?.symbols || []).find((s) => s.symbol === symbol);
+    if (!Array.isArray(auto1.params?.symbols)) throw new Error("automation response malformed; intent retained");
+    const entry = auto1.params.symbols.find((s) => s.symbol === symbol);
     if (!entry) {
       // grid gone from config — cleanup may still be needed if residue exists.
       // A malformed position response is UNKNOWN, not flat: keep the intent, retry later.
@@ -56,7 +52,6 @@ function makeStopGrid(io) {
         }
         if (nq !== 0) throw new Error(`stop ${market}: grid gone but position ${nq} remains — manual intervention`);
       }
-      delete pending[market];
       delete pending[market];
       await io.savePending(pending);
       results.push({ act: "stop", market, done: true, note: "already deleted" });
@@ -111,7 +106,7 @@ function makeStopGrid(io) {
     }
     const gone = await io.waitFor(async () => {
       const auto2 = await io.getAutomation();
-      return !(auto2.params?.symbols || []).some((s) => s.symbol === symbol);
+      return Array.isArray(auto2.params?.symbols) && !auto2.params.symbols.some((s) => s.symbol === symbol);
     }, 10000);
     if (!gone) {
       pending[market] = { at: new Date().toISOString(), reason: reason + " (delete unconfirmed)" };
@@ -120,9 +115,16 @@ function makeStopGrid(io) {
       console.log(`STOP ${market}: delete accepted but not confirmed — persisted, retry next round`);
       return { done: false };
     }
+    const finalPositions = await io.jget(`/api/v1/position`);
+    const finalPos = Array.isArray(finalPositions) ? finalPositions.find((p) => p.symbol === symbol) : null;
+    const { finiteNumber } = require("./state_schema.cjs");
+    if (!Array.isArray(finalPositions) || (finalPos && (!finiteNumber(finalPos.netQuantity) || Number(finalPos.netQuantity) !== 0))) {
+      results.push({ act: "stop", market, done: false, unconfirmed: true });
+      return { done: false }; // config disappeared, but final flatness must still be known
+    }
     delete pending[market];
     await io.savePending(pending);
-    results.push({ act: "stop", market, done: true });
+    results.push({ act: "stop", market, reason, done: true });
     console.log(`STOPPED ${market} — ${reason}`);
     return { done: true };
   };

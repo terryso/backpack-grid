@@ -1,0 +1,13 @@
+{
+  "name": "backpack-grid",
+  "private": true,
+  "scripts": {
+    "test": "node tests/run.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.147.0"
+  }
+}

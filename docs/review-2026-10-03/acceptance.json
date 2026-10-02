@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-02T20:39:17.424Z",
+  "baseline": "8cf54e7",
+  "regressionPassed": 151,
+  "productionAcceptancePassed": 60,
+  "networkInOfflineSuites": "forbidden",
+  "liveWrites": "no exchange act invoked or test grids created",
+  "workerVersion": "a561c84b-ac81-49d3-9b4f-4ea69ad0cfa0",
+  "localWorker": "SQLite DO concurrency/authentication/readback passed",
+  "online": {
+    "homeCustomDomain": 200,
+    "homeWorkersDev": 200,
+    "dynamicApi": 429,
+    "errorCode": 1027,
+    "reason": "Workers free daily quota exhausted",
+    "dynamicReadbackPassed": false
+  },
+  "history": {
+    "symbols": 9,
+    "fills": 969,
+    "incomplete": false
+  },
+  "strategyParameters": "TP/SL/risk budget/selection score/cooldown unchanged; SOL ecosystem mapping repaired; final-size grid count constrained",
+  "launchd": "all four jobs naturally ran and exited 0"
+}

@@ -21,7 +21,7 @@ description: Backpack 网格巡检系统（~/CascadeProjects/backpack_grid）的
 ```bash
 bash scripts/run_round.sh            # 手动跑一轮（入口自锁——被持有时等待45s后跳过exit 3）
 DRYRUN=1 bash scripts/run_round.sh   # 空跑：只观察+判定（同样持锁）
-node tests/regression.cjs            # 回归测试，改代码后必须全绿再提交
+PATH=/Users/nick/.nvm/versions/node/v22.14.0/bin:$PATH npm test # 离线回归 + 生产行为验收
 ```
 
 ## 定时巡检（launchd，每 15 分钟）
@@ -32,14 +32,14 @@ launchctl print gui/$(id -u)/com.backpack.grid-monitor | grep -E "state|last exi
 launchctl kickstart gui/$(id -u)/com.backpack.grid-monitor
 # 启动（重启同理）
 launchctl bootout gui/$(id -u)/com.backpack.grid-monitor 2>/dev/null
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.backpack-grid-monitor.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.backpack.grid-monitor.plist
 # 停止定时
 launchctl bootout gui/$(id -u)/com.backpack.grid-monitor
 ```
 
 日志：`state/launchd.log`（执行层）、`state/log.md`（每轮摘要）。
 注意：launchd 只负责**执行**；ZCode 定时任务只负责读文件汇报。两者靠 run_round.sh
-的 PID 锁防重。
+的内核 flock 防重。
 
 排障：ZCode 定时任务"已工作 1 秒"无输出 = ZCode 会话层问题（常见于套餐额度耗尽），
 与本机执行无关；换绑定模型或新聊天重建定时任务。
@@ -48,7 +48,7 @@ launchctl bootout gui/$(id -u)/com.backpack.grid-monitor
 
 ```bash
 # 地址与密钥
-cat state/dashboard.env    # DASH_URL / DASH_TOKEN（读取需 ?k=<DASH_TOKEN>）
+# 仪表盘公开读取；不要输出 state/dashboard.env 中的上传凭证
 # 改了页面(cloudflare/dashboard.html)或接口(worker.js)后部署：
 export PATH="$HOME/.nvm/versions/node/v22.14.0/bin:$PATH"
 npx wrangler deploy --config cloudflare/wrangler.toml
@@ -59,7 +59,7 @@ npx wrangler deploy --config cloudflare/wrangler.toml
 
 - wrangler deploy **必须带 `--config cloudflare/wrangler.toml`**（曾误吃上层项目配置建错 Worker）
 - 改完页面用 390px 移动视口验证无横向溢出（CDP `Emulation.setDeviceMetricsOverride`）
-- 403 = dashboard.env 的 DASH_TOKEN 与 Worker secret 不一致 → 重跑 deploy / secret put
+- 403 = dashboard.env 的 DASH_WRITE_TOKEN 与 Worker secret 不一致 → 重跑 deploy / secret put
 
 ## 常见故障
 
@@ -73,6 +73,16 @@ npx wrangler deploy --config cloudflare/wrangler.toml
 
 ## 纪律
 
-- 改代码后：`node tests/regression.cjs` 全绿 → git commit → 需要时再部署仪表盘
+- 改代码后：`npm test` 全绿 → git commit → 需要时再部署仪表盘
 - 不要手动开平仓、不要绕过 act 直接调交易所接口、不要动浏览器里的网格
 - 观察类操作可随时执行（只读）；执行类操作失败先读 state 文件再重试
+
+## 新增采集与账本
+
+- 所有 Python 命令均使用 `/Users/nick/.browser-use-env/bin/python3`。
+- 定时入口由 `scripts/install_launch_agents.py --install` 生成，RunAtLoad=false，不会因重载立刻执行交易。
+- 历史成交：`collect_history.sh`，独立 history.lock、独立 Page；`trade_history.json` 保存原始 fill ID 和游标，`fees.json` 为派生汇总。
+- 研究候选：`refresh_research.sh`，独立 research.lock，无空槽时也刷新。
+- 核对后的出入金／资金费／利息／奖励导入：`node scripts/import_ledger.cjs <export.json>`；见 docs/ledger-import.example.json。覆盖未声明或未追平时不把权益变化称作策略收益。
+- 运行次数与停止次数取 run_events.jsonl 的确认事件，从接入之日起计数，不反推旧计划日志。
+- 不使用实盘微型网格做故障注入；act 完整入口的控制流通过模拟 session I/O 验证。

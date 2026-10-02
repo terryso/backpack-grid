@@ -13,7 +13,7 @@
   "minScore": 5,
   "maxPerEcosystem": 2,
   "ecosystems": {
-    "solana": [
+    "solana": ["SOL",
       "PENGU",
       "PUMP",
       "WIF",

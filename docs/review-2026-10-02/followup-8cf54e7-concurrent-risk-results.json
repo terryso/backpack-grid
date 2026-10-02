@@ -1,0 +1,7 @@
+{
+  "parallelProcesses": 12,
+  "allExitedZero": true,
+  "finalPeak": 1210,
+  "latchPreserved": true,
+  "boundary": "Production risk_write.py, real kernel flock, isolated temporary BG_ROOT; no account or service writes."
+}

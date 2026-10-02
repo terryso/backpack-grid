@@ -1,147 +1,87 @@
 #!/usr/bin/env node
-// dashboard_data.cjs — assemble a compact dashboard snapshot from state/ files.
-// Writes state/dashboard.json (upload artifact). --preview writes state/dashboard_preview.html
-// with the snapshot inlined (no server needed).
-const fs = require("node:fs");
-const path = require("node:path");
-const ROOT = path.join(__dirname, "..");
-const read = (p) => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8")); } catch { return null; } };
-const cfg = read("config.json") || {};
-
-const obs = read("state/observed.json") || {};
-const campaign = read("state/campaign.json") || {};
-const risk = read("state/risk.json") || {};
-const pending = read("state/pending_stops.json") || {};
-const actResults = read("state/act_results.json") || {};
-
-const num = (s) => { const n = Number(String(s == null ? "" : s).replace(/[$,%\s,]/g, "")); return isFinite(n) ? n : 0; };
-const grids = obs.gridRows || [];
-const positions = obs.positions || [];
-const orphans = positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market);
-
-// equity curve: last 400 rounds
-let curve = [];
-try {
-  const lines = fs.readFileSync(path.join(ROOT, "state/equity_curve.jsonl"), "utf8").trim().split("\n").slice(-400);
-  curve = lines.map((l) => { try { const r = JSON.parse(l); return [r.at, num(r.equity), Math.round(num(r.campaignVolume))]; } catch { return null; } }).filter(Boolean);
-} catch {}
-
-const lastActionEntry = (actResults.results || []).slice(-1)[0] || null;
-let lastAction = null;
-let lastActionNote = null;
-// stale entries (>24h, e.g. old test cleanups) must not present themselves as "最近动作"
-const actAgeH = actResults.at ? (Date.now() - new Date(actResults.at).getTime()) / 3600000 : Infinity;
-if (lastActionEntry && actAgeH < 24) {
-  const when = (actResults.at || "").replace("T", " ").slice(5, 16);
-  const wrapReason = (r) => (r && String(r).trim() ? `（${String(r).slice(0, 80)}）` : "");
-  if (lastActionEntry.done === false) { lastAction = `${lastActionEntry.act} 失败`; lastActionNote = `${when} · ${lastActionEntry.act} ${lastActionEntry.market || ""} 失败：${String(lastActionEntry.error || "").slice(0, 120)}`; }
-  else if (lastActionEntry.act === "stop") { lastAction = `停止 ${lastActionEntry.market || ""}`; lastActionNote = `${when} · 停止 ${lastActionEntry.market}${wrapReason(lastActionEntry.reason)}`; }
-  else if (lastActionEntry.act === "create") { lastAction = `创建 ${lastActionEntry.market || ""}`; lastActionNote = `${when} · 创建 ${lastActionEntry.market} ${lastActionEntry.lower}~${lastActionEntry.upper} x${lastActionEntry.count}`; }
-  else if (lastActionEntry.act === "protect") { lastAction = `保护修复 ${lastActionEntry.market || ""}`; lastActionNote = `${when} · 恢复 ${lastActionEntry.market} 原生 TP/SL`; }
-}
-
-const strategy = obs.strategyEquity || null;
-// 状态可见性（F07）：把"未知/失败/损坏"显式带进展示模型，未知 ≠ 正常
+const fs = require('node:fs');
+const path = require('node:path');
+const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
+const { attribution } = require('./accounting.cjs');
+const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
+const file = (p) => path.join(ROOT, p);
+const read = (p) => { try { return JSON.parse(fs.readFileSync(file(p), 'utf8')); } catch { return null; } };
+const jsonl = (p) => { try { return fs.readFileSync(file(p), 'utf8').split('\n').filter(Boolean).map(JSON.parse); } catch { return []; } };
+const cfg = read('config.json') || {};
+const obs = read('state/observed.json');
+const risk = read('state/risk.json');
+const pending = read('state/pending_stops.json');
+const campaign = read('state/campaign.json');
+const results = read('state/act_results.json');
+const writeState = read('state/risk_write_status.json');
+const grids = Array.isArray(obs?.gridRows) ? obs.gridRows : [];
+const positions = Array.isArray(obs?.positions) ? obs.positions : [];
+const equity = num(obs?.margin?.totalEquity);
+const age = obs?.at ? (Date.now() - Date.parse(obs.at)) / 1000 : null;
+const dataValid = !!obs && !obs.error && age !== null && Number.isFinite(age) && age >= -60 && age <= 20 * 60
+  && equity !== null && Array.isArray(obs.gridRows) && Array.isArray(obs.positions);
+const riskStateValid = riskStructOk(risk);
+const pendingValid = pendingStructOk(pending) || (!fs.existsSync(file('state/pending_stops.json')));
+const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
 let lastRoundStatus = null;
-try { lastRoundStatus = fs.readFileSync(path.join(ROOT, "state/last_round_status"), "utf8").trim() || null; } catch {}
-let riskStateValid = true;
-try {
-  const r = JSON.parse(fs.readFileSync(path.join(ROOT, "state/risk.json"), "utf8"));
-  riskStateValid = !!r && typeof r === "object" && Number.isFinite(Number(r.peakEquity));
-} catch { riskStateValid = fs.existsSync(path.join(ROOT, "state/risk.json")) ? false : true; }
-let pendingCorrupt = false;
-try { JSON.parse(fs.readFileSync(path.join(ROOT, "state/pending_stops.json"), "utf8")); }
-catch {
-  // 解析失败或持久损坏标志文件存在都视为异常
-  pendingCorrupt = fs.existsSync(path.join(ROOT, "state/pending_stops.json"))
-    || fs.existsSync(path.join(ROOT, "state/pending_corrupt.json"));
+try { lastRoundStatus = fs.readFileSync(file('state/last_round_status'), 'utf8').trim() || null; } catch {}
+let lastAction = null, lastActionNote = null;
+if (results && Array.isArray(results.results) && Date.now() - Date.parse(results.at) < 86400000) {
+  const failures = results.results.filter((r) => r.done !== true);
+  const done = results.results.filter((r) => r.done === true);
+  lastAction = failures.length ? `${failures.length} 个动作失败／跳过` : `${done.length} 个动作完成`;
+  lastActionNote = results.results.map((r) => `${r.act} ${r.market || ''}: ${r.done === true ? '已确认' : r.error || '未完成'}`).join('；').slice(0, 600);
 }
-let feesStats = null;
+const events = jsonl('state/run_events.jsonl');
+const completed = new Map(events.filter((e) => e.type === 'end' && !e.dryrun).map((e) => [e.runId, e]));
+const exits = new Set();
+for (const e of events.filter((e) => e.type === 'actions' && !e.dryrun)) {
+  for (const r of e.results || []) if (r.act === 'stop' && r.done === true && r.note !== 'already deleted') exits.add(`${e.runId}|${e.phase}|${r.market}`);
+}
+const points = jsonl('state/equity_curve.jsonl').filter((r) => Number.isFinite(Date.parse(r.at)) && num(r.equity) !== null && !r.dryrun)
+  .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+const curve = [...new Map(points.map((r) => [r.at, [r.at, num(r.equity), num(r.campaignVolume)]])).values()].slice(-400);
+let maxDD = null, peak = 0, change24h = null, change24hPct = null;
+for (const p of curve) { peak = Math.max(peak, p[1]); if (peak > 0) maxDD = Math.max(maxDD ?? 0, (peak - p[1]) / peak * 100); }
+const ref = points.filter((r) => Date.parse(r.at) <= Date.now() - 86400000).slice(-1)[0];
+if (ref && equity !== null && num(ref.equity) > 0) { change24h = equity - num(ref.equity); change24hPct = change24h / num(ref.equity) * 100; }
+const baseline = num(obs?.strategyEquity?.baseline ?? cfg.strategyBaselineUsd);
+const baselineAt = obs?.strategyEquity?.baselineAt || cfg.strategyStartAt || null;
+const equityChange = equity !== null && baseline !== null ? equity - baseline : null;
+let accounting = { complete: false, strategyPnl: null };
 try {
-  const feesFile = JSON.parse(fs.readFileSync(path.join(ROOT, "state/fees.json"), "utf8"));
-  let feeUsd = 0, makerVol = 0, totalVol = 0, makerN = 0, totalN = 0;
-  for (const rec of Object.values(feesFile.symbols || {})) {
-    feeUsd += rec.feeUsd || 0; makerVol += rec.makerVol || 0; totalVol += (rec.makerVol || 0) + (rec.takerVol || 0);
-    makerN += rec.makerN || 0; totalN += (rec.makerN || 0) + (rec.takerN || 0);
-  }
-  feesStats = { feeUsd: +feeUsd.toFixed(2), makerPct: totalVol > 0 ? +(makerVol / totalVol * 100).toFixed(1) : null, fills: totalN, acquiredAt: feesFile.acquiredAt || null };
-} catch { feesStats = null; }
-// 运行统计：天数（自策略基线日）、巡检轮次（equity_curve 行数）、自动换仓次数（log 中 stop 动作计数）
-let runDays = null, rounds = 0, rotations = 0, change24h = null, change24hPct = null, maxDD = null;
-try {
-  const startAt = (strategy && strategy.baselineAt) || (obs.strategyEquity && obs.strategyEquity.baselineAt);
-  if (startAt) runDays = +((Date.now() - new Date(startAt).getTime()) / 86400000).toFixed(1);
-  const cur = num(obs.margin && obs.margin.totalEquity);
-  const curveLines = fs.readFileSync(path.join(ROOT, "state/equity_curve.jsonl"), "utf8").trim().split("\n");
-  rounds = curveLines.length;
-  // 权益曲线采样点 + 24h 变化 + 历史最大回撤（滚动峰值法）
-  try {
-    const pts = curveLines.map((l) => { try { const r = JSON.parse(l); return { t: new Date(r.at).getTime(), eq: num(r.equity) }; } catch { return null; } }).filter(Boolean);
-    // 追加当前权益作为最后一个点（实时性）
-    if (isFinite(cur)) pts.push({ t: Date.now(), eq: cur });
-    const now = Date.now();
-    const dayAgo = now - 86400000;
-    let ref = null;
-    for (const p of pts) if (p.t <= dayAgo && (!ref || p.t > ref.t)) ref = p;
-    if (ref) { change24h = +(cur - ref.eq).toFixed(2); change24hPct = +((cur - ref.eq) / ref.eq * 100).toFixed(2); }
-    let pk = 0;
-    for (const p of pts) {
-      if (p.eq > pk) pk = p.eq;
-      const dd = pk > 0 ? (pk - p.eq) / pk * 100 : 0;
-      if (maxDD === null || dd > maxDD) maxDD = +dd.toFixed(2);
-    }
-  } catch {}
-  const logText = fs.readFileSync(path.join(ROOT, "state/log.md"), "utf8");
-  for (const line of logText.split("\n")) {
-    const m = line.match(/actions=([^\n]*)/);
-    if (m) rotations += (m[1].match(/stop:/g) || []).length;
-  }
-} catch {}
+  const ledger = read('state/attribution_ledger.json');
+  if (ledger && ledger.subaccountId !== (cfg.subaccountId || 3)) throw new Error('ledger account mismatch');
+  accounting = attribution(ledger, baselineAt, obs?.at, equityChange);
+} catch (e) { accounting.error = String(e.message); }
+const f = read('state/fees.json');
+let fees = null;
+if (f?.symbols && typeof f.symbols === 'object' && !Array.isArray(f.symbols)) {
+  let feeUsd = 0, maker = 0, total = 0, fills = 0;
+  for (const r of Object.values(f.symbols)) { feeUsd += num(r.feeUsd) || 0; maker += num(r.makerVol) || 0; total += (num(r.makerVol) || 0) + (num(r.takerVol) || 0); fills += (num(r.makerN) || 0) + (num(r.takerN) || 0); }
+  fees = { feeUsd, makerPct: total > 0 ? maker / total * 100 : null, fills, acquiredAt: f.acquiredAt, incomplete: f.incomplete !== false || !Number.isFinite(Date.parse(f.acquiredAt)) || Date.now() - Date.parse(f.acquiredAt) > 30 * 60000, source: f.source || 'legacy-aggregates', otherFeeCurrencies: [...new Set(Object.values(f.symbols).flatMap((r) => Object.keys(r.otherFees || {})))] };
+}
 const snapshot = {
-  updatedAt: obs.at || new Date().toISOString(),
-  equity: num(obs.margin && obs.margin.totalEquity),
-  available: num(obs.margin && obs.margin.availableEquity),
-  strategyTotalPnl: strategy && strategy.totalPnl != null ? strategy.totalPnl : null,
-  strategyBaseline: strategy ? strategy.baseline : null,
-  strategyBaselineAt: strategy ? strategy.baselineAt : null,
-  fees: feesStats && !feesStats.error ? { feeUsd: +feesStats.feeUsd.toFixed(2), makerPct: feesStats.makerPct, fills: feesStats.fills } : null,
-  runStats: { days: runDays, rounds, rotations },
-  lastRoundStatus, riskStateValid, pendingCorrupt,
-  dataValid: !obs.error,
-  change24h, change24hPct,
-  maxDrawdown: maxDD,
-  drawdownPct: Math.max(0, risk.peakEquity ? ((risk.peakEquity - num(obs.margin && obs.margin.totalEquity)) / risk.peakEquity) * 100 : 0),
-  riskPaused: !!(risk.paused),
-  campaignVolume: Math.round(num(campaign.campaignVolume)),
-  tier1: 50000,
-  tier1Secured: num(campaign.campaignVolume) >= 50000,
-  grids: grids.map((g) => ({
-    market: g.market, direction: g.direction,
-    range: `${g.range[0]} ~ ${g.range[1]}`,
-    rangeLow: num(g.range[0]), rangeHigh: num(g.range[1]),
-    count: g.count,
-    value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status,
-    price: g.price, nativeSL: g.nativeSL,
-    effPnlPct: num(g.effPnlPct),
-  })),
-  tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct,
-  positions: positions.map((p) => ({ market: p.market, side: p.side, size: p.size, mark: p.mark, pnl: p.pnl })),
-  pending: Object.keys(pending),
-  orphans,
-  lastAction, lastActionNote,
-  curve,
+  updatedAt: obs?.at || null, generatedAt: new Date().toISOString(), snapshotAge: Number.isFinite(age) ? age : null,
+  equity, available: num(obs?.margin?.availableEquity), dataValid, riskStateValid, pendingCorrupt, lastRoundStatus,
+  riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
+  strategyTotalPnl: accounting.strategyPnl, equityChange, accounting,
+  strategyBaseline: baseline, strategyBaselineAt: baselineAt,
+  fees, runStats: { days: baselineAt ? (Date.now() - Date.parse(baselineAt)) / 86400000 : null, rounds: completed.size, exits: exits.size, since: events[0]?.startedAt || null },
+  change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'last-400-observation-samples',
+  drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
+  riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: num(campaign?.campaignVolume), tier1: 50000, tier1Secured: num(campaign?.campaignVolume) >= 50000 && num(campaign?.campaignVolume) !== null,
+  grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
+  tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
+  pending: pendingValid ? Object.keys(pending || {}) : null,
+  orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
+  lastAction, lastActionNote, curve,
 };
-
-fs.writeFileSync(path.join(ROOT, "state/dashboard.json"), JSON.stringify(snapshot));
-
-if (process.argv.includes("--preview")) {
-  const html = fs.readFileSync(path.join(ROOT, "cloudflare/dashboard.html"), "utf8")
-    .replaceAll("__TOKEN__", "PREVIEW")
-    .replace("const TOKEN = \"PREVIEW\";", `const TOKEN = "PREVIEW";\nwindow.__INLINE__ = ${JSON.stringify(snapshot)};`)
-    .replace("const r = await fetch(`/api/snapshot?k=${encodeURIComponent(TOKEN)}`);\n    if (!r.ok) throw new Error(r.status);\n    render(await r.json());",
-      "if (window.__INLINE__) { render(window.__INLINE__); return; }\n    const r = await fetch(`/api/snapshot?k=${encodeURIComponent(TOKEN)}`);\n    if (!r.ok) throw new Error(r.status);\n    render(await r.json());");
-  fs.writeFileSync(path.join(ROOT, "state/dashboard_preview.html"), html);
-  console.log("preview written: state/dashboard_preview.html");
-} else {
-  console.log("dashboard.json written");
+fs.mkdirSync(file('state'), { recursive: true });
+fs.writeFileSync(file('state/dashboard.json.tmp'), JSON.stringify(snapshot));
+fs.renameSync(file('state/dashboard.json.tmp'), file('state/dashboard.json'));
+if (process.argv.includes('--preview')) {
+  const html = fs.readFileSync(file('cloudflare/dashboard.html'), 'utf8').replace('async function load() {', `async function load() { render(${JSON.stringify(snapshot).replace(/</g, '\\u003c')}); return;`);
+  fs.writeFileSync(file('state/dashboard_preview.html'), html);
 }
+console.log('dashboard.json written');

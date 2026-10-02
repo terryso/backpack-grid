@@ -1,0 +1,10 @@
+{
+  "normalContenderExit": 3,
+  "manualEntryBlockedWhileHeld": true,
+  "parentKilledBusinessRemainedAlive": true,
+  "contenderAfterParentKillExit": 3,
+  "manualResumedOnlyAfterBusinessExit": true,
+  "subsequentBusinessCanEnter": true,
+  "firstRunCreatedState": true,
+  "boundary": "Production wrapper with real kernel flock in temporary BG_ROOT; public runner copied with Python interpreter path normalized to required environment and all command I/O mocked. No real service signalled, trading or original state changed."
+}

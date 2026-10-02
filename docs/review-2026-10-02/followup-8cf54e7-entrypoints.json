@@ -1,0 +1,36 @@
+{
+  "reviewDate": "2026-10-03",
+  "entries": [
+    {
+      "label": "com.backpack-grid-peak",
+      "configuredArguments": [
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/peak_probe.sh"
+      ],
+      "loadedReadExit": 0,
+      "loadedArguments": [
+        "program = /bin/bash",
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/peak_probe.sh"
+      ]
+    },
+    {
+      "label": "com.backpack.grid-monitor",
+      "configuredArguments": [
+        "/usr/bin/python3",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/with_lock.py",
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/run_round.sh"
+      ],
+      "loadedReadExit": 0,
+      "loadedArguments": [
+        "program = /usr/bin/python3",
+        "/usr/bin/python3",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/with_lock.py",
+        "/bin/bash",
+        "/Users/nick/CascadeProjects/backpack_grid/scripts/run_round.sh"
+      ]
+    }
+  ],
+  "boundary": "Read-only configured and loaded launchd arguments; no service restart."
+}

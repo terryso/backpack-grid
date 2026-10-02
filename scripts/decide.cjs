@@ -9,6 +9,8 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { getTickers } = require("./api.cjs");
 
+const { riskStructOk, pendingStructOk, finiteNumber, money } = require("./state_schema.cjs");
+const { sizeGrid } = require("./grid_sizing.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -16,14 +18,14 @@ const obs = read("state/observed.json");
 if (obs.error) { console.log("OBSERVE_ERROR: " + obs.error); process.exit(1); }
 {
   const obsAgeMin = (Date.now() - new Date(obs.at).getTime()) / 60000;
-  if (!isFinite(obsAgeMin) || obsAgeMin > 10) {
+  if (!isFinite(obsAgeMin) || obsAgeMin < -1 || obsAgeMin > 10) {
     console.error(`STALE OBSERVATION: snapshot at ${obs.at} is ${Number(obsAgeMin).toFixed(1)} min old — refusing to plan`);
     process.exit(1);
   }
 }
 const PHASE2 = process.env.BG_PHASE === "creates"; // phase 2 evaluates replacement creates only
 
-const num = (s) => (s == null ? NaN : Number(String(s).replace(/[$,%\s,]/g, "")));
+const num = (s) => money(s) ?? NaN;
 const writeAtomic = (p, data) => {
   const tmp = p + ".tmp";
   fs.writeFileSync(tmp, data);
@@ -53,8 +55,7 @@ const writeAtomic = (p, data) => {
     // shared structure rule with act.loadPending ("invalid pending ledger structure" is the
     // shared canary): non-null plain object, non-array,
     // every value a non-null plain object (an array ledger silently drops entries on save)
-    const structOk = parsedPending !== null && typeof parsedPending === "object" && !Array.isArray(parsedPending)
-      && Object.values(parsedPending).every((v) => v !== null && typeof v === "object" && !Array.isArray(v));
+    const structOk = pendingStructOk(parsedPending);
     if (structOk) pending = parsedPending;
     else pendCorrupt = true;
   } catch (e) {
@@ -71,12 +72,8 @@ const writeAtomic = (p, data) => {
       const parsed = JSON.parse(fs.readFileSync(riskPath, "utf8"));
       // strict type checks BEFORE numeric coercion: Number(null)/Number(true)/Number("")
       // all coerce to plausible numbers and must not pass
-      const pk = parsed.peakEquity;
-      const pkTypeOk = typeof pk === "number" || (typeof pk === "string" && pk.trim() !== "");
-      const pkNum = pkTypeOk ? Number(pk) : NaN;
-      const structOk = parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        && pkTypeOk && Number.isFinite(pkNum) && pkNum >= 0
-        && (parsed.paused === null || parsed.paused === undefined || typeof parsed.paused === "object");
+      const pkNum = Number(parsed?.peakEquity);
+      const structOk = riskStructOk(parsed);
       if (structOk) {
         risk = { peakEquity: pkNum, paused: parsed.paused === undefined ? null : parsed.paused };
         if (parsed.lastEquity !== undefined) risk.lastEquity = parsed.lastEquity;
@@ -88,18 +85,19 @@ const writeAtomic = (p, data) => {
   }
   if (!risk && !riskCorrupt) risk = { peakEquity: 0, paused: null }; // first-time init only (no file)
   const eq = num(obs.margin.totalEquity);
+  if (!Number.isFinite(eq) || !Number.isFinite(num(obs.margin.availableEquity))) throw new Error("invalid account equity");
   if (risk && isFinite(eq) && eq > 0) {
     if (!risk.peakEquity || eq > risk.peakEquity) risk.peakEquity = eq;
     risk.lastEquity = eq;
     risk.lastAt = obs.at;
   }
-  const effPeak = risk ? Number(risk.peakEquity) : 0;
-  const ddPct = effPeak ? ((effPeak - eq) / effPeak) * 100 : 0;
+  let effPeak = risk ? Number(risk.peakEquity) : 0;
+  let ddPct = effPeak ? ((effPeak - eq) / effPeak) * 100 : 0;
   let breaker = null; // null | "warn" | "trip" | "paused"
   let justTripped = false;
   if (risk && risk.paused) breaker = "paused";
-  else if (risk && isFinite(ddPct) && ddPct >= cfg.riskBudgetPct) {
-    risk.paused = { at: obs.at, reason: `drawdown ${ddPct.toFixed(1)}% >= budget ${cfg.riskBudgetPct}%`, peakEquity: risk.peakEquity, equity: eq };
+  else if (risk && (obs.liquidating === true || (isFinite(ddPct) && ddPct >= cfg.riskBudgetPct))) {
+    risk.paused = { at: obs.at, reason: obs.liquidating ? "account liquidating" : `drawdown ${ddPct.toFixed(1)}% >= budget ${cfg.riskBudgetPct}%`, peakEquity: risk.peakEquity, equity: eq };
     justTripped = true;
     breaker = "trip";
   } else if (risk && isFinite(ddPct) && ddPct >= cfg.warnDrawdownPct) breaker = "warn";
@@ -107,22 +105,45 @@ const writeAtomic = (p, data) => {
   // merge semantics (peak ratchet; paused preserved on disk unless tripped
   // HERE — probe/latch updates from concurrent processes are never clobbered).
   // A corrupt/invalid file is refused by the helper and kept for manual recovery.
+  let riskWriteOk = false;
   if (!riskCorrupt && risk) {
-    const payload = { peakEquity: risk.peakEquity };
+    const riskIntentPath = path.join(ROOT, "state", "risk_write_pending.json");
+    let oldIntent = null;
+    try { oldIntent = JSON.parse(fs.readFileSync(riskIntentPath, "utf8")); } catch (e) { if (e.code !== "ENOENT") riskCorrupt = true; }
+    const payload = { peakEquity: risk.peakEquity, assessment: { equity: eq, budgetPct: cfg.riskBudgetPct, at: obs.at } };
     if (risk.lastEquity !== undefined) payload.lastEquity = risk.lastEquity;
     if (risk.lastAt !== undefined) payload.lastAt = risk.lastAt;
-    if (justTripped) payload.paused = risk.paused;
-    const w = spawnSync("/usr/bin/python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8" });
-    if (w.status !== 0) lines.push(`RISK WRITE REFUSED (status ${w.status}): ${String(w.stderr || w.stdout || "").trim().slice(0, 140)} — kept for manual recovery`);
+    if (fs.existsSync(riskIntentPath)) {
+      if (!riskStructOk(oldIntent) || !oldIntent.paused) riskCorrupt = true;
+      else { payload.paused = oldIntent.paused; payload.peakEquity = Math.max(payload.peakEquity, Number(oldIntent.peakEquity)); }
+    }
+    if (justTripped && !payload.paused) payload.paused = risk.paused;
+    // Persist the latch intention before the writer: a transient commit failure
+    // must not allow equity recovery to erase an uncommitted circuit breaker.
+    if (payload.paused && !riskCorrupt) writeAtomic(riskIntentPath, JSON.stringify({ peakEquity: risk.peakEquity, paused: payload.paused }));
+    const w = riskCorrupt ? { status: 2, stderr: "risk write intent corrupt" } : spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8", timeout: 8000 });
+    try {
+      if (riskCorrupt) throw new Error("risk write intent corrupt — kept for manual recovery");
+      if (w.status !== 0) throw new Error(String(w.error?.message || w.stderr || w.stdout || w.status).trim());
+      const committed = JSON.parse(w.stdout);
+      if (!riskStructOk(committed)) throw new Error("invalid writer response");
+      risk = committed;
+      effPeak = Number(risk.peakEquity);
+      ddPct = effPeak ? (effPeak - eq) / effPeak * 100 : 0;
+      breaker = risk.paused ? (justTripped ? "trip" : "paused")
+        : ddPct >= cfg.warnDrawdownPct ? "warn" : null;
+      riskWriteOk = true;
+      if (fs.existsSync(riskIntentPath)) fs.unlinkSync(riskIntentPath);
+    } catch (e) {
+      lines.push(`RISK WRITE FAILED: ${String(e.message).slice(0, 140)} — NO new grids; exits still execute`);
+    }
   }
   if (riskCorrupt) {
     breaker = breaker || "warn";
-    lines.push(`RISK STATE CORRUPT: state/risk.json unparseable or invalid shape — kept for manual recovery; NO new grids until fixed`);
+    lines.push("RISK STATE CORRUPT: state/risk.json unparseable or invalid shape — kept for manual recovery; NO new grids until fixed");
   }
-  if (riskCorrupt) {
-    breaker = breaker || "warn";
-    lines.push(`RISK STATE CORRUPT: state/risk.json unparseable — kept for manual recovery; NO new grids until fixed`);
-  }
+  writeAtomic(path.join(ROOT, "state", "risk_write_status.json"), JSON.stringify({ at: obs.at, ok: riskWriteOk }));
+
   if (breaker === "trip") lines.push(`RISK BREAKER TRIPPED: drawdown ${ddPct.toFixed(1)}% >= ${cfg.riskBudgetPct}% — stopping ALL grids; rotations paused until manual reset`);
   else if (breaker === "paused") lines.push(`RISK PAUSED (latched ${risk.paused.at}) — no new grids; restore state/risk.json (keep peakEquity) and clear paused to resume`);
   else if (breaker === "warn") lines.push(`RISK WARNING: drawdown ${ddPct.toFixed(1)}% >= ${cfg.warnDrawdownPct}% — no new grids until recovery`);
@@ -164,6 +185,7 @@ const writeAtomic = (p, data) => {
       lines.push("TICKERS OFFLINE (BG_OFFLINE=1) — price-based rules skipped this round; pnl/risk rules still active");
     } else {
       const tickers = tickersFile ? JSON.parse(fs.readFileSync(tickersFile, "utf8")) : await getTickers();
+      if (!Array.isArray(tickers) || !tickers.length) throw new Error("empty/malformed ticker response");
       tmap = new Map(tickers.map((t) => [t.symbol, t]));
     }
   } catch (e) {
@@ -173,7 +195,7 @@ const writeAtomic = (p, data) => {
   const priceOf = (mkt) => {
     if (!tmap) return NaN;
     const t = tmap.get(apiSym(mkt));
-    return t ? Number(t.lastPrice) : NaN;
+    return t && finiteNumber(t.lastPrice) && Number(t.lastPrice) > 0 ? Number(t.lastPrice) : NaN;
   };
   const fundingOf = (mkt) => {
     const p = (obs.positions || []).find((pp) => pp.market === mkt);
@@ -239,9 +261,13 @@ const writeAtomic = (p, data) => {
     }
   }
 
+  for (let i = actions.length - 1; i >= 0; i--) {
+    if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
+  }
+
   // ---------- plan replacements for freed slots ----------
   const stops = actions.filter((a) => a.act === "stop").map((a) => a.market);
-  const remaining = grids.filter((g) => !stops.includes(g.market) && g.status !== "Disabled").map((g) => g.market);
+  const remaining = grids.filter((g) => !stops.includes(g.market)).map((g) => g.market);
   const slots = cfg.maxGrids - remaining.length;
   const ecoOf = (perpName) => {
     const base = perpBase(perpName);
@@ -255,13 +281,14 @@ const writeAtomic = (p, data) => {
   try {
     ana = JSON.parse(fs.readFileSync(anaPath, "utf8"));
     anaAgeMin = (Date.now() - new Date(ana.generatedAt).getTime()) / 60000;
-    if (anaAgeMin > cfg.analysisMaxAgeMin) ana = null;
+    if (!Array.isArray(ana.top)) ana = null;
+    if (!Number.isFinite(anaAgeMin) || anaAgeMin < 0 || anaAgeMin > cfg.analysisMaxAgeMin) ana = null;
   } catch {}
   // whether new grids are allowed at all: breaker states, corrupt risk file, ticker outage,
   // or a queued pending stop (cleanup before new risk) all veto creation
   const corruptFlagExists = fs.existsSync(path.join(ROOT, "state", "pending_corrupt.json"));
   if (orphanPositions.length) lines.push(`ORPHAN POSITIONS (no grid): ${orphanPositions.map((p) => p.market).join(", ")} — new-risk blocked; pending verification still runs`);
-  const mayCreate = breaker === null && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
+  const mayCreate = breaker === null && riskWriteOk && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
     && Object.keys(pending).length === 0 && orphanPositions.length === 0;
   // phase semantics: risk exits must never wait for market analysis. When stops are
   // planned, defer creation to phase 2 (run_round re-observes, then BG_PHASE=creates);
@@ -298,7 +325,7 @@ const writeAtomic = (p, data) => {
       try {
         const { execFileSync } = require("node:child_process");
         const ex = [...remaining, ...stops].map((m) => apiSym(m));
-        execFileSync("node", [path.join(ROOT, "scripts", "analyze.cjs")], {
+        execFileSync(process.execPath, [path.join(ROOT, "scripts", "analyze.cjs")], {
           env: { ...process.env, EXCLUDE: ex.join(",") }, stdio: "inherit", timeout: 300000,
         });
         ana = JSON.parse(fs.readFileSync(anaPath, "utf8"));
@@ -317,8 +344,10 @@ const writeAtomic = (p, data) => {
     if (ana) for (const cand of ana.top) {
       if (created >= slots) break;
       const mkt = cand.symbol.replace("_USDC_PERP", "-PERP");
-      if (remaining.includes(mkt) || stops.includes(mkt)) continue;
+      if (grids.some((g) => g.market === mkt) || remaining.includes(mkt) || stops.includes(mkt)) continue;
+      if (!Number.isFinite(priceOf(mkt))) { lines.push(`PLAN skip ${mkt}: current price unknown`); continue; }
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
+      if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
       // ecosystem concentration cap (counts include kept grids, same canonical names)
       const eco = ecoOf(cand.symbol);
@@ -343,11 +372,13 @@ const writeAtomic = (p, data) => {
       // cumulative reservation: N planned grids must not all size against the same balance
       if (numAvail - plannedMargin - estMargin < 20) value = Math.floor((numAvail - plannedMargin - 20) * cfg.leverageCap / 50) * 50;
       if (value < 500) { lines.push(`SKIP create ${mkt}: available equity ${(numAvail - plannedMargin).toFixed(0)} too low`); break; }
+      const sizedGrid = sizeGrid(cand, value);
+      if (!sizedGrid) { lines.push(`SKIP create ${mkt}: final allocation cannot support exchange minimum order size`); continue; }
       plannedMargin += value / cfg.leverageCap;
       plannedRisk += value * (wantSL / 100);
       actions.push({
         act: "create", market: mkt, urlSymbol: cand.symbol.replace("_USDC_PERP", "_USD_PERP"),
-        lower: cand.grid.lower, upper: cand.grid.upper, count: cand.grid.count, value,
+        lower: sizedGrid.lower, upper: sizedGrid.upper, count: sizedGrid.count, value,
         why: `score=${cand.score} chop=${cand.chop} r24=${cand.range24}% qvol=$${Math.round(cand.qvol24 / 1000)}k`,
       });
       remaining.push(mkt);
@@ -383,7 +414,7 @@ const writeAtomic = (p, data) => {
   // ---------- equity curve: one JSONL line per round ----------
   try {
     const rec = {
-      at: obs.at,
+      at: obs.at, dryrun: process.env.DRYRUN === "1", phase: PHASE2 ? "creates" : "risk",
       equity: num(obs.margin.totalEquity),
       available: num(obs.margin.availableEquity),
       ledgerPnl: +grids.reduce((s, g) => s + (Number(g.pnlRaw) || 0), 0).toFixed(2),
@@ -402,12 +433,12 @@ const writeAtomic = (p, data) => {
     try { paper = JSON.parse(fs.readFileSync(paperPath, "utf8")); } catch {}
     const priceOfSym = (sym) => {
       const t = tmap ? tmap.get(sym) : null;
-      const n = t ? Number(t.lastPrice) : NaN; // tmap holds ticker OBJECTS — extract the number
-      return isFinite(n) ? n : NaN;
+      const n = t && finiteNumber(t.lastPrice) ? Number(t.lastPrice) : NaN; // tmap holds ticker OBJECTS — extract the number
+      return isFinite(n) && n > 0 ? n : NaN;
     };
     // mark legacy records polluted by the object-as-price bug (pre-fix entries)
     for (const p of [...paper.open, ...paper.closed]) {
-      if (!isFinite(Number(p.entry))) p.invalid = true;
+      if (!finiteNumber(p.entry) || Number(p.entry) <= 0) p.invalid = true;
     }
     for (const p of paper.open) {
       if (p.invalid) continue;
@@ -437,7 +468,7 @@ const writeAtomic = (p, data) => {
       for (const c of ana.directional || []) {
         if (paper.open.some((p) => p.symbol === c.symbol)) continue;
         const entry = priceOfSym(c.symbol);
-        if (!isFinite(entry)) continue;
+        if (!isFinite(entry) || entry <= 0) continue;
         paper.open.push({ symbol: c.symbol, dir: c.dir, entry, at: new Date().toISOString() });
         lines.push(`DIR-PAPER open ${c.dir} ${c.symbol} @ ${entry} (drift24 ${c.drift24}%) — paper only, no real order`);
         if (paper.open.length >= 2) break;
@@ -455,6 +486,11 @@ const writeAtomic = (p, data) => {
       // breaker stops are latched via risk.json; the act step will persist pending entries
     }
   }
+  const { createHash } = require("node:crypto");
+  writeAtomic(path.join(ROOT, "state", "actions_meta.json"), JSON.stringify({ at: obs.at,
+    configHash: createHash("sha256").update(JSON.stringify(cfg)).digest("hex"),
+    actionsHash: createHash("sha256").update(JSON.stringify(actions)).digest("hex"),
+    riskWriteOk, subaccountId: cfg.subaccountId || 3 }));
   writeAtomic(path.join(ROOT, "state", "actions.json"), JSON.stringify(actions, null, 2));
   // append log
   const logLine = `[${obs.at}] grids=${grids.length} pnl=${grids.map((g) => `${g.market}:${g.pnlPct}%`).join(" ")} actions=${actions.length ? actions.map((a) => a.act + ":" + (a.market || "")).join(",") : "none"}\n`;

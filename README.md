@@ -16,7 +16,7 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
 
 ## What it does
 
-The exchange (Backpack) ships native grid bots — but they have **no take-profit, no stop-loss, no rotation, no portfolio-level risk control**. This project adds the missing autonomy layer on top:
+Backpack provides native grid bots with exchange-side protection. This project adds selection, rotation, account risk rules, and recovery around those bots:
 
 - **Runs its own strategy**: scans every USDC perp, scores markets by mean-reversion suitability (multi-window chop × liquidity − drift − funding), and picks up to 4 neutral grids
 - **Trades with real money**: ~$590 account, 4 grids, automatic rotation when a grid hits +10% take-profit, −6% stop-loss, exits its range, or drifts near liquidation
@@ -44,7 +44,7 @@ Engineering details that survived 8 rounds of adversarial AI code review (~25 re
 - **Two-phase execution**: risk exits execute immediately; replacement creation waits for a re-observation — a stop is never delayed by market analysis
 - **Write-ahead intent ledger**: disable/delete/create intents persist before any exchange write; a lost response can always be recovered
 - **Shrink-to-fit risk budget**: if the portfolio stop-loss budget can't fit a full-size grid, it creates a smaller one instead of skipping
-- **Kernel flock, whole lifetime**: all entries (scheduled, manual, peak probe) share one `fcntl` lock whose fd is inherited by the whole business process tree — a killed wrapper can't release the lock while the round is still running; corrupt state files quarantine new risk instead of silently resetting
+- **Kernel flock, whole lifetime**: all entries (scheduled, manual, peak probe) share one `fcntl` lock whose fd is passed to the business child (deeper descendants depend on their runtime) — a killed wrapper can't release the lock while the round is still running; corrupt state files quarantine new risk instead of silently resetting
 - **Budget semantics note**: the forward position budget (≤ equity×80%) and the peak-drawdown breaker are two DIFFERENT mechanisms — the former is a nominal constraint that loosens as profits grow, the latter is the true equity-floor guarantee
 
 ## Selection logic
@@ -75,3 +75,9 @@ Layer A: pure-logic replicas + source canaries. Layer B: **executes the producti
 ## Operations
 
 Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloudflare OAuth), launchd timers for the 15-minute round and the 1-minute peak sampler, full runbook in-repo. See [README.zh-CN.md](README.zh-CN.md) for the complete Chinese operations manual.
+
+## Validation and accounting
+
+Use Node 22 and `npm ci && npm test`. The offline suites forbid network I/O and execute production decisions, complete mocked act/runner lifecycles, history pagination, and state contracts. Kernel locks are tested with real disposable processes. Historical fills and research refresh independently of risk exits.
+
+Equity change is not labeled strategy PnL without reconciled cashflow coverage and an exact baseline timestamp. Run statistics come from confirmed execution events. Static UI requests bypass Workers; a dated, visibly degraded deployment snapshot is shown if dynamic APIs are unavailable. Upload success requires snapshot readback. See [acceptance and outstanding external gates](docs/project-review-2026-10-02.md).

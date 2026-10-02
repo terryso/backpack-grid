@@ -16,13 +16,10 @@ catch (e) { fileState = e.code === "ENOENT" ? "missing" : "corrupt"; }
 if (fileState === "corrupt") { console.log("risk.json corrupt — probe skips (manual recovery)"); process.exit(0); }
 if (fileState === "missing") risk = { peakEquity: 0, paused: null };
 // 与 decide 同级的结构校验：null/布尔/空串不得经 Number() 洗白
-const pk = risk ? risk.peakEquity : undefined;
-const pkTypeOk = typeof pk === "number" || (typeof pk === "string" && String(pk).trim() !== "");
-const pkNum = pkTypeOk ? Number(pk) : NaN;
-if (!pkTypeOk || !Number.isFinite(pkNum) || pkNum < 0 || (risk.paused !== null && typeof risk.paused !== "object")) {
-  console.log("risk.json invalid shape — probe skips (manual recovery)");
-  process.exit(0);
-}
+const { createRequire } = await import("node:module");
+const { riskStructOk } = createRequire(path.join(ROOT, "scripts/peak_probe.mjs"))("./state_schema.cjs");
+if (!riskStructOk(risk)) { console.log("risk.json invalid shape — probe skips (manual recovery)"); process.exit(0); }
+const pkNum = Number(risk.peakEquity);
 
 const task = await taskSpace(cfg.watch?.spaceId || 8);
 const page = task.page(cfg.watch?.page || "p1");
@@ -37,7 +34,7 @@ if (!isFinite(eq) || eq <= 0) { console.log("bad equity:", eq); process.exit(0);
 
 // 提交走唯一写入通道：flock 事务内重读磁盘最新值，峰值取 max（较低采样不回退）、
 // paused 逐字保留最新——重读之后发生的熔断写入不可能被本进程覆盖
-const w = spawnSync("/usr/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: eq })], { encoding: "utf8" });
-if (w.status !== 0) { console.log("risk write refused (status", w.status, ") — kept for manual recovery"); process.exit(0); }
+const w = spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: eq })], { encoding: "utf8", timeout: 8000 });
+if (w.status !== 0) { console.log("risk write refused (status", w.status, ") — kept for manual recovery"); process.exit(1); }
 const merged = JSON.parse(String(w.stdout).trim());
 console.log("peak:", pkNum, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused), "| equity:", eq);

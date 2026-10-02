@@ -1,0 +1,52 @@
+{
+  "rows": [
+    {
+      "id": "C01_real_write_channel_preserves_latch",
+      "passed": true
+    },
+    {
+      "id": "C02_corrupt_state_is_retained",
+      "passed": true
+    },
+    {
+      "id": "F01_write_refusal_still_plans_create",
+      "decideExit": 0,
+      "writeRefusalLogged": true,
+      "actions": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "urlSymbol": "ETH_USD_PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 2500,
+          "why": "score=10 chop=10 r24=5% qvol=$1000k"
+        }
+      ]
+    },
+    {
+      "id": "F01_missing_optional_paused_prevents_new_trip_persistence",
+      "writeRefusalLogged": true,
+      "pausedPersisted": false,
+      "stopStillPlanned": true,
+      "reason": "risk_write reads latest[paused] despite accepting missing paused in shape_ok"
+    },
+    {
+      "id": "F01_recovery_after_unpersisted_trip_auto_reopens",
+      "actions": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "urlSymbol": "ETH_USD_PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 2500,
+          "why": "score=10 chop=10 r24=5% qvol=$1000k"
+        }
+      ]
+    }
+  ],
+  "boundary": "Production writer and decide in disposable BG_ROOT fixtures. No live API or project-state writes. Interpreter normalized to the user-required Python environment."
+}

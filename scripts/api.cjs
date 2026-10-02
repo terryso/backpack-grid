@@ -17,6 +17,8 @@ function jfetch(path) {
         });
       })
       .on("error", reject);
+    const deadline = setTimeout(() => req.destroy(new Error(`GET ${path} exceeded 15s total deadline`)), 15000);
+    req.on("close", () => clearTimeout(deadline));
     req.setTimeout(15000, () => req.destroy(new Error(`GET ${path} timed out after 15s`)));
   });
 }
