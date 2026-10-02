@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const ROOT = path.join(__dirname, "..");
 const read = (p) => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8")); } catch { return null; } };
+const cfg = read("config.json") || {};
 
 const obs = read("state/observed.json") || {};
 const campaign = read("state/campaign.json") || {};
@@ -72,7 +73,9 @@ const snapshot = {
     market: g.market, direction: g.direction,
     range: `${g.range[0]} ~ ${g.range[1]}`, count: g.count,
     value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status,
+    price: g.price, nativeSL: g.nativeSL,
   })),
+  tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct,
   positions: positions.map((p) => ({ market: p.market, side: p.side, size: p.size, mark: p.mark, pnl: p.pnl })),
   pending: Object.keys(pending),
   orphans,

@@ -32,6 +32,7 @@ const auto = await jget(`/wapi/v1/subaccount/${SUB}/automation`);
 const positionsRaw = await jget(`/api/v1/position?subaccountId=${SUB}`);
 const account = await jget(`/api/v1/account?subaccountId=${SUB}`);
 const collateralAll = await jget(`/wapi/v1/portfolio/collateral`);
+const markAll = await jget(`/api/v1/markPrices`);
 
 // --- grids from automation snapshot ---
 // grid pnl ledger: pnl = (soldValue - boughtValue) + netPosition*mark - fees  (verified vs UI)
@@ -63,8 +64,10 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
       netPosition * mark - fees;
     const allocation = Number(g.allocationUsd || 0);
     const market = g.symbol.replace("_USDC_PERP", "-PERP");
+    const px = markAll.find((m) => m.symbol === g.symbol);
     return {
       market, symbol: g.symbol,
+      price: px ? Number(px.markPrice) : null,
       direction: DIR[g.direction] || g.direction,
       range: [String(g.priceLow), String(g.priceHigh)],
       count: Number(g.levels),
