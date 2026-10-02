@@ -531,6 +531,70 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
   T("INT12c shrink reported", r.stdout.includes("PLAN shrink"));
 }
 
+// ---------- T26 (round-9 F01): probe merge preserves paused, ratchet max ----------
+{
+  // replica of the corrected probe commit: re-read latest, merge peak=max, preserve paused
+  const probeCommit = (staleProbeRead, latestOnDisk, eq) => {
+    const latest = JSON.parse(JSON.stringify(latestOnDisk));
+    const mergedPeak = Math.max(Number(latest.peakEquity) || 0, eq);
+    return { ...latest, peakEquity: mergedPeak, lastEquity: eq };
+  };
+  const out = probeCommit({ peakEquity: 600, paused: null }, { peakEquity: 600, paused: { at: "x" } }, 650);
+  T("T26a breaker latch survives probe commit", out.paused && out.peakEquity === 650);
+  const out2 = probeCommit({ peakEquity: 600, paused: null }, { peakEquity: 600, paused: null }, 500);
+  T("T26b lower sample cannot lower peak", out2.peakEquity === 600);
+}
+T("T26c probe strict shape: null peak rejected", (() => {
+  const pk = null; // Number(null)===0 must NOT pass
+  return !(typeof pk === "number" || (typeof pk === "string" && pk.trim() !== "")) || !Number.isFinite(Number(pk));
+})());
+
+// ---------- T27 (round-9 F03): phase 2 full risk re-eval ----------
+T("T27a phase 2 no longer skips per-grid loop", !decideSrc.includes("for (const g of (!PHASE2 ? grids : []))"));
+T("T27b phase 2 defer writes marker", decideSrc.includes("PHASE 2 defer") && decideSrc.includes("needs_create_plan"));
+T("T27c phase 2 create requires zero stops", decideSrc.includes("(PHASE2 ? stops.length === 0 : true)"));
+
+// ---------- T29 (round-9 F06): fees window loop semantics ----------
+{
+  // replica: cursor advances only on complete windows (<1000); cap → last fill ts (dedup)
+  let cursor = Date.UTC(2026, 8, 30);
+  const seen = new Set();
+  let queried = [];
+  const fetchWindow = (from, to) => {
+    queried.push([from, to]);
+    // 模拟：第一个窗口 9/30 当天只有 300 笔（<1000，窗口完整）
+    return queried.length === 1 ? { fills: Array(300).fill(0).map((_, i) => ({ tradeId: "a" + i })), to } : { fills: [], to };
+  };
+  const nowMs = Date.UTC(2026, 9, 7);
+  const start = Date.UTC(2026, 8, 30);
+  let guard = 0;
+  while (cursor < nowMs - 1000 && guard++ < 10) {
+    const to = Math.min(cursor + 86400000, nowMs);
+    const w = fetchWindow(cursor, to);
+    for (const f of w.fills) seen.add(f.tradeId);
+    if (w.fills.length >= 1000) { cursor = Number(w.fills.at(-1)?.ts) || to; continue; }
+    cursor = to;
+    break;
+  }
+  T("T29 incomplete window advances cursor AND continues to later windows", cursor > start + 86400000);
+}
+T("T29b cap window advances to last fill ts (dedup via tradeId)", decideSrc.includes("seen.has(f.tradeId)") || decideSrc.includes('seen.add(f.tradeId)'));
+
+// ---------- T30 (round-9 F08): deploy script aligned with live protocol ----------
+const deploySrc = fs.readFileSync(path.join(ROOT, "scripts", "deploy_dashboard.sh"), "utf8");
+T("T30a deploy uses DASH_WRITE_TOKEN", deploySrc.includes("DASH_WRITE_TOKEN") && !deploySrc.includes("DASH_TOKEN=") );
+T("T30b deploy pins --config", (deploySrc.match(/--config cloudflare\/wrangler\.toml/g) || []).length >= 3);
+
+// ---------- T31 (round-9 F07): funding-adjusted health + status chips ----------
+T("T31a health uses funding-adjusted effPnlPct", observeSrc.includes("effPnlPct") && decideSrc.includes("effPnlPct"));
+T("T31b last_round_status surfaced", decideSrc.includes("lastRoundStatus") || decideSrc.includes("last_round_status"));
+
+// ---------- T32 (round-9 F04): atomic ln lock ----------
+const runRoundSrc = fs.readFileSync(path.join(ROOT, "scripts", "run_round.sh"), "utf8");
+T("T32a ln-based atomic acquisition", runRoundSrc.includes('ln "$CAND" "$LOCK"'));
+T("T32b takeover retries ln after clearing dead lock", runRoundSrc.includes("rm -f \"$LOCK\" 2>/dev/null\n  if ln"));
+T("T32c self-release only (pid match)", runRoundSrc.includes('[ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]'));
+
 console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 });

@@ -258,7 +258,8 @@ const writeAtomic = (p, data) => {
     fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
     lines.push(`CREATE PLANNING DEFERRED to phase 2 (${stops.length} risk exit(s) execute first)`);
   }
-  const planCreatesNow = mayCreate && slots > 0 && (PHASE2 ? stops.length === 0 : true);
+  // 有风险退出的轮次一律延后创建（两段式）：本阶段只执行退出，下轮 phase 1 无退出时才内联规划
+  const planCreatesNow = mayCreate && slots > 0 && stops.length === 0;
   if (PHASE2 && stops.length > 0) {
     // phase 2 复评发现新的风险退出 → 立即执行，补仓再次顺延（下一轮 phase 1 无退出时内联规划）
     fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
