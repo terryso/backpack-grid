@@ -39,10 +39,14 @@ if (lastActionEntry && actAgeH < 24) {
   else if (lastActionEntry.act === "protect") { lastAction = `保护修复 ${lastActionEntry.market || ""}`; lastActionNote = `${when} · 恢复 ${lastActionEntry.market} 原生 TP/SL`; }
 }
 
+const strategy = obs.strategyEquity || null;
 const snapshot = {
   updatedAt: obs.at || new Date().toISOString(),
   equity: num(obs.margin && obs.margin.totalEquity),
   available: num(obs.margin && obs.margin.availableEquity),
+  strategyTotalPnl: strategy && strategy.totalPnl != null ? strategy.totalPnl : null,
+  strategyBaseline: strategy ? strategy.baseline : null,
+  strategyBaselineAt: strategy ? strategy.baselineAt : null,
   drawdownPct: Math.max(0, risk.peakEquity ? ((risk.peakEquity - num(obs.margin && obs.margin.totalEquity)) / risk.peakEquity) * 100 : 0),
   riskPaused: !!(risk.paused),
   campaignVolume: Math.round(num(campaign.campaignVolume)),

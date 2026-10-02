@@ -116,9 +116,18 @@ const margin = {
   initMarginPct: Math.round(((netEquity - netEquityAvailable) / netEquity) * 100) + "%",
 };
 const badges = { "持仓": positions.length, "当前委托": Number(account.limitOrders), "网格": gridRows.length };
+// 策略累计盈亏：当前权益相对系统接管基线（config.strategyBaselineUsd = 接管日首次观测权益）
+// 口径含已落袋（已删除网格）+ 浮动 + 资金费 + 借贷利息 —— 唯一不随网格删除而失真的总账
+const curEquity = netEquity;
+const strategyEquity = {
+  baseline: Number(cfg.strategyBaselineUsd || 0),
+  baselineAt: cfg.strategyStartAt || null,
+  totalPnl: +(curEquity - Number(cfg.strategyBaselineUsd || 0)).toFixed(2),
+};
+
 const observed = {
   at: new Date().toISOString(), source: "api",
-  url: API, ...{ gridRows, margin, badges, positions },
+  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity,
   // per-symbol strategy ledger volumes (bought+sold) for campaign volume tracking
   ledger: snapshot.map((s) => ({
     symbol: s.symbol,

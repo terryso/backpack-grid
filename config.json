@@ -72,5 +72,7 @@
     "spaceId": 8,
     "page": "p1"
   },
-  "exitCostBufferUsd": 15
+  "exitCostBufferUsd": 15,
+  "strategyStartAt": "2026-09-30",
+  "strategyBaselineUsd": 534.7
 }
