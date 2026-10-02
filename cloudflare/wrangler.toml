@@ -10,6 +10,9 @@ routes = [
   { pattern = "grid.terryso.dev", custom_domain = true }
 ]
 
+# 保持 workers.dev 地址可用（X/V2EX 帖子里发的是旧链接）
+workers_dev = true
+
 [[kv_namespaces]]
 binding = "DASH"
 id = "40e078ae20c84612bce7ddfb711f7992"

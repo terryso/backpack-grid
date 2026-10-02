@@ -41,7 +41,26 @@ if (lastActionEntry && actAgeH < 24) {
 }
 
 const strategy = obs.strategyEquity || null;
-const feesStats = obs.feesStats || null;
+// 状态可见性（F07）：把"未知/失败/损坏"显式带进展示模型，未知 ≠ 正常
+let lastRoundStatus = null;
+try { lastRoundStatus = fs.readFileSync(path.join(ROOT, "state/last_round_status"), "utf8").trim() || null; } catch {}
+let riskStateValid = true;
+try {
+  const r = JSON.parse(fs.readFileSync(path.join(ROOT, "state/risk.json"), "utf8"));
+  riskStateValid = !!r && typeof r === "object" && Number.isFinite(Number(r.peakEquity));
+} catch { riskStateValid = fs.existsSync(path.join(ROOT, "state/risk.json")) ? false : true; }
+let pendingCorrupt = false;
+try { JSON.parse(fs.readFileSync(path.join(ROOT, "state/pending_stops.json"), "utf8")); } catch { pendingCorrupt = fs.existsSync(path.join(ROOT, "state/pending_stops.json")); }
+let feesStats = null;
+try {
+  const feesFile = JSON.parse(fs.readFileSync(path.join(ROOT, "state/fees.json"), "utf8"));
+  let feeUsd = 0, makerVol = 0, totalVol = 0, makerN = 0, totalN = 0;
+  for (const rec of Object.values(feesFile.symbols || {})) {
+    feeUsd += rec.feeUsd || 0; makerVol += rec.makerVol || 0; totalVol += (rec.makerVol || 0) + (rec.takerVol || 0);
+    makerN += rec.makerN || 0; totalN += (rec.makerN || 0) + (rec.takerN || 0);
+  }
+  feesStats = { feeUsd: +feeUsd.toFixed(2), makerPct: totalVol > 0 ? +(makerVol / totalVol * 100).toFixed(1) : null, fills: totalN, acquiredAt: feesFile.acquiredAt || null };
+} catch { feesStats = null; }
 // 运行统计：天数（自策略基线日）、巡检轮次（equity_curve 行数）、自动换仓次数（log 中 stop 动作计数）
 let runDays = null, rounds = 0, rotations = 0, change24h = null, change24hPct = null, maxDD = null;
 try {
@@ -82,6 +101,8 @@ const snapshot = {
   strategyBaselineAt: strategy ? strategy.baselineAt : null,
   fees: feesStats && !feesStats.error ? { feeUsd: +feesStats.feeUsd.toFixed(2), makerPct: feesStats.makerPct, fills: feesStats.fills } : null,
   runStats: { days: runDays, rounds, rotations },
+  lastRoundStatus, riskStateValid, pendingCorrupt,
+  dataValid: !obs.error,
   change24h, change24hPct,
   maxDrawdown: maxDD,
   drawdownPct: Math.max(0, risk.peakEquity ? ((risk.peakEquity - num(obs.margin && obs.margin.totalEquity)) / risk.peakEquity) * 100 : 0),

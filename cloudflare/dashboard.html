@@ -81,7 +81,8 @@ const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDig
 const pnlCls = (v) => v >= 0 ? "pos" : "neg";
 // 健康徽标：距最近触发条件（止盈/止损/出界）的余量，三档颜色
 function healthRow(x, s) {
-  const pnl = Number(x.pnlPct) || 0;
+  // 与决策同口径：资金费调整后的盈亏百分比
+  const pnl = x.effPnlPct != null ? Number(x.effPnlPct) : (Number(x.pnlPct) || 0);
   const tp = s.tpPct ?? 10, sl = s.slPct ?? 6;
   const dists = [
     { name: "止盈", left: +(tp - pnl).toFixed(2) },
@@ -111,6 +112,10 @@ function render(s) {
   const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
   const pct = Math.min(100, camp / tier * 100);
   const chips = [];
+  if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
+  if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
+  if (s.riskStateValid === false) chips.push(`<span class="chip bad">risk.json 异常（新开仓已锁）</span>`);
+  if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
   chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>` : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>` : `<span class="chip ok">风控正常</span>`));
   chips.push((s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
@@ -137,8 +142,8 @@ function render(s) {
         <div class="v ${pnlCls(s.strategyTotalPnl ?? 0)}">${(s.strategyTotalPnl ?? 0) >= 0 ? "+" : ""}${fmt(s.strategyTotalPnl ?? 0)}</div>
         <div class="muted" style="font-size:10px">含已落袋 + 浮动</div></div>
       <div class="card"><div class="k">在跑网格盈亏（${g.length} 格）</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
-      <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div></div>
-      <div class="card"><div class="k">历史最大回撤 <span class="muted" style="font-size:10px">自策略启动</span></div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div></div>
+      <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div><div class="muted" style="font-size:10px">峰值采样 1 分钟 · 曲线 15 分钟</div></div>
+      <div class="card"><div class="k">历史最大回撤 <span class="muted" style="font-size:10px">自策略启动 · 曲线口径</span></div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div></div>
     </div>
     <div class="section">
       <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>

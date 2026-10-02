@@ -48,9 +48,11 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
     if (!snapFound) dataIssues.push("no ledger snapshot for configured grid " + g.symbol);
     const snap = snapFound || { pnl: {} };
     const pnlLedger = snap.pnl || {};
-    const netPosition = Number(pnlLedger.netPosition || 0);
+    const ledgerFieldsOk = ["soldValue", "boughtValue", "netPosition", "quoteAssetFees"].every((k) => pnlLedger[k] !== undefined && isFinite(Number(pnlLedger[k])));
+    if (snapFound && !ledgerFieldsOk) dataIssues.push("ledger pnl fields missing/invalid for " + g.symbol);
+    const netPosition = ledgerFieldsOk ? Number(pnlLedger.netPosition) : 0;
     const posEntry = positionsRaw.find((p) => p.symbol === g.symbol);
-    const hasLivePosition = posEntry && Number(posEntry.netQuantity) !== 0;
+    const hasLivePosition = posEntry && isFinite(Number(posEntry.netQuantity)) && Number(posEntry.netQuantity) !== 0;
     const markRaw = posEntry ? Number(posEntry.markPrice) : NaN;
     if (hasLivePosition && (!isFinite(markRaw) || markRaw <= 0)) {
       // a live position without a valid mark would turn its inventory PnL into garbage —
@@ -64,10 +66,14 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
       netPosition * mark - fees;
     const allocation = Number(g.allocationUsd || 0);
     const market = g.symbol.replace("_USDC_PERP", "-PERP");
+    const posForFunding = positionsRaw.find((p) => p.symbol === g.symbol);
+    const fundingRaw = posForFunding ? Number(posForFunding.cumulativeFundingPayment) || 0 : 0;
+    const effPnlPct = allocation ? +((pnl + fundingRaw) / allocation * 100).toFixed(2) : 0;
     const px = markAll.find((m) => m.symbol === g.symbol);
     return {
       market, symbol: g.symbol,
       price: px ? Number(px.markPrice) : null,
+      effPnlPct,
       direction: DIR[g.direction] || g.direction,
       range: [String(g.priceLow), String(g.priceHigh)],
       count: Number(g.levels),
@@ -119,48 +125,6 @@ const margin = {
   initMarginPct: Math.round(((netEquity - netEquityAvailable) / netEquity) * 100) + "%",
 };
 const badges = { "持仓": positions.length, "当前委托": Number(account.limitOrders), "网格": gridRows.length };
-// 手续费/maker 占比统计：增量拉取成交历史（分 24h 窗口规避 1000 条上限），累计到 state/fees.json
-let feesStats = null;
-try {
-  const CAMPAIGN_START_MS = Date.UTC(2026, 8, 30, 0, 0, 0);
-  const feesPath = path.join(ROOT, "state/fees.json");
-  let fees = { symbols: {} };
-  try { fees = JSON.parse(await fs.readFile(feesPath, "utf8")); } catch {}
-  const nowMs = Date.now();
-  const symbols = new Set([...(auto.params?.symbols || []).map((s) => s.symbol), ...Object.keys(fees.symbols)]);
-  for (const symbol of symbols) {
-    const rec = fees.symbols[symbol] || { lastTo: CAMPAIGN_START_MS, feeUsd: 0, makerVol: 0, takerVol: 0, makerN: 0, takerN: 0 };
-    let cursor = Math.max(rec.lastTo, CAMPAIGN_START_MS);
-    // 分 24h 窗口前进，直到追平当前时间
-    while (cursor < nowMs - 1000) {
-      const to = Math.min(cursor + 24 * 3600 * 1000, nowMs);
-      const fr = await page.fetch(`https://api.backpack.exchange/wapi/v1/history/fills?subaccountId=${SUB}&symbol=${symbol}&from=${cursor}&to=${to}&limit=1000`, { credentials: "include", timeout: 20000 });
-      const fills = JSON.parse(fr.body);
-      for (const f of fills) {
-        const vol = Number(f.price) * Number(f.quantity);
-        const feeVal = Number(f.fee) || 0;
-        if (f.feeSymbol === "USDC") rec.feeUsd += feeVal;
-        if (f.isMaker) { rec.makerVol += vol; rec.makerN++; } else { rec.takerVol += vol; rec.takerN++; }
-      }
-      if (fills.length < 1000) { cursor = to; break; }
-      cursor = to;
-    }
-    rec.lastTo = nowMs;
-    fees.symbols[symbol] = rec;
-  }
-  await fs.writeFile(feesPath, JSON.stringify(fees, null, 2));
-  let feeUsd = 0, makerVol = 0, totalVol = 0, makerN = 0, totalN = 0;
-  for (const rec of Object.values(fees.symbols)) {
-    feeUsd += rec.feeUsd; makerVol += rec.makerVol; totalVol += rec.makerVol + rec.takerVol;
-    makerN += rec.makerN; totalN += rec.makerN + rec.takerN;
-  }
-  feesStats = {
-    feeUsd: +feeUsd.toFixed(2),
-    makerPct: totalVol > 0 ? +(makerVol / totalVol * 100).toFixed(1) : null,
-    fills: totalN,
-  };
-} catch (e) { feesStats = { error: String(e).slice(0, 100) }; }
-
 // 策略累计盈亏：当前权益相对系统接管基线（config.strategyBaselineUsd = 接管日首次观测权益）
 // 口径含已落袋（已删除网格）+ 浮动 + 资金费 + 借贷利息 —— 唯一不随网格删除而失真的总账
 const curEquity = netEquity;
@@ -172,7 +136,7 @@ const strategyEquity = {
 
 const observed = {
   at: new Date().toISOString(), source: "api",
-  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity, feesStats,
+  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity,
   // per-symbol strategy ledger volumes (bought+sold) for campaign volume tracking
   ledger: snapshot.map((s) => ({
     symbol: s.symbol,
@@ -198,6 +162,52 @@ if (bad.length) {
   process.exit(1);
 }
 await fs.writeFile(path.join(ROOT, "state/observed.json"), JSON.stringify(observed, null, 2));
+
+// ---- 手续费/maker 统计：独立于风控管线（在快照落盘之后采集，避免拖慢风险数据）----
+// 修正版窗口循环：满页(1000)推进到最后一条成交时间戳并用 tradeId 去重；
+// 不满页 = 窗口已完整，游标推进到窗口终点。只有确认完整的区间才推进游标。
+try {
+  const feesPath = path.join(ROOT, "state/fees.json");
+  let fees = { symbols: {}, acquiredAt: null };
+  try { fees = JSON.parse(await fs.readFile(feesPath, "utf8")); } catch {}
+  const nowMs = Date.now();
+  const symbols = new Set([...(auto.params?.symbols || []).map((s) => s.symbol), ...Object.keys(fees.symbols || {})]);
+  for (const symbol of symbols) {
+    const rec = fees.symbols[symbol] || { lastTo: Date.UTC(2026, 8, 30, 0, 0, 0), feeUsd: 0, makerVol: 0, takerVol: 0, makerN: 0, takerN: 0 };
+    let cursor = Math.max(Number(rec.lastTo) || 0, Date.UTC(2026, 8, 30, 0, 0, 0));
+    const seen = new Set();
+    let guard = 0;
+    while (cursor < nowMs - 1000 && guard++ < 50) {
+      const to = Math.min(cursor + 24 * 3600 * 1000, nowMs);
+      const fr = await page.fetch(`https://api.backpack.exchange/wapi/v1/history/fills?subaccountId=${SUB}&symbol=${symbol}&from=${cursor}&to=${to}&limit=1000`, { credentials: "include", timeout: 20000 });
+      const fills = JSON.parse(fr.body);
+      let lastFillTs = 0;
+      for (const f of fills) {
+        if (seen.has(f.tradeId)) continue; // 重叠窗口去重
+        seen.add(f.tradeId);
+        const vol = Number(f.price) * Number(f.quantity);
+        if (f.feeSymbol === "USDC") rec.feeUsd = (rec.feeUsd || 0) + (Number(f.fee) || 0);
+        if (f.isMaker) { rec.makerVol += vol; rec.makerN++; } else { rec.takerVol += vol; rec.takerN++; }
+        lastFillTs = Math.max(lastFillTs, Number(new Date(f.timestamp).getTime()) || 0);
+      }
+      if (fills.length >= 1000) {
+        // 满页：窗口可能被截断，游标推进到最后一条成交（tradeId 去重保证不重复计）
+        if (lastFillTs <= cursor) break; // 无进展防御
+        cursor = lastFillTs;
+        continue;
+      }
+      cursor = to; // 窗口完整（<1000）
+      break;
+    }
+    rec.lastTo = cursor;
+    fees.symbols[symbol] = rec;
+  }
+  fees.acquiredAt = new Date().toISOString();
+  await fs.writeFile(feesPath, JSON.stringify(fees, null, 2));
+} catch (e) {
+  console.log("fees stats error (non-fatal):", String(e).slice(0, 120));
+}
+
 console.log(JSON.stringify({
   at: observed.at, badges, margin,
   grids: gridRows.map((g) => `${g.market} ${g.direction} ${g.range.join("~")} x${g.count} ${g.value} pnl=${g.pnl} (${g.pnlPct}%)`),

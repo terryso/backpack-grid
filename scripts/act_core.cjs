@@ -41,7 +41,19 @@ function makeStopGrid(io) {
         return { done: false };
       }
       const p = pos.find((x) => x.symbol === symbol);
-      if (p && Number(p.netQuantity) !== 0) throw new Error(`stop ${market}: grid gone but position ${p.netQuantity} remains — manual intervention`);
+      if (p) {
+        const nq = Number(p.netQuantity);
+        // 平仓判定只接受明确的数值 0：null/缺失/非有限值 = 未知，不得当作已平仓
+        if (!Number.isFinite(nq)) {
+          pending[market] = { at: new Date().toISOString(), reason: reason + " (netQuantity unreadable)" };
+          await io.savePending(pending);
+          results.push({ act: "stop", market, done: false, unconfirmed: true });
+          console.log(`STOP ${market}: netQuantity unreadable — treated as unknown, intent kept, retry next round`);
+          return { done: false };
+        }
+        if (nq !== 0) throw new Error(`stop ${market}: grid gone but position ${nq} remains — manual intervention`);
+      }
+      delete pending[market];
       delete pending[market];
       await io.savePending(pending);
       results.push({ act: "stop", market, done: true, note: "already deleted" });
@@ -61,7 +73,9 @@ function makeStopGrid(io) {
         const pos = await io.jget(`/api/v1/position`);
         if (!Array.isArray(pos)) return false; // malformed = unknown, never "flat"
         const p = pos.find((x) => x.symbol === symbol);
-        return !p || Number(p.netQuantity) === 0;
+        if (!p) return true; // 条目消失 = 无持仓
+        const nq = Number(p.netQuantity);
+        return Number.isFinite(nq) && nq === 0; // null/缺失/非有限 = 未知，不得视为已平仓
       }, 20000);
     } catch { posGone = false; }
     if (!posGone) {

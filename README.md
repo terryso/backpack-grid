@@ -45,6 +45,7 @@ Engineering details that survived 8 rounds of adversarial AI code review (~25 re
 - **Write-ahead intent ledger**: disable/delete/create intents persist before any exchange write; a lost response can always be recovered
 - **Shrink-to-fit risk budget**: if the portfolio stop-loss budget can't fit a full-size grid, it creates a smaller one instead of skipping
 - **PID lock + state validation**: concurrent rounds are blocked; corrupt state files quarantine new risk instead of silently resetting
+- **Budget semantics note**: the forward position budget (≤ equity×80%) and the peak-drawdown breaker are two DIFFERENT mechanisms — the former is a nominal constraint that loosens as profits grow, the latter is the true equity-floor guarantee
 
 ## Selection logic
 
@@ -66,7 +67,7 @@ Filters: volume floor, score floor (an empty slot beats a mediocre grid), max 2 
 ## Testing
 
 ```bash
-node tests/regression.cjs   # 107 cases, no network
+node tests/regression.cjs   # 110 cases, no network
 ```
 
 Layer A: pure-logic replicas + source canaries. Layer B: **executes the production code** — decide.cjs runs against sandbox fixtures via `BG_ROOT`, and the grid-stop state machine runs against mocked exchange I/O.

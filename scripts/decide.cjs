@@ -183,7 +183,7 @@ const writeAtomic = (p, data) => {
   }
 
   // ---------- per-grid rules ----------
-  for (const g of (!PHASE2 ? grids : [])) {
+  for (const g of grids) { // 阶段标签只控制是否规划新增仓位，风控复评两阶段都做
     if (pending[g.market]) continue; // handled by pending-stop retry above
     const [lo, hi] = g.range.map(Number);
     const price = priceOf(g.market);
@@ -258,7 +258,12 @@ const writeAtomic = (p, data) => {
     fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
     lines.push(`CREATE PLANNING DEFERRED to phase 2 (${stops.length} risk exit(s) execute first)`);
   }
-  const planCreatesNow = mayCreate && slots > 0 && (PHASE2 || stops.length === 0);
+  const planCreatesNow = mayCreate && slots > 0 && (PHASE2 ? stops.length === 0 : true);
+  if (PHASE2 && stops.length > 0) {
+    // phase 2 复评发现新的风险退出 → 立即执行，补仓再次顺延（下一轮 phase 1 无退出时内联规划）
+    fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
+    lines.push(`PHASE 2 defer: ${stops.length} risk exit(s) planned — creation deferred to next round`);
+  }
   if (planCreatesNow) {
     // remaining risk budget for grid-configured stop-loss amounts (forward-looking):
     // sum over kept grids of allocation*SL% + exit-cost buffer, all within equity*budget
