@@ -1,0 +1,6 @@
+{
+  "twoLiveOwners": true,
+  "liveOwnerRemovedBySecondStaleContender": true,
+  "lockPid": "83376",
+  "boundary": "Original ln-lock block. Normal stale takeover operations synchronized in temporary subprocesses to expose deletion of a newly acquired lock. No trades or project state writes."
+}

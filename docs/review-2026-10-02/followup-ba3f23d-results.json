@@ -1,0 +1,141 @@
+{
+  "baseline": "ba3f23d55526d0100f87eb2a3ec7341df15e5f02",
+  "reports": [
+    {
+      "id": "F01_still_clears_latch",
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "test",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": null,
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T16:21:55.900Z"
+      }
+    },
+    {
+      "id": "F02_inventory_without_position_still_false_pnl",
+      "error": null,
+      "pnlPct": -20
+    },
+    {
+      "id": "C02_empty_ledger_now_rejected",
+      "error": "exit 1"
+    },
+    {
+      "id": "F02_null_quantity_still_flat",
+      "done": true,
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "C03_both_phases_recheck_and_defer",
+      "phase1": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ],
+      "phase2": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ]
+    },
+    {
+      "id": "F05_orphan_still_blocks_observe",
+      "error": "exit 1",
+      "detail": "validation: more positions than grids (manual positions?)"
+    },
+    {
+      "id": "C06_partial_history_cursor_is_preserved",
+      "requests": [
+        {
+          "from": 1790726400000,
+          "to": 1790748000000,
+          "limit": 1000
+        },
+        {
+          "from": 1790748000000,
+          "to": 1790769600000,
+          "limit": 1000
+        },
+        {
+          "from": 1790769600000,
+          "to": 1790791200000,
+          "limit": 1000
+        },
+        {
+          "from": 1790791200000,
+          "to": 1790812800000,
+          "limit": 1000
+        },
+        {
+          "from": 1790812800000,
+          "to": 1790834400000,
+          "limit": 1000
+        },
+        {
+          "from": 1790834400000,
+          "to": 1790856000000,
+          "limit": 1000
+        },
+        {
+          "from": 1790856000000,
+          "to": 1790877600000,
+          "limit": 1000
+        },
+        {
+          "from": 1790877600000,
+          "to": 1790899200000,
+          "limit": 1000
+        },
+        {
+          "from": 1790899200000,
+          "to": 1790920800000,
+          "limit": 1000
+        },
+        {
+          "from": 1790920800000,
+          "to": 1790942400000,
+          "limit": 1000
+        }
+      ],
+      "lastTo": 1790942400000
+    },
+    {
+      "id": "F06_same_timestamp_page_counted_again_next_round",
+      "firstFee": 99.9999999999986,
+      "secondFee": 199.99999999999292,
+      "cursor": 1790726400000
+    },
+    {
+      "id": "F07_ZEC_display_parses_characters_as_range",
+      "snapshotAt": "2026-10-02T16:16:57.643Z",
+      "range": [
+        "1218.7",
+        "1549.78"
+      ],
+      "price": 1368.54,
+      "actuallyInside": true,
+      "html": "<div class=\"health\"><span class=\"dot o\"></span><span>临近换仓</span>\n    <span style=\"margin-left:auto;color:#8b94a7\">距出界 -99.85%</span></div>"
+    }
+  ],
+  "boundary": "Current working tree including user uncommitted changes, memory-only API and state I/O, no live trades or deployment."
+}

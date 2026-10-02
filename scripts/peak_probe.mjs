@@ -16,7 +16,15 @@ try { risk = JSON.parse(await fs.readFile(RISK, "utf8")); fileState = "present";
 catch (e) { fileState = e.code === "ENOENT" ? "missing" : "corrupt"; }
 if (fileState === "corrupt") { console.log("risk.json corrupt — probe skips (manual recovery)"); process.exit(0); }
 if (fileState === "missing") risk = { peakEquity: 0, paused: null };
-if (!risk || typeof risk !== "object" || !Number.isFinite(Number(risk.peakEquity))) { console.log("risk.json invalid shape — probe skips"); process.exit(0); }
+// 与 decide 同级的结构校验：null/布尔/空串不得经 Number() 洗白
+const pk = risk ? risk.peakEquity : undefined;
+const pkTypeOk = typeof pk === "number" || (typeof pk === "string" && String(pk).trim() !== "");
+const pkNum = pkTypeOk ? Number(pk) : NaN;
+if (!pkTypeOk || !Number.isFinite(pkNum) || pkNum < 0 || (risk.paused !== null && typeof risk.paused !== "object")) {
+  console.log("risk.json invalid shape — probe skips (manual recovery)");
+  process.exit(0);
+}
+risk.peakEquity = pkNum;
 
 const task = await taskSpace(cfg.watch?.spaceId || 8);
 const page = task.page(cfg.watch?.page || "p1");
@@ -29,13 +37,14 @@ const entry = col[Object.keys(col).find((k) => k.endsWith("-" + SUB))];
 const eq = Number(entry?.netEquity);
 if (!isFinite(eq) || eq <= 0) { console.log("bad equity:", eq); process.exit(0); }
 
-let peak = Number(risk.peakEquity) || 0;
-if (eq > peak) {
-  risk.peakEquity = eq;
-  risk.lastEquity = eq;
-  risk.lastAt = new Date().toISOString();
-  await fs.writeFile(RISK + ".tmp", JSON.stringify(risk, null, 2)).then(() => fs.rename(RISK + ".tmp", RISK));
-  console.log("peak ratcheted:", peak, "->", eq);
+// 提交前重读最新 risk（网络等待期间巡检可能已写入熔断锁存）：
+// 峰值取 max（探测采样, 磁盘最新）、paused 逐字保留最新值——消除丢失更新窗口
+const latest = JSON.parse(await fs.readFile(RISK, "utf8")); // rename 原子性保证读到完整文件
+const { mergeProbe } = await import(path.join(ROOT, "scripts", "peak_merge.cjs").replace("file://", ""));
+const merged = mergeProbe(latest, eq);
+if (JSON.stringify(merged) !== JSON.stringify(latest)) {
+  await fs.writeFile(RISK + ".probe." + process.pid + ".tmp", JSON.stringify(merged, null, 2)).then(() => fs.rename(RISK + ".probe." + process.pid + ".tmp", RISK));
+  console.log("peak merged:", latest.peakEquity, "->", mergedPeak, "| paused 保留:", JSON.stringify(merged.paused));
 } else {
-  console.log("peak unchanged:", peak, "| equity:", eq);
+  console.log("peak unchanged:", mergedPeak, "| equity:", eq);
 }

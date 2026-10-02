@@ -112,9 +112,12 @@ const snapshot = {
   tier1Secured: num(campaign.campaignVolume) >= 50000,
   grids: grids.map((g) => ({
     market: g.market, direction: g.direction,
-    range: `${g.range[0]} ~ ${g.range[1]}`, count: g.count,
+    range: `${g.range[0]} ~ ${g.range[1]}`,
+    rangeLow: num(g.range[0]), rangeHigh: num(g.range[1]),
+    count: g.count,
     value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status,
     price: g.price, nativeSL: g.nativeSL,
+    effPnlPct: num(g.effPnlPct),
   })),
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct,
   positions: positions.map((p) => ({ market: p.market, side: p.side, size: p.size, mark: p.mark, pnl: p.pnl })),

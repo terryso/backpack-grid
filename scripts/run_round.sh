@@ -8,37 +8,35 @@ export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
 
 mkdir -p state
-# --- 原子文件锁（ln 竞争 + 归属绑定删除 + 存活接管）---
+# --- 锁协议：获取=原子 mkdir；接管=原子 mv 到隔离名（单赢家）+ 存活归还检查；释放=仅自己 pid ---
 LOCK=state/lock
 release_lock() {
-  if [ "$(cat "$LOCK" 2>/dev/null)" = "$$" ]; then rm -f "$LOCK" 2>/dev/null; fi
+  if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]; then rm -rf "$LOCK" 2>/dev/null; fi
 }
-CAND="state/lock.cand.$$"
-echo "$$" > "$CAND" 2>/dev/null
-if ln "$CAND" "$LOCK" 2>/dev/null; then
-  rm -f "$CAND"
+if mkdir "$LOCK" 2>/dev/null; then
+  echo $$ > "$LOCK/pid"
 else
-  HOLDER=$(cat "$LOCK" 2>/dev/null || true)
+  HOLDER=$(cat "$LOCK/pid" 2>/dev/null || true)
   if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
-    rm -f "$CAND" 2>/dev/null
     echo "SKIP: round held by live pid $HOLDER"; exit 0
   fi
-  # 死亡/无主：仅当锁内容仍等于观察到的死亡凭据时才清除（防误删新锁），随后重试一次 ln
-  if [ -n "$HOLDER" ] && [ "$(cat "$LOCK" 2>/dev/null)" = "$HOLDER" ]; then
-    rm -f "$LOCK" 2>/dev/null
+  QUAR="state/lock.stale.$$"
+  if mv "$LOCK" "$QUAR" 2>/dev/null; then
+    QPID=$(cat "$QUAR/pid" 2>/dev/null || true)
+    if [ -n "$QPID" ] && kill -0 "$QPID" 2>/dev/null; then
+      mv "$QUAR" "$LOCK" 2>/dev/null
+      echo "SKIP: stale lock owner came back alive (pid $QPID)"; exit 0
+    fi
+    echo "took over stale lock (was pid ${QPID:-unknown})"
+    rm -rf "$QUAR" 2>/dev/null
   fi
-  if ln "$CAND" "$LOCK" 2>/dev/null; then
-    rm -f "$CAND"
+  if mkdir "$LOCK" 2>/dev/null; then
+    echo $$ > "$LOCK/pid"
   else
-    rm -f "$CAND" 2>/dev/null
-    echo "SKIP: lost lock takeover race"; exit 0
+    echo "SKIP: lost fresh-lock race"; exit 0
   fi
 fi
 trap 'release_lock' EXIT
-
-# 本轮状态（供仪表盘显示"上轮状态/失败原因"）
-write_status() { echo "$1" > state/last_round_status 2>/dev/null || true; }
-write_status "running"
 
 echo "=== ROUND $(date '+%F %T') dryrun=${DRYRUN:-0} ==="
 echo "--- observe ---"

@@ -52,6 +52,8 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
     if (snapFound && !ledgerFieldsOk) dataIssues.push("ledger pnl fields missing/invalid for " + g.symbol);
     const netPosition = ledgerFieldsOk ? Number(pnlLedger.netPosition) : 0;
     const posEntry = positionsRaw.find((p) => p.symbol === g.symbol);
+    // 跨接口一致性：账本有净持仓但持仓接口无条目 → 数据不完整，fail-loud（不用公共价掩盖）
+    if (netPosition !== 0 && !posEntry) dataIssues.push("net position " + netPosition + " in ledger but no position entry for " + g.symbol);
     const hasLivePosition = posEntry && isFinite(Number(posEntry.netQuantity)) && Number(posEntry.netQuantity) !== 0;
     const markRaw = posEntry ? Number(posEntry.markPrice) : NaN;
     if (hasLivePosition && (!isFinite(markRaw) || markRaw <= 0)) {
@@ -153,7 +155,7 @@ for (const g of gridRows) {
   if (g.pnlPct === null) bad.push("pnl null " + g.market);
 }
 if (!isFinite(netEquity) || netEquity <= 0) bad.push("netEquity " + netEquity);
-if (positions.length > gridRows.length) bad.push("more positions than grids (manual positions?)");
+// 孤儿持仓（无网格的仓位）由 decide 警告 + 禁止新增风险，不再阻断观察
 if (account.liquidating) bad.push("ACCOUNT LIQUIDATING");
 if (bad.length) {
   observed.error = "validation: " + bad.join("; ");

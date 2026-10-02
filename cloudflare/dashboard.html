@@ -88,8 +88,8 @@ function healthRow(x, s) {
     { name: "止盈", left: +(tp - pnl).toFixed(2) },
     { name: "止损", left: +(pnl + sl).toFixed(2) },
   ];
-  const lo = Number(x.range[0]), hi = Number(x.range[1]), px = Number(x.price);
-  if (isFinite(px) && hi > lo) {
+  const lo = Number(x.rangeLow), hi = Number(x.rangeHigh), px = Number(x.price);
+  if (isFinite(px) && isFinite(lo) && isFinite(hi) && hi > lo) {
     const edge = Math.min(px - lo, hi - px);
     dists.push({ name: "出界", left: +(edge / px * 100).toFixed(2) });
   }
@@ -161,7 +161,7 @@ function render(s) {
           <div class="ghead"><span class="gmkt">${x.market}</span><span class="gdir">${x.direction} · ${x.count} 格 · 投入 ${fmt(x.value, 0)}</span>
             <span class="${x.status === "Triggered" ? "chip ok" : "chip bad"}" style="margin-left:auto">${x.status === "Triggered" ? "运行" : "已停止"}</span></div>
           ${(x.price && Number(x.pnlPct) !== null) ? healthRow(x, s) : ""}
-          <div class="grow"><span class="k">区间</span><span>${x.range}</span></div>
+          <div class="grow"><span class="k">区间</span><span>${x.rangeLow} ~ ${x.rangeHigh}</span></div>
           <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
         </div>`).join("")}
         ${g.length === 0 ? `<div class="muted">空仓（全部轮换出去/主动空仓）</div>` : ""}
