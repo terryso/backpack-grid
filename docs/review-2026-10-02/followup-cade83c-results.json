@@ -1,0 +1,186 @@
+{
+  "baseline": "cade83c18594e6743be458ac63276b75be062c8e",
+  "reports": [
+    {
+      "id": "C01_network_period_latch_and_log_now_correct",
+      "error": null,
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T17:14:47.052Z"
+      }
+    },
+    {
+      "id": "F01_shared_submit_lock_still_absent",
+      "error": null,
+      "before": {
+        "peakEquity": 600,
+        "paused": {
+          "at": "fixture",
+          "reason": "drawdown 83.3%"
+        },
+        "lastEquity": 100
+      },
+      "after": {
+        "peakEquity": 650,
+        "paused": null,
+        "lastEquity": 650,
+        "lastAt": "2026-10-02T17:14:47.070Z"
+      }
+    },
+    {
+      "id": "C02_missing_position_rejected",
+      "error": "exit 1"
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "raw": null,
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.074Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.074Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "raw": "",
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.075Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "raw": false,
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.076Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "raw": "   ",
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.076Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_unknown_type_blocked",
+      "raw": [],
+      "done": {
+        "done": false
+      },
+      "deleted": false,
+      "pending": {
+        "OLD-PERP": {
+          "at": "2026-10-02T17:14:47.076Z",
+          "reason": "quantity review"
+        }
+      }
+    },
+    {
+      "id": "C02_explicit_zero_accepted",
+      "raw": 0,
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "C02_explicit_zero_accepted",
+      "raw": "0",
+      "done": {
+        "done": true
+      },
+      "deleted": true,
+      "pending": {}
+    },
+    {
+      "id": "C05_orphan_observation_allowed",
+      "error": null,
+      "positions": 1
+    },
+    {
+      "id": "C06_full_slice_never_accumulated",
+      "firstFee": 0,
+      "secondFee": 0,
+      "cursor": 1790726400000
+    },
+    {
+      "id": "C03_both_phases_recheck",
+      "phase1": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ],
+      "phase2": [
+        {
+          "act": "stop",
+          "market": "OLD-PERP",
+          "range": [
+            "90",
+            "110"
+          ],
+          "reason": "LIQ_DANGER: mark 100 is 1.0% from liq 99"
+        }
+      ]
+    }
+  ],
+  "boundary": "Production source with memory-only account/API/state I/O. No live trades or deployment."
+}

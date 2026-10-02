@@ -42,6 +42,18 @@ const riskStructOk = (parsed) => {
     && (parsed.paused === null || parsed.paused === undefined || typeof parsed.paused === "object");
 };
 
+// ---------- T22/T32 (round-12): flock 互斥架构 ----------
+T("T22a dedicated flock wrapper exists", fs.existsSync(path.join(ROOT, "scripts", "with_lock.py")));
+T("T22b runner body has no takeover path (flock owns it)", !/mkdir "\$LOCK"|mv "\$LOCK"|ln "\$CAND"/.test(runRoundSrc));
+T("T32a with_lock uses kernel flock", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("fcntl.flock"));
+T("T32b holder death auto-releases (no stale takeover needed)", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("LOCK_EX | fcntl.LOCK_NB"));
+T("T32c held lock → skip with exit 3", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("exit(3)"));
+
+// ---------- T35 (round-12): runner wiring ----------
+T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
+T("T35b upload wired into round body", runRoundSrc.includes("upload_dashboard"));
+T("T35c status file written on ok exit", runRoundSrc.includes('write_status "ok"'));
+
 // ---------- T1: ecosystem canonical naming ----------
 T("T1a PENGU-PERP -> solana", ecoOf("PENGU-PERP") === "solana");
 T("T1b PENGU_USDC_PERP -> solana", ecoOf("PENGU_USDC_PERP") === "solana");
@@ -428,8 +440,8 @@ function mockIo({ positionQty = 0, pollsUntilFlat = 1, deleteStatus = 200, gridP
   T("M6g why mentions budget premise for protect", evaluateCreateGate(F(false, true, false), [], false).why.includes("budget premise"));
 })().then(() => {
   // ---------- T22 (round-8): PID lock ----------
-T("T22a lock liveness-checked via kill -0", runRoundSrc.includes('kill -0 "$HOLDER"'));
-T("T22b self-release only (pid match)", runRoundSrc.includes('if [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ]'));
+T("T22a dedicated flock wrapper exists", fs.existsSync(path.join(ROOT, "scripts", "with_lock.py")));
+T("T22b runner body has no takeover path (flock owns it)", !/mkdir "\$LOCK"|mv "\$LOCK"|ln "\$CAND"/.test(runRoundSrc));
 T("T22c no age-based takeover left", !runRoundSrc.includes("AGE -lt 480"));
 
 // ---------- T23 (round-8): two-phase execution ----------
@@ -592,9 +604,9 @@ T("T31b last_round_status written by runner and read by dashboard_data",
   runRoundSrc.includes('echo "ok" > state/last_round_status') && fs.readFileSync(path.join(ROOT, "scripts", "dashboard_data.cjs"), "utf8").includes("last_round_status"));
 
 // ---------- T32 (round-9 F04): mv-based atomic takeover ----------
-T("T32a atomic mkdir acquisition", runRoundSrc.includes('if mkdir "$LOCK" 2>/dev/null; then'));
-T("T32b stale takeover via atomic mv", runRoundSrc.includes('mv "$LOCK" "$QUAR" 2>/dev/null'));
-T("T32c takeover liveness recheck (restore if owner alive)", runRoundSrc.includes('mv "$QUAR" "$LOCK" 2>/dev/null'));
+T("T32a with_lock uses kernel flock", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("fcntl.flock"));
+T("T32b holder death auto-releases (no stale takeover needed)", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("LOCK_EX | fcntl.LOCK_NB"));
+T("T32c held lock → skip with exit 3", fs.readFileSync(path.join(ROOT, "scripts", "with_lock.py"), "utf8").includes("exit(3)"));
 
 // ---------- T33 (round-12): act_core type gate — false/blank/array rejected ----------
 {
@@ -623,7 +635,7 @@ T("T32c takeover liveness recheck (restore if owner alive)", runRoundSrc.include
 
 // ---------- T35 (round-12): runner wiring ----------
 T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
-T("T35b upload wired into exit trap", runRoundSrc.includes("trap 'release_lock; upload_dashboard' EXIT"));
+T("T35b upload wired into round body (direct calls at exits)", runRoundSrc.includes("upload_dashboard") && runRoundSrc.includes('write_status "ok"') && runRoundSrc.includes("upload_dashboard\necho \"=== ROUND END"));
 T("T35c status file written on ok exit", runRoundSrc.includes('write_status "ok"'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
