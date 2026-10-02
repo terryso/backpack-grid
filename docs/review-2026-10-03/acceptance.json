@@ -21,5 +21,6 @@
     "incomplete": false
   },
   "strategyParameters": "TP/SL/risk budget/selection score/cooldown unchanged; SOL ecosystem mapping repaired; final-size grid count constrained",
-  "launchd": "all four jobs naturally ran and exited 0"
+  "launchd": "all four jobs naturally ran and exited 0",
+  "codeCommit": "230b501"
 }

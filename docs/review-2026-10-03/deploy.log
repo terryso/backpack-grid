@@ -3,7 +3,7 @@
 ────────────────────
 [custom build] Running: node scripts/build_dashboard.cjs
 [custom build] static dashboard built; fallback timestamp: 2026-10-02T20:29:11.463Z
-[custom build] 
+[custom build]
 🌀 Building list of assets...
 ✨ Read 1 file from the assets directory /Users/nick/CascadeProjects/backpack_grid/cloudflare/public
 🌀 Starting asset upload...
@@ -15,9 +15,9 @@ Uploaded 1 of 1 asset
 Total Upload: 4.35 KiB / gzip: 1.68 KiB
 Worker Startup Time: 2 ms
 Your Worker has access to the following bindings:
-Binding                                           Resource            
-env.LIKES (LikeCounter)                           Durable Object      
-env.DASH (40e078ae20c84612bce7ddfb711f7992)       KV Namespace        
+Binding                                           Resource
+env.LIKES (LikeCounter)                           Durable Object
+env.DASH (40e078ae20c84612bce7ddfb711f7992)       KV Namespace
 
 Uploaded backpack-grid-dashboard (10.80 sec)
 Deployed backpack-grid-dashboard triggers (4.58 sec)
