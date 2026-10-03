@@ -230,7 +230,7 @@ PASS 20 concurrent same-visitor likes count once with legacy seed
 PASS 20 different concurrent visitors lose no increments
 PASS day rollover expires markers; delayed old day cannot reset state
 69 production acceptance cases passed
-(node:49550) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:58614) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 PASS healthy_create_positive_control
 STOPPED ETH-PERP — emergency: stored grid parameters not confirmed

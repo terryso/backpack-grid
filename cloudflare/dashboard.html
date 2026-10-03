@@ -113,7 +113,7 @@ function render(s) {
   c.classList.remove("err"); // the loading/错误样式带 40px padding，渲染后必须移除
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
-  document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
+  document.getElementById("ago").textContent = `${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
   if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${fmt(s.runStats.days, 1)} 天 · 累计巡检记录 ${fmt(s.runStats.records, 0)} 条`;
   const g = s.grids || [];
   const pos = s.positions || [];
