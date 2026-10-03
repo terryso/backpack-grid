@@ -11,4 +11,5 @@ try { snap = JSON.parse(fs.readFileSync(path.join(ROOT, 'state/dashboard.json'),
 const html = fs.readFileSync(path.join(ROOT, 'cloudflare/dashboard.html'), 'utf8')
   .replace('const fmt =', `window.__SNAPSHOT_FALLBACK__ = ${JSON.stringify(snap).replace(/</g, '\\u003c')};\nconst fmt =`);
 fs.writeFileSync(path.join(dir, 'index.html'), html);
+fs.copyFileSync(path.join(ROOT, 'cloudflare/assets/backpack-icon.png'), path.join(dir, 'backpack-icon.png'));
 console.log('static dashboard built; fallback timestamp:', snap?.updatedAt || 'unavailable');
