@@ -1,0 +1,340 @@
+
+> test
+> node tests/run.cjs
+
+PASS T22a dedicated flock wrapper exists
+PASS T22b runner body has no takeover path (flock owns it)
+PASS T32a with_lock uses kernel flock
+PASS T32b holder death auto-releases (no stale takeover needed)
+PASS T32c held lock → skip with exit 3
+PASS T35a write_status defined in runner
+PASS T35b upload wired into round body
+PASS T35c status file written on ok exit
+PASS T1a PENGU-PERP -> solana
+PASS T1b PENGU_USDC_PERP -> solana
+PASS T1c SUI-PERP -> sui
+PASS T1d solana cap blocks BONK
+PASS T9a SL grid gets stop, protect dropped
+PASS T9b no suppress-guard on stop (old bug gone)
+PASS T9c act phases: stop before protect before create
+PASS T9d act wires production core
+PASS T10a decide no longer auto-clears vanished-grid pending
+PASS T10c pendCorrupt blocks mayCreate
+PASS T8b act checks stopGrid return value
+PASS T8c emergency stop verified before claiming success
+PASS T17a gate includes emergency cleanup
+PASS T17b gate includes failed protect
+PASS T17c gate re-reads live pending per create
+PASS T17d skipped create is recorded in results ledger
+PASS T5a stop intent persisted before first exchange write
+PASS T5b position-poll errors treated as unconfirmed
+PASS T18a loadPending distinguishes ENOENT from corrupt
+PASS T18b corrupt ledger archived + flag file
+PASS T6a analyze wrapped, stops survive
+PASS T6b planning loop guarded on ana
+PASS T11a object ticker -> finite number
+PASS T11b missing symbol -> NaN
+PASS T11c invalid opens quarantined (slot freed)
+PASS T12a JSON null -> corrupt
+PASS T12b peakEquity null rejected (Number(null)===0 trap)
+PASS T12b2 peakEquity boolean rejected
+PASS T12b3 peakEquity empty string rejected
+PASS T12c numeric string accepted
+PASS T12d valid shape passes
+PASS T12e array -> corrupt
+PASS T12f init gated on not-corrupt
+PASS T13a breaker trip blocks create
+PASS T13b riskCorrupt blocks create
+PASS T13c ticker outage blocks create
+PASS T13d pending blocks create
+PASS T13e corrupt-flag file blocks create
+PASS T13f healthy allows create
+PASS T14a stored SL=8 budgets as 8 even though config says 6
+PASS T14b stored SL=6 budgets as 6
+PASS T14c missing SL falls back to config
+PASS T14d 4th 2500 grid exceeds budget
+PASS T15 no 'no grid rows' validation error
+PASS T16 breaker loop has no Disabled filter
+PASS INT1a vanished-grid pending -> stop verify action
+PASS INT1b decide does not clear the ledger itself
+PASS INT2a corrupt risk flagged
+PASS INT2b corrupt risk file untouched
+PASS INT2c no create planned under corrupt risk
+PASS INT3 peakEquity null -> corrupt + untouched
+PASS INT4a invalid opens quarantined into closed
+PASS INT4b quarantine reported
+PASS INT5 numeric-string peak normalized, not corrupt
+PASS RWP1 lower probe sample cannot lower peak (ratchet)
+PASS RWP2 write without paused keeps latest latch verbatim
+PASS RWP3 corrupt file refused, original kept, rc=2
+PASS RWP4 sequential probe commits: latch survives, peak = max
+PASS LC3 missing state/ dir: wrapper boots and creates lock file
+PASS LC1 wrapper SIGKILLed, business alive: second wrapper rejected (lock fd inherited)
+PASS LC2 after business exits, lock is acquirable again
+PASS LC4a --wait waits out a short holder then acquires
+PASS LC4b --wait times out with skip (no queue behind long rounds)
+PASS T19a protectionConfirmed flow present
+PASS T19b verify-stage errors funnel to emergency cleanup
+PASS T19c incomplete emergency still blocks creates
+PASS T20a array ledger rejected
+PASS T20b null rejected
+PASS T20c string values rejected
+PASS T20d valid ledger accepted
+PASS T20e act validates structure
+PASS T20f decide validates structure
+PASS INT6a array ledger -> invalid, no create planned
+PASS INT6b decide leaves the file for act to archive
+PASS INT7a-1 healthy control: stop now, create deferred (marker)
+PASS INT7a-2 phase 2 plans the replacement create
+PASS INT7c fault isolation: no ticker error in fault run
+PASS INT7b same scenario + corrupt risk -> stop kept, create blocked, file untouched
+STOP X-PERP: position still open after timeout — persisted to pending_stops.json, will retry next round (no delete/create this round)
+PASS M1a timeout -> done:false
+PASS M1b write-ahead intent persisted
+PASS M1c no delete attempted while position open
+STOPPED X-PERP — test success
+PASS M2a flat -> done:true
+PASS M2b ledger cleared after verified cleanup
+PASS M2c disable+delete both called
+PASS M3a gone+residue -> manual intervention
+PASS M3b intent retained
+PASS M4 gone+flat -> done:true, ledger cleared
+STOP X-PERP: position flat but delete failed 500 — persisted, retry next round
+PASS M5a delete failure retried once then persisted
+PASS M5b ledger keeps delete-failed intent
+PASS M6a stop-incomplete blocks
+PASS M6b protect-incomplete blocks
+PASS M6c emergency-unresolved blocks
+PASS M6d pending non-empty blocks
+PASS M6e corrupt flag blocks
+PASS M6f clean state allows
+PASS M6g why mentions budget premise for protect
+PASS T22a dedicated flock wrapper exists
+PASS T22b runner body has no takeover path (flock owns it)
+PASS T22c no age-based takeover left
+PASS T23a phase-2 marker flow
+PASS T23b decide reads BG_PHASE
+PASS T23c phase 2 runs full per-grid risk re-eval (F03)
+PASS T24a missing ledger snapshot is fatal
+PASS T24b live position without mark is fatal
+PASS T24c core: malformed position != flat
+PASS T25a minQvol24h wired into analyzer
+PASS T25b cumulative margin reservation
+PASS T25c stale observation gate
+PASS T25d orphan positions veto create
+PASS T25e BG_OFFLINE implemented in decide
+PASS T25f actions staleness gate in act
+PASS INT9 stale snapshot -> refuse to plan
+PASS INT10a orphan warned, round completes
+PASS INT10b orphan vetoes create
+PASS INT11a cumulative reservation: sizes are 2500/2500/1800 (not 3x2500)
+PASS INT11b total planned notional stays within balance x leverage
+PASS INT12a risk-shrunk grid created (not skipped)
+PASS INT12b shrunk value = 1950
+PASS INT12c shrink reported
+PASS T26a breaker latch survives probe commit
+PASS T26b lower sample cannot lower peak
+PASS T26c probe strict shape: null peak rejected
+PASS T27a phase 2 no longer skips per-grid loop
+PASS T27b phase 2 defer writes marker
+PASS T27c create requires zero stops in the round
+PASS T29 complete window advances cursor exactly to window end (resumable)
+PASS T29b fees loop: slices + verified-only cursor advance
+PASS T30a deploy uses DASH_WRITE_TOKEN
+PASS T30b deploy pins --config
+PASS T31a health uses funding-adjusted effPnlPct (observe)
+PASS T31b last_round_status written by runner and read by dashboard_data
+PASS T32a with_lock uses kernel flock
+PASS T32b holder death auto-releases (no stale takeover needed)
+PASS T32c held lock → skip with exit 3
+PASS T33a false rejected
+PASS T33b blank string rejected
+PASS T33c array rejected
+PASS T33d numeric zero accepted
+PASS T34a full page: zero accumulated
+PASS T34b complete page: accumulated
+PASS T35a write_status defined in runner
+PASS T35b upload wired into round body (direct calls at exits)
+PASS T35c status file written on ok exit
+
+151 passed, 0 failed
+PASS strict numeric rejects null
+PASS strict numeric rejects false
+PASS strict numeric rejects ""
+PASS strict numeric rejects "  "
+PASS strict numeric rejects []
+PASS strict numeric rejects {}
+PASS JS/Python risk validator rejects null
+PASS JS/Python risk validator rejects false
+PASS JS/Python risk validator rejects ""
+PASS JS/Python risk validator rejects []
+PASS JS/Python risk validator rejects -1
+PASS paused arrays rejected and pending structures agree
+PASS healthy production decide creates positive control
+PASS writer failure forbids new risk
+PASS missing paused permits persistent new trip
+PASS equity recovery never clears persisted latch
+PASS failed trip commit leaves durable write-ahead latch
+PASS retry after recovery commits earlier failed trip and blocks create
+PASS zero/negative equity still dispatches risk exits: 0
+PASS zero/negative equity still dispatches risk exits: -10
+PASS corrupt risk write intent refuses mutation and create
+PASS invalid persisted risk intent blocks create: null
+PASS invalid persisted risk intent blocks create: false
+PASS invalid persisted risk intent blocks create: 0
+PASS invalid persisted risk intent blocks create: ""
+PASS false ticker cannot trigger false out-of-range stop
+PASS empty ticker response blocks new risk
+PASS 12 genuinely concurrent writers keep highest peak and original latch
+PASS new danger blocks create in phase risk
+PASS new danger blocks create in phase creates
+PASS production observe data contract: null-ledger
+PASS production observe data contract: false-position
+PASS production observe data contract: missing-position
+PASS production observe data contract: orphan
+PASS production observe data contract: unknown-liquidation
+PASS production observe data contract: zero-liquidation
+PASS production observe data contract: ledger-live-position-zero
+PASS WAPI ISO timestamp without timezone parses as UTC
+PASS inclusive boundary deduplicates raw fill and fee
+PASS completed history restart preserves fees
+PASS full pages and exhausted budget keep cursor and mark incomplete
+PASS adaptive shrink progresses through dense complete intervals
+PASS saturated millisecond is explicit pagination error
+PASS history HTTP error preserves cursor and incomplete status
+PASS non-USDC fees retained without false USD conversion
+PASS final reduced allocation resizes count at conservative upper price
+PASS deposit-adjusted PnL and missing funding stay distinct
+PASS date-only baseline cannot fabricate cashflow-adjusted return
+PASS dashboard refuses malformed state and aggregates prior failure
+PASS missing observation remains unknown, not fresh zero equity
+PASS runner refresh failure/status and upload: 2
+PASS runner refresh failure/status and upload: 3
+PASS runner refresh failure/status and upload: 0
+PASS all historical drawdown survives the chart display limit
+PASS sample counts deduplicate timestamps and exclude identified dryrun
+PASS failed and dryrun events never inflate successful confirmations
+PASS dashboard preserves original histories and tolerates a partial line
+PASS run days are rounded at the data boundary
+PASS production act lifecycle: success
+PASS production act lifecycle: upsert-lost
+STOPPED ETH-PERP — emergency: created without confirmed protection
+PASS production act lifecycle: protect-read-fails
+STOP ETH-PERP: position still open after timeout — persisted to pending_stops.json, will retry next round (no delete/create this round)
+PASS production act lifecycle: cleanup-incomplete
+PASS production act lifecycle: budget-changed
+PASS production act lifecycle: stale-plan
+PASS production UI quota fallback is dated and never healthy
+PASS production UI rounds days and labels history in plain language
+PASS 20 concurrent same-visitor likes count once with legacy seed
+PASS 20 different concurrent visitors lose no increments
+PASS day rollover expires markers; delayed old day cannot reset state
+69 production acceptance cases passed
+(node:45741) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS healthy_create_positive_control
+STOPPED ETH-PERP — emergency: stored grid parameters not confirmed
+PASS N01a_applied_allocation_drift_is_cleaned_up
+STOPPED ETH-PERP — emergency: stored grid parameters not confirmed
+PASS N01b_applied_upper_drift_is_cleaned_up
+STOPPED ETH-PERP — emergency: stored grid parameters not confirmed
+PASS N01_full_and_final_config_stored-direction
+STOPPED ETH-PERP — emergency: stored grid parameters not confirmed
+PASS N01_full_and_final_config_stored-disabled
+STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
+PASS N01_full_and_final_config_final-drift
+STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
+PASS N01_full_and_final_config_kick-drift
+STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
+PASS N01_full_and_final_config_final-orphan
+STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
+PASS N01_full_and_final_config_final-liquidating
+STOPPED OLD-PERP — LIQ_DANGER OLD_USDC_PERP
+PASS N02a_fresh_liquidation_danger_exits_before_create
+PASS N02b_unknown_quantity_blocks_all_new_writes
+PASS N02c_unknown_liquidation_price_blocks_create
+PASS N08_foreign_identity_blocks_all_mutations
+PASS actor_veto_identity-stop
+PASS actor_veto_identity-protect
+PASS actor_veto_pending-unbound
+PASS actor_veto_pending-foreign
+PASS actor_veto_manual-global
+PASS actor_veto_config-after-validate
+PASS actor_veto_account-unknown
+PASS N03_old_results_rejected_by_run_binding
+PASS N04a_conflicting_batch_ids_rejected
+PASS N04b_future_cursor_is_rejected
+PASS N04c_late_fills_captured_by_overlap
+PASS N05_foreign_old_ledger_is_not_retagged
+PASS N06_updated_liquidity_threshold_enforced
+PASS N07_public_market_failure_preserves_breaker_and_exits
+27 new safety scenarios passed
+PASS invalid config is refused before trading
+PASS actual collateral owner must match pin
+PASS decimal formatting normalization confirms identical parameters
+PASS valid zero exposure / no liquidation price is accepted
+PASS hex and boolean quantities cannot masquerade as flat
+PASS actual market margin dominates leverage-only estimate
+PASS size-dependent IMF grows conservatively
+PASS deep audit captures fills older than overlap horizon
+PASS SQLite raw ledger and fee summary persisted atomically
+PASS replaying SQLite fills does not increment totals again
+PASS immutable SQLite conflict rolls back
+PASS SQLite history cannot load under another owner
+PASS incremental coverage retains earliest start and newest end
+PASS gapped coverage cannot erase a valid old ledger
+PASS parallel imports lose no events
+PASS live execution lease is accepted
+PASS dead owner invalidates execution even with old matching plan
+PASS unknown and future lease timestamps are rejected
+PASS same plan ID under another run cannot retain lease
+PASS configuration changed after planning revokes actor writes
+PASS explicit hold preserves Disabled grid even past TP
+PASS account breaker overrides explicit local hold
+PASS hold can be cleared after grid has disappeared
+PASS malformed pause registry is not silently overwritten
+PASS concurrent manual intentions retain both edits
+PASS raw attribution accepts equivalent numeric account fields
+PASS foreign source rows fail closed
+PASS source without owner fields never claims row scope
+PASS repeated full page cannot masquerade as progress
+PASS source pagination cap is an explicit failure
+PASS session loss at final confirmation invalidates source completion
+PASS production raw source entry persists all sources with bound identity
+PASS production raw source entry preserves previous evidence on owner loss
+PASS risk writer requires pinned account identity even for direct invocation
+PASS unbound pending entries cannot dispatch account cleanup
+PASS main account zero is preserved in production action metadata
+PASS duplicate position symbols cannot masquerade as flat exposure
+STOP ETH-PERP: position response malformed — cannot confirm flat; intent kept, retry next round
+PASS production stop refuses duplicate zero/live target rows and retains intent
+38 extra contract/storage scenarios passed
+PASS baseline uses earliest identity-bound real readonly observation
+PASS legacy and simulated observations cannot establish verified baseline
+PASS wrong owner baseline is refused
+PASS baseline amount is bound to its original measured source
+PASS mature checkpoint excludes latest possibly unindexed minute
+PASS stale accounting checkpoint is refused
+PASS complete zero-capital scan computes net return without subtracting fees twice
+PASS equity and cashflow cutoff must match exactly
+PASS unscoped platform receipt cannot be retagged to strategy or treated as zero
+PASS one incomplete cashflow endpoint blocks net profit
+PASS foreign funding leaves decomposition unknown
+PASS non-USDC payments require valuation instead of assumed parity
+PASS borrow interest is a debit
+PASS conflicting natural payment identity is not double counted
+PASS temporary source outage preserves prior confirmed payments without extending coverage
+PASS confirmed payment disappearing forces reconciliation failure
+PASS explicit reviewed capital flow adjusts independent-window return
+PASS foreign manual ledger cannot override ambiguity
+PASS descending scan includes end and excludes baseline timestamp
+PASS ordering assumptions must be proven before cutoff
+PASS full page cap does not declare coverage
+PASS production init is idempotent and preserves original baseline/config/history
+PASS complete production collector commits coherent report/ledger with only reads
+PASS public report replays proof and preserves original historical baseline
+PASS report-controlled profit is rejected despite fresh timestamps
+PASS collector failure withdraws fresh-profit confirmation
+PASS existing accounting window cannot silently be rebased
+PASS research inputs are preserved immutably and indexed once
+28 verified accounting/research scenarios passed

@@ -5,6 +5,7 @@ const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cj
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns } = require('./dashboard_metrics.cjs');
 const {identityOk,manualPausesFor}=require('./contracts.cjs');
+const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
 const file = (p) => path.join(ROOT, p);
 const read = (p) => { try { return JSON.parse(fs.readFileSync(file(p), 'utf8')); } catch { return null; } };
@@ -62,6 +63,24 @@ try {
   accounting = attribution(ledger, baselineAt, obs?.at, equityChange);
 } catch (e) { accounting.error = String(e.message); }
 const f = read('state/fees.json');
+let verifiedWindow=null;
+try{
+  const window=read('state/verified_window.json'),accounted=read('state/window_accounting.json'),status=read('state/window_status.json');
+  if(window){validateWindow(window,identity);verifiedWindow={baselineAt:window.baseline.at,baselineEquity:window.baseline.equity,netPnl:null,cashflowComplete:false,decompositionComplete:false,dataFresh:false};
+    if(accounted&&accounted.identity?.accountKey===identity.accountKey&&accounted.windowBaselineHash===require('./contracts.cjs').hash(window.baseline)){
+      if(!accounted.capture)throw Error('accounting proof unavailable');
+      const raw={...accounted.capture};delete raw.captureHash;
+      if(require('./contracts.cjs').hash(raw)!==accounted.captureHash)throw Error('accounting proof hash mismatch');
+      const replay=reconcile(window,accounted.capture,read('state/attribution_ledger.json'),accounted.ledger);
+      if(!require('./contracts.cjs').same(replay.report,accounted.report))throw Error('accounting result replay mismatch');
+      const mature=Date.parse(accounted.report.asOf),captureAt=Date.parse(accounted.capturedAt);
+      // 30-minute collector + 15-minute observations + 2-minute indexing buffer.
+      const fresh=status?.ok===true&&Number.isFinite(mature)&&Number.isFinite(captureAt)&&Date.now()-mature>=0&&Date.now()-mature<=60*60000&&Date.now()-captureAt>=0&&Date.now()-captureAt<=40*60000;
+      verifiedWindow={...verifiedWindow,...accounted.report,dataFresh:fresh};
+      if(!fresh){verifiedWindow.netPnl=null;verifiedWindow.cashflowComplete=false;verifiedWindow.decompositionComplete=false;}
+    }
+  }
+}catch{verifiedWindow={netPnl:null,cashflowComplete:false,decompositionComplete:false,dataFresh:false,error:'accounting window unavailable'};}
 const historyStatus=read('state/history_status.json');
 let fees = null;
 if (f?.symbols && typeof f.symbols === 'object' && !Array.isArray(f.symbols)) {
@@ -73,7 +92,7 @@ const snapshot = {
   updatedAt: obs?.at || null, generatedAt: new Date().toISOString(), snapshotAge: Number.isFinite(age) ? age : null,
   equity, available: num(obs?.margin?.availableEquity), dataValid, identityValid, manualPauses, manualPauseValid, riskStateValid, pendingCorrupt, lastRoundStatus,
   riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
-  strategyTotalPnl: accounting.strategyPnl, equityChange, accounting,
+  strategyTotalPnl: accounting.strategyPnl, equityChange, accounting, verifiedWindow,
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,
   fees, runStats: { days: baselineAt && Number.isFinite(Date.parse(baselineAt)) ? +Math.max(0, (Date.now() - Date.parse(baselineAt)) / 86400000).toFixed(1) : null, records: history.count, recordsSince: history.since, rounds: confirmed.successful, failedRounds: confirmed.failed, exits: exits.size, since: confirmed.since },
   change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,

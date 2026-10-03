@@ -42,11 +42,12 @@ function analyze(symbol, kl) {
 }
 
 (async () => {
-  const markets = perpMarkets(await getMarkets());
+  const marketSnapshot=await getMarkets();
+  const markets = perpMarkets(marketSnapshot);
   const tickers = await getTickers();
   const tmap = new Map(tickers.map((t) => [t.symbol, t]));
 
-  const rows = [];
+  const rows = [],samples={};
   for (const m of markets) {
     const sym = m.symbol;
     if (EXCLUDE.includes(sym)) continue;
@@ -56,10 +57,12 @@ function analyze(symbol, kl) {
     const qvol = Number(t.quoteVolume || 0);
     if (qvol < MIN_QVOL) continue;
     let kl;
-    try { kl = await getKlines(sym, "1h", 168, 168); } catch { continue; }
+    try { kl = await getKlines(sym, "1h", 168, 168); } catch {samples[sym]={error:'klines unavailable'};continue; }
+    samples[sym]={klines:kl,capturedAt:new Date().toISOString()};
     const a = analyze(sym, kl);
     if (!a) continue;
     const f = await getFunding(sym);
+    samples[sym].funding=f;
     const fundingRaw = Array.isArray(f) && f.length ? f[f.length - 1].rate ?? f[f.length - 1].fundingRate : null;
     if (!finiteNumber(fundingRaw)) continue; // unknown funding cannot score as free
     const fundingRate = Number(fundingRaw);
@@ -118,6 +121,9 @@ function analyze(symbol, kl) {
   const tmp = target + `.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(out, null, 2));
   fs.renameSync(tmp, target);
+  // Retain decision inputs for future replay; this does not change live scores/rules.
+  try{require('./research_archive.cjs').archiveResearch(ROOT,{cfg,markets:marketSnapshot,tickers,samples,output:out});}
+  catch(e){console.error('RESEARCH ARCHIVE FAILED:',e.message);}
 
   console.log("rank symbol            score chop r24%  r7d%  drift24% funding   qvol24       grid lower~upper / count (width%)");
   top.forEach((r, i) => {

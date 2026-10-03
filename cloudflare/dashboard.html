@@ -167,7 +167,8 @@ function render(s) {
       <div class="card"><div class="k">历史最大回撤</div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div><div class="muted" style="font-size:10px" title="按全部已保存的巡检权益计算；未覆盖两次巡检之间的瞬时下跌">记录以来，从高点回落的最大幅度</div></div>
       ${s.verifiedWindow ? `<div class="card"><div class="k">核算窗口净收益</div>
         <div class="v ${pnlCls(s.verifiedWindow.netPnl)}">${s.verifiedWindow.netPnl==null?'待核对':(s.verifiedWindow.netPnl>=0?'+':'')+fmt(s.verifiedWindow.netPnl)}</div>
-        <div class="muted" style="font-size:10px">自 ${s.verifiedWindow.baselineAt?new Date(s.verifiedWindow.baselineAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'起点待核实'}<br>基线 ${fmt(s.verifiedWindow.baselineEquity)} USD；${s.verifiedWindow.cashflowComplete?'已排除净转入资金':'现金流尚未完整核对'}<br>账户收益，包含浮动盈亏<br>${s.verifiedWindow.asOf?'数据截至 '+new Date(s.verifiedWindow.asOf).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'等待采集'}</div></div>` : ''}
+        <div class="muted" style="font-size:10px">自 ${s.verifiedWindow.baselineAt?new Date(s.verifiedWindow.baselineAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'起点待核实'}<br>基线 ${fmt(s.verifiedWindow.baselineEquity)} USD；${s.verifiedWindow.cashflowComplete?'已排除净转入资金':'现金流尚未完整核对'}<br>账户收益，包含浮动盈亏<br>${s.verifiedWindow.asOf?'数据截至 '+new Date(s.verifiedWindow.asOf).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'等待采集'}
+        <details style="margin-top:6px"><summary style="cursor:pointer">查看账本拆分</summary><div>资金费 ${fmt(s.verifiedWindow.funding,4)} USD<br>借贷利息 ${fmt(s.verifiedWindow.interest,4)} USD<br>奖励 ${fmt(s.verifiedWindow.reward,4)} USD<br>其他交易与估值 ${fmt(s.verifiedWindow.otherTradingAndValuationPnl,4)} USD<br>${s.verifiedWindow.decompositionComplete?'本窗口拆分已核对':'拆分尚未完整核对'}</div></details></div></div>` : ''}
     </div>
     <div class="section">
       <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>

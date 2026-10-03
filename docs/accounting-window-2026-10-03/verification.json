@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-03T12:32:01.645Z",
+  "baselineAt": "2026-10-03T08:25:35.389Z",
+  "baselineEquity": 658.14,
+  "asOf": "2026-10-03T11:59:58.028Z",
+  "netPnl": 4.88,
+  "netCashflow": 0,
+  "funding": -0.041098,
+  "interest": 0.0022615679,
+  "reward": 0,
+  "cashflowComplete": true,
+  "decompositionComplete": true,
+  "privateSourceIdsPublished": false,
+  "tests": {
+    "existing": 285,
+    "new": 28,
+    "total": 313
+  },
+  "researchSnapshots": 5,
+  "followup": {
+    "automationId": "backpack-2",
+    "date": "2026-10-07",
+    "time": "08:10",
+    "timezone": "Asia/Shanghai",
+    "work": "readonly data quality and offline comparative backtest; no live parameter changes"
+  }
+}
