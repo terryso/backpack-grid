@@ -109,13 +109,14 @@ function render(s) {
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `快照 ${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
-  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${s.runStats.days} 天 · 确认轮次 ${s.runStats.rounds} · 确认停止 ${s.runStats.exits} 次（事件账本）`;
+  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${fmt(s.runStats.days, 1)} 天 · 累计巡检记录 ${fmt(s.runStats.records, 0)} 条`;
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
   const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
   const pct = Math.min(100, camp / tier * 100);
   const chips = [];
+  if (s.runStats?.since) chips.push(`<span class="chip">新运行日志：自 ${new Date(s.runStats.since).toLocaleDateString("zh-CN")} 完成 ${fmt(s.runStats.rounds, 0)} 轮${s.runStats.failedRounds ? " · 失败 " + fmt(s.runStats.failedRounds, 0) + " 轮" : ""}</span>`);
   if (s.quotaExceeded) chips.push(`<span class="chip bad">动态接口不可用：显示部署时的历史快照</span>`);
   if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
   if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
@@ -150,12 +151,12 @@ function render(s) {
     <div class="cards">
       <div class="card"><div class="k">总权益</div><div class="v">${fmt(s.equity)}</div></div>
       <div class="card"><div class="k">24h 变化</div><div class="v ${pnlCls(s.change24h)}">${s.change24h != null && s.change24h >= 0 ? "+" : ""}${fmt(s.change24h)}</div><div class="muted" style="font-size:10px">较 24h 前 ${s.change24hPct != null ? (s.change24hPct >= 0 ? "+" : "") + fmt(s.change24hPct) + "%" : "-"}</div></div>
-      <div class="card"><div class="k">${s.strategyTotalPnl == null ? "权益变化（未扣出入金）" : "净现金流调整后盈亏"} <span class="muted" style="font-size:10px">自 ${s.strategyBaselineAt || "09-30"}</span></div>
-        <div class="v ${pnlCls(s.strategyTotalPnl ?? s.equityChange)}">${fmt(s.strategyTotalPnl ?? s.equityChange)}</div>
-        <div class="muted" style="font-size:10px">${s.strategyTotalPnl == null ? "归因账本待核对，暂不作为策略收益" : "资金费／奖励归因另列"}</div></div>
+      <div class="card"><div class="k">历史总盈亏 <span class="muted" style="font-size:10px">自 ${s.strategyBaselineAt || "09-30"}</span></div>
+        <div class="v ${pnlCls(s.strategyTotalPnl ?? s.equityChange)}">${(s.strategyTotalPnl ?? s.equityChange) != null && (s.strategyTotalPnl ?? s.equityChange) >= 0 ? "+" : ""}${fmt(s.strategyTotalPnl ?? s.equityChange)}</div>
+        <div class="muted" style="font-size:10px">${s.strategyTotalPnl == null ? "当前权益 − 初始权益；出入金也会影响此值" : "已扣除净入金，含资金费、利息等收益"}</div></div>
       <div class="card"><div class="k">在跑网格盈亏（${g.length} 格）</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
       <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div><div class="muted" style="font-size:10px">峰值采样 1 分钟 · 曲线 15 分钟</div></div>
-      <div class="card"><div class="k">历史最大回撤 <span class="muted" style="font-size:10px">最近 400 点 · 曲线口径</span></div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div></div>
+      <div class="card"><div class="k">历史最大回撤</div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div><div class="muted" style="font-size:10px" title="按全部已保存的巡检权益计算；未覆盖两次巡检之间的瞬时下跌">记录以来，从高点回落的最大幅度</div></div>
     </div>
     <div class="section">
       <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>

@@ -122,6 +122,22 @@ async function main() {
     const run = spawnSync('/bin/bash', [path.join(d, 'scripts/run_round.sh')], { env: { ...env(d), HOME: d, DRYRUN: '0', BG_LOCKED: '0' }, encoding: 'utf8', timeout: 15000 });
     check('runner refresh failure/status and upload: ' + failCall, () => { assert.equal(run.status, failCall ? 1 : 0, run.stderr); assert.equal(fs.readFileSync(path.join(d, 'state/last_round_status'), 'utf8').trim(), failCall === 2 ? 'observe_failed_post_exit' : failCall === 3 ? 'observe_failed_confirm' : 'ok'); assert(fs.existsSync(path.join(d, 'state/upload_calls'))); if (failCall === 2) assert.equal(fs.readFileSync(path.join(d, 'state/act_calls'), 'utf8').trim().split('\n').length, 1); });
   }
+  // Dashboard lifetime metrics are independent of the 400-point display window.
+  const { historyMetrics, confirmedRuns } = require('../scripts/dashboard_metrics.cjs');
+  const historyRows = Array.from({ length: 502 }, (_, i) => ({ at: new Date(Date.UTC(2026, 8, 30) + i * 900000).toISOString(), equity: i === 0 ? 200 : 100 }));
+  const hm = historyMetrics(historyRows, null);
+  check('all historical drawdown survives the chart display limit', () => { assert.equal(hm.maxDrawdown, 50); assert.equal(hm.count, 502); assert.equal(hm.curve.length, 400); });
+  check('sample counts deduplicate timestamps and exclude identified dryrun', () => assert.equal(historyMetrics([...historyRows, historyRows[0], { at: '2026-11-01T00:00:00Z', equity: 1, dryrun: true }]).count, 502));
+  check('failed and dryrun events never inflate successful confirmations', () => { const r = confirmedRuns([{ type: 'end', dryrun: false, runId: 'ok', status: 'ok', startedAt: '2026-10-03T00:00:00Z' }, { type: 'end', dryrun: false, runId: 'bad', status: 'observe_failed', startedAt: '2026-10-03T00:00:01Z' }, { type: 'end', dryrun: true, runId: 'dry', status: 'dryrun' }]); assert.equal(r.successful, 1); assert.equal(r.failed, 1); });
+  d = fixture(); const historyText = historyRows.map(JSON.stringify).join('\n') + '\n{partial\n';
+  fs.writeFileSync(path.join(d, 'state/equity_curve.jsonl'), historyText);
+  put(d, 'state/run_events.jsonl', null); // overwritten with actual JSONL below
+  const eventText = JSON.stringify({ type: 'end', dryrun: false, runId: 'one', status: 'ok', startedAt: new Date().toISOString() }) + '\n';
+  fs.writeFileSync(path.join(d, 'state/run_events.jsonl'), eventText);
+  spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(d), encoding: 'utf8' });
+  const metricsSnapshot = json(d, 'state/dashboard.json');
+  check('dashboard preserves original histories and tolerates a partial line', () => { assert.equal(metricsSnapshot.runStats.records, 502); assert.equal(metricsSnapshot.runStats.rounds, 1); assert.equal(metricsSnapshot.maxDrawdown, 50); assert.equal(fs.readFileSync(path.join(d, 'state/equity_curve.jsonl'), 'utf8'), historyText); assert.equal(fs.readFileSync(path.join(d, 'state/run_events.jsonl'), 'utf8'), eventText); });
+  check('run days are rounded at the data boundary', () => assert.equal(Number.isInteger(metricsSnapshot.runStats.days * 10), true));
   // Execute the ENTIRE production act entry with mocked session I/O, real filesystem,
   // and real anchored core imports. Includes intent/gate/cleanup interactions.
   for (const mode of ['success', 'upsert-lost', 'protect-read-fails', 'cleanup-incomplete', 'budget-changed', 'stale-plan']) {
@@ -174,6 +190,11 @@ async function main() {
   const context = { document, window: { __SNAPSHOT_FALLBACK__: degraded }, fetch: async () => ({ ok: false, status: 429 }) };
   await vm.runInNewContext(script + '\nload();', context);
   check('production UI quota fallback is dated and never healthy', () => { const content = elements.get('content').innerHTML; assert.match(content, /部署时的历史快照/); assert(!content.includes('风控正常')); });
+  const uiContext = { document, window: {} };
+  vm.runInNewContext(script, uiContext);
+  const display = { ...degraded, quotaExceeded: false, equityChange: 12.5, strategyBaselineAt: '2026-09-30', runStats: { days: 3.0336669444444446, records: 256, rounds: 17, since: '2026-10-03T00:00:00Z' }, maxDrawdown: 6 };
+  uiContext.snapshot = display; vm.runInNewContext('render(snapshot)', uiContext);
+  check('production UI rounds days and labels history in plain language', () => { assert.match(elements.get('runStats').textContent, /3\.0 天/); assert.match(elements.get('runStats').textContent, /256 条/); const output = elements.get('content').innerHTML; assert.match(output, /历史总盈亏/); assert.match(output, /出入金也会影响此值/); assert(!output.includes('最近 400 点')); assert.match(output, /从高点回落的最大幅度/); assert.match(output, /完成 17 轮/); });
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

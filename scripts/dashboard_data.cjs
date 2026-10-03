@@ -3,10 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
 const { attribution } = require('./accounting.cjs');
+const { historyMetrics, confirmedRuns } = require('./dashboard_metrics.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
 const file = (p) => path.join(ROOT, p);
 const read = (p) => { try { return JSON.parse(fs.readFileSync(file(p), 'utf8')); } catch { return null; } };
-const jsonl = (p) => { try { return fs.readFileSync(file(p), 'utf8').split('\n').filter(Boolean).map(JSON.parse); } catch { return []; } };
+const jsonl = (p) => { try { return fs.readFileSync(file(p), 'utf8').split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean); } catch { return []; } };
 const cfg = read('config.json') || {};
 const obs = read('state/observed.json');
 const risk = read('state/risk.json');
@@ -33,16 +34,16 @@ if (results && Array.isArray(results.results) && Date.now() - Date.parse(results
   lastActionNote = results.results.map((r) => `${r.act} ${r.market || ''}: ${r.done === true ? '已确认' : r.error || '未完成'}`).join('；').slice(0, 600);
 }
 const events = jsonl('state/run_events.jsonl');
-const completed = new Map(events.filter((e) => e.type === 'end' && !e.dryrun).map((e) => [e.runId, e]));
+const confirmed = confirmedRuns(events);
 const exits = new Set();
 for (const e of events.filter((e) => e.type === 'actions' && !e.dryrun)) {
   for (const r of e.results || []) if (r.act === 'stop' && r.done === true && r.note !== 'already deleted') exits.add(`${e.runId}|${e.phase}|${r.market}`);
 }
-const points = jsonl('state/equity_curve.jsonl').filter((r) => Number.isFinite(Date.parse(r.at)) && num(r.equity) !== null && !r.dryrun)
-  .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-const curve = [...new Map(points.map((r) => [r.at, [r.at, num(r.equity), num(r.campaignVolume)]])).values()].slice(-400);
-let maxDD = null, peak = 0, change24h = null, change24hPct = null;
-for (const p of curve) { peak = Math.max(peak, p[1]); if (peak > 0) maxDD = Math.max(maxDD ?? 0, (peak - p[1]) / peak * 100); }
+const history = historyMetrics(jsonl('state/equity_curve.jsonl'), dataValid ? { at: obs.at, equity } : null);
+const points = history.points;
+const curve = history.curve;
+const maxDD = history.maxDrawdown;
+let change24h = null, change24hPct = null;
 const ref = points.filter((r) => Date.parse(r.at) <= Date.now() - 86400000).slice(-1)[0];
 if (ref && equity !== null && num(ref.equity) > 0) { change24h = equity - num(ref.equity); change24hPct = change24h / num(ref.equity) * 100; }
 const baseline = num(obs?.strategyEquity?.baseline ?? cfg.strategyBaselineUsd);
@@ -67,8 +68,8 @@ const snapshot = {
   riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
   strategyTotalPnl: accounting.strategyPnl, equityChange, accounting,
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,
-  fees, runStats: { days: baselineAt ? (Date.now() - Date.parse(baselineAt)) / 86400000 : null, rounds: completed.size, exits: exits.size, since: events[0]?.startedAt || null },
-  change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'last-400-observation-samples',
+  fees, runStats: { days: baselineAt && Number.isFinite(Date.parse(baselineAt)) ? +Math.max(0, (Date.now() - Date.parse(baselineAt)) / 86400000).toFixed(1) : null, records: history.count, recordsSince: history.since, rounds: confirmed.successful, failedRounds: confirmed.failed, exits: exits.size, since: confirmed.since },
+  change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,
   drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
   riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: num(campaign?.campaignVolume), tier1: 50000, tier1Secured: num(campaign?.campaignVolume) >= 50000 && num(campaign?.campaignVolume) !== null,
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
