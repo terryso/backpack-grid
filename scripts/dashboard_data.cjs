@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
 const { attribution } = require('./accounting.cjs');
-const { historyMetrics, confirmedRuns } = require('./dashboard_metrics.cjs');
+const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
 const {identityOk,manualPausesFor}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
@@ -91,6 +91,7 @@ if (f?.symbols && typeof f.symbols === 'object' && !Array.isArray(f.symbols)) {
 const snapshot = {
   updatedAt: obs?.at || null, generatedAt: new Date().toISOString(), snapshotAge: Number.isFinite(age) ? age : null,
   equity, available: num(obs?.margin?.availableEquity), dataValid, identityValid, manualPauses, manualPauseValid, riskStateValid, pendingCorrupt, lastRoundStatus,
+  stopBudget:dataValid?stopBudgetUsage(grids,equity,cfg):{valid:false,pct:null,reason:'账户快照待核对'},
   riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
   strategyTotalPnl: accounting.strategyPnl, equityChange, accounting, verifiedWindow,
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,

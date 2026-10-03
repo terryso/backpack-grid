@@ -202,11 +202,14 @@ async function main() {
   const context = { document, window: { __SNAPSHOT_FALLBACK__: degraded }, fetch: async () => ({ ok: false, status: 429 }) };
   await vm.runInNewContext(script + '\nload();', context);
   check('production UI quota fallback is dated and never healthy', () => { const content = elements.get('content').innerHTML; assert.match(content, /部署时的历史快照/); assert(!content.includes('风控正常')); });
-  const uiContext = { document, window: {} };
+  const uiContext = { document, window: {}, fetch: async () => ({ ok: false, status: 404 }) };
   vm.runInNewContext(script, uiContext);
   const display = { ...degraded, quotaExceeded: false, equityChange: 12.5, strategyBaselineAt: '2026-09-30', runStats: { days: 3.0336669444444446, records: 256, rounds: 17, since: '2026-10-03T00:00:00Z' }, maxDrawdown: 6 };
   uiContext.snapshot = display; vm.runInNewContext('render(snapshot)', uiContext);
   check('production UI rounds days and labels history in plain language', () => { assert.match(elements.get('runStats').textContent, /3\.0 天/); assert.match(elements.get('runStats').textContent, /256 条/); const output = elements.get('content').innerHTML; assert.match(output, /历史总盈亏/); assert.match(output, /出入金也会影响此值/); assert(!output.includes('最近 400 点')); assert.match(output, /从高点回落的最大幅度/); assert.match(output, /完成 17 轮/); });
+  uiContext.snapshot={...display,stopBudget:{valid:true,pct:125,usedUsd:100,budgetUsd:80,remainingUsd:-20,bufferUsd:15,riskBudgetPct:80,overBudget:true}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI names nominal budget and exposes excess without clipping',()=>{const output=elements.get('content').innerHTML;assert.match(output,/止损预算占用/);assert.match(output,/125\.0%/);assert.match(output,/超出 20\.00/);assert.match(output,/配置估算，非实际回撤/);});
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

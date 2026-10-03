@@ -179,6 +179,11 @@ function render(s) {
       <div class="card"><div class="k">在跑网格盈亏（${g.length} 格）</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
       <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div><div class="muted" style="font-size:10px">峰值采样 1 分钟 · 曲线 15 分钟</div></div>
       <div class="card"><div class="k">历史最大回撤</div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div><div class="muted" style="font-size:10px" title="按全部已保存的巡检权益计算；未覆盖两次巡检之间的瞬时下跌">记录以来，从高点回落的最大幅度</div></div>
+      <div class="card"><div class="k">止损预算占用</div>
+        <div class="v ${s.stopBudget?.overBudget?'neg':''}">${s.stopBudget?.valid?fmt(s.stopBudget.pct,1)+'%':'待核对'}</div>
+        <div class="muted" style="font-size:10px">${s.stopBudget?.valid
+          ? `已占 ${fmt(s.stopBudget.usedUsd)} / 预算 ${fmt(s.stopBudget.budgetUsd)} USD<br>${s.stopBudget.overBudget?'超出 '+fmt(-s.stopBudget.remainingUsd):'余量 '+fmt(s.stopBudget.remainingUsd)} USD；含 ${fmt(s.stopBudget.bufferUsd,0)} USD 退出缓冲<br>预算为权益的 ${fmt(s.stopBudget.riskBudgetPct,0)}% · 配置估算，非实际回撤`
+          : s.stopBudget?.reason||'等待完整账户与止损数据'}</div></div>
       ${s.verifiedWindow ? `<div class="card"><div class="k">核算窗口净收益</div>
         <div class="v ${pnlCls(s.verifiedWindow.netPnl)}">${s.verifiedWindow.netPnl==null?'待核对':(s.verifiedWindow.netPnl>=0?'+':'')+fmt(s.verifiedWindow.netPnl)}</div>
         <div class="muted" style="font-size:10px">自 ${s.verifiedWindow.baselineAt?new Date(s.verifiedWindow.baselineAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'起点待核实'}<br>基线 ${fmt(s.verifiedWindow.baselineEquity)} USD；${s.verifiedWindow.cashflowComplete?'已排除净转入资金':'现金流尚未完整核对'}<br>账户收益，包含浮动盈亏<br>${s.verifiedWindow.asOf?'数据截至 '+new Date(s.verifiedWindow.asOf).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'等待采集'}

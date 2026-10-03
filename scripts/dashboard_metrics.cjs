@@ -1,5 +1,5 @@
 "use strict";
-const { money } = require("./state_schema.cjs");
+const { money, finiteNumber, plainObject } = require("./state_schema.cjs");
 
 // Chart rendering may be bounded, but lifetime statistics must retain all samples.
 function historyMetrics(rows, current) {
@@ -29,4 +29,19 @@ function confirmedRuns(events) {
     failed: all.filter((e) => e.status !== "ok").length, since: all[0]?.startedAt || null };
 }
 
-module.exports = { historyMetrics, confirmedRuns };
+// Nominal forward stop budget, not an estimate of liquidation loss or drawdown.
+// Disabled-but-configured grids still consume budget, matching creation guards.
+function stopBudgetUsage(grids, equity, cfg) {
+  const unknown=reason=>({valid:false,pct:null,reason});
+  if(!finiteNumber(equity)||Number(equity)<=0)return unknown('权益不足或未知');
+  if(!cfg||![cfg.riskBudgetPct,cfg.stopLossPct,cfg.exitCostBufferUsd].every(v=>typeof v==='number'&&Number.isFinite(v))
+    ||cfg.riskBudgetPct<=0||cfg.riskBudgetPct>100||cfg.stopLossPct<=0||cfg.stopLossPct>100||cfg.exitCostBufferUsd<0)return unknown('预算参数待核对');
+  if(!Array.isArray(grids)||grids.some(g=>!plainObject(g)||!finiteNumber(g.allocationRaw)||Number(g.allocationRaw)<=0
+    ||!finiteNumber(g.nativeSL)||Number(g.nativeSL)<=0||Number(g.nativeSL)>100||g.nativeCloseOnStop!==true))return unknown('网格止损保护待核实');
+  const gridRiskUsd=grids.reduce((sum,g)=>sum+Number(g.allocationRaw)*Math.max(Number(g.nativeSL),cfg.stopLossPct)/100,0);
+  const usedUsd=gridRiskUsd+cfg.exitCostBufferUsd,budgetUsd=Number(equity)*cfg.riskBudgetPct/100,pct=usedUsd/budgetUsd*100;
+  if(![gridRiskUsd,usedUsd,budgetUsd,pct].every(Number.isFinite)||budgetUsd<=0)return unknown('止损额度无法估算');
+  return {valid:true,pct,gridRiskUsd,bufferUsd:cfg.exitCostBufferUsd,usedUsd,budgetUsd,
+    remainingUsd:budgetUsd-usedUsd,overBudget:usedUsd>budgetUsd,riskBudgetPct:cfg.riskBudgetPct};
+}
+module.exports = { historyMetrics, confirmedRuns, stopBudgetUsage };
