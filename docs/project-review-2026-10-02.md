@@ -31,6 +31,10 @@
 
 跟进证据：[回归](review-2026-10-03-followup/tests.log)、[动态接口](review-2026-10-03-followup/online-api.json)、[双域名](review-2026-10-03-followup/two-domains.json)、[dry-run](review-2026-10-03-followup/dryrun.log)、[部署](review-2026-10-03-followup/deploy.log)、[桌面](review-2026-10-03-followup/dashboard-desktop.png)、[手机](review-2026-10-03-followup/dashboard-mobile.png)。
 
+### PC 网格卡片状态换行修复
+
+标题改为“币种＋运行状态”同一行，方向／格数／投入独立下一行；状态固定右侧且不拆行。桌面 1440px、手机 390px 均在生产页面测得四格标题／状态同排、无横向溢出。151＋66 项既有回归全部通过。代码 `c9ef3a7`，线上版本 `2393d26e-cc2b-481e-9012-81746d947aac`。[桌面验证](review-2026-10-03-followup/grid-header-desktop.png)／[手机验证](review-2026-10-03-followup/grid-header-mobile.png)。
+
 ## 验收证据与边界
 
 - `npm test`：**151 项既有回归＋66 项生产行为验收**。网络禁止器通过绝对路径传给所有 Node 子进程；没有真实交易接口调用。旧 RWP4 顺序测试已正确更名，新增 12 进程场景确实并行。
