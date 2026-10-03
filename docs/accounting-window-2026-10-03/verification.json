@@ -23,5 +23,32 @@
     "time": "08:10",
     "timezone": "Asia/Shanghai",
     "work": "readonly data quality and offline comparative backtest; no live parameter changes"
+  },
+  "deployment": {
+    "workerVersion": "36655115-05c3-4ca9-b90b-eedc5dc6ff31",
+    "accountingJob": "com.backpack-grid-accounting",
+    "intervalSeconds": 1800,
+    "lastExitCode": 0,
+    "desktopAndMobile": "PASS; 390px no horizontal overflow; details expanded by keyboard"
+  },
+  "latestObservedWindow": {
+    "at": "2026-10-03T12:30:16.778Z",
+    "baselineAt": "2026-10-03T08:25:35.389Z",
+    "baselineEquity": 658.14,
+    "asOf": "2026-10-03T12:30:16.778Z",
+    "equity": 662.84,
+    "equityChange": 4.7000000000000455,
+    "cashflowComplete": true,
+    "decompositionComplete": true,
+    "netCashflow": 0,
+    "netPnl": 4.7000000000000455,
+    "funding": -0.05542799999999999,
+    "interest": 0.0030199026,
+    "reward": 0,
+    "otherTradingAndValuationPnl": 4.752408097400045,
+    "pendingCashflowRows": 0,
+    "issues": [],
+    "scope": "account net return; not isolated grid alpha",
+    "baselinePrecisionUsd": 0.01
   }
 }

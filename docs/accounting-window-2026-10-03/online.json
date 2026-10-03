@@ -1,0 +1,22 @@
+{
+  "at": "2026-10-03T12:44:17.194Z",
+  "workerVersion": "36655115-05c3-4ca9-b90b-eedc5dc6ff31",
+  "checks": [
+    {
+      "domain": "https://grid.terryso.dev",
+      "status": 200,
+      "reportMatches": true,
+      "newWindowConfirmed": true,
+      "originalBaseline": 534.7,
+      "privateIdentifiersAbsent": true
+    },
+    {
+      "domain": "https://backpack-grid-dashboard.oxtiger.workers.dev",
+      "status": 200,
+      "reportMatches": true,
+      "newWindowConfirmed": true,
+      "originalBaseline": 534.7,
+      "privateIdentifiersAbsent": true
+    }
+  ]
+}
