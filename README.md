@@ -14,6 +14,8 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
 
 > ⚠️ This is a personal live-trading experiment, not financial advice. Perps trading is extremely risky.
 
+🎁 Running this on Backpack yourself? [Sign up with my referral link](https://backpack.exchange/join/suchuanyi) — it costs nothing extra and supports the experiment.
+
 ## What it does
 
 Backpack provides native grid bots with exchange-side protection. This project adds selection, rotation, account risk rules, and recovery around those bots:
@@ -81,3 +83,7 @@ Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloud
 Use Node 22 and `npm ci && npm test`. The offline suites forbid network I/O and execute production decisions, complete mocked act/runner lifecycles, history pagination, and state contracts. Kernel locks are tested with real disposable processes. Historical fills and research refresh independently of risk exits.
 
 Equity change is not labeled strategy PnL without reconciled cashflow coverage and an exact baseline timestamp. Run statistics come from confirmed execution events. Static UI requests bypass Workers; a dated, visibly degraded deployment snapshot is shown if dynamic APIs are unavailable. Upload success requires snapshot readback. See [acceptance and outstanding external gates](docs/project-review-2026-10-02.md).
+
+## Support
+
+If this project was useful and you'd like to try Backpack, signing up via my referral link — <https://backpack.exchange/join/suchuanyi> — supports future experiments at no extra cost to you.

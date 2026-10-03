@@ -76,8 +76,10 @@
       <svg viewBox="0 0 16 16" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8"/></svg>
       GitHub 仓库
     </a>
+    <a href="https://backpack.exchange/join/suchuanyi" target="_blank" rel="noopener" title="推荐链接（Referral）">🎁 注册 Backpack</a>
   </div>
   <div id="content" class="err">加载中…</div>
+  <div class="sub" style="margin-top:24px">数据仅供参考，不构成投资建议 · 页内 <a href="https://backpack.exchange/join/suchuanyi" target="_blank" rel="noopener" class="muted">注册 Backpack</a> 为推荐链接</div>
 </div>
 <script>
 const fmt = (n, d = 2) => n == null || !Number.isFinite(Number(n)) ? "未知" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -119,6 +121,10 @@ function render(s) {
   const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
   const pct = Math.min(100, camp / tier * 100);
   const chips = [];
+  if(s.identityValid===false)chips.push(`<span class="chip bad">账户身份未确认</span>`);
+  if(s.manualPauseValid===false)chips.push(`<span class="chip bad">手动暂停记录异常</span>`);
+  if(s.manualPauses?.length)chips.push(`<span class="chip">暂停自动轮换：${s.manualPauses.join('、')}</span>`);
+  if(s.marketDataAvailable===false)chips.push(`<span class="chip bad">行情降级，暂停新增网格</span>`);
   if (s.runStats?.since) chips.push(`<span class="chip">新运行日志：自 ${new Date(s.runStats.since).toLocaleDateString("zh-CN")} 完成 ${fmt(s.runStats.rounds, 0)} 轮${s.runStats.failedRounds ? " · 失败 " + fmt(s.runStats.failedRounds, 0) + " 轮" : ""}</span>`);
   if (s.quotaExceeded) chips.push(`<span class="chip bad">动态接口不可用：显示部署时的历史快照</span>`);
   if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
@@ -128,7 +134,7 @@ function render(s) {
   if (s.riskWriteValid !== true) chips.push(`<span class="chip bad">风控写入未确认</span>`);
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
-    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded].filter(Boolean).length;
+    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false].filter(Boolean).length;
   chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>`
     : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>`
     : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`)));

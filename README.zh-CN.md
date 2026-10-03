@@ -19,6 +19,8 @@
 
 > ⚠️ 本项目为个人实盘实验记录，不构成投资建议。加密合约交易风险极高，据此操作后果自负。
 
+🎁 想在 Backpack 上试试同类玩法？欢迎用我的推荐链接注册：<https://backpack.exchange/join/suchuanyi>（推荐链接，对你没有额外成本，能支持这个实验继续跑下去）。
+
 ## 常用命令
 
 ```bash
@@ -161,3 +163,7 @@ DASH_WRITE_TOKEN 等）只存 `state/dashboard.env`，`state/` 整体被 gitigno
 - 首页由 Workers Static Assets 提供；API 免费额度耗尽时显示注明时间的部署快照，动态接口需额度重置后恢复。上传成功后会读回确认，运输结果记录 dashboard_upload.json。
 - 可复现的任务配置：`/Users/nick/.browser-use-env/bin/python3 scripts/install_launch_agents.py --install`，仅写 plist，不会启动服务；RunAtLoad=false。
 - 详细完成／待验收状态：[修复与验收文档](docs/project-review-2026-10-02.md)。
+
+## 支持
+
+如果这个项目对你有帮助，欢迎通过推荐链接注册 Backpack：<https://backpack.exchange/join/suchuanyi>（推荐链接，对你无额外成本）。
