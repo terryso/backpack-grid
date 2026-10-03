@@ -7,11 +7,14 @@ const path = require("node:path");
 const { getMarkets, getTickers, getKlines, getFunding, perpMarkets } = require("./api.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const { finiteNumber } = require("./state_schema.cjs");
+const { analysisConfigHash, expectedIdentity, validateConfig } = require("./contracts.cjs");
 const { tickDecimals } = require("./grid_sizing.cjs");
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 
+validateConfig(cfg);
+const identity = expectedIdentity(ROOT, cfg);
 const TOP_N = Number(process.argv[2] || 15);
-const MIN_QVOL = Number(cfg.minQvol24h) || 800_000; // 24h quote volume floor (liquidity)
+const MIN_QVOL = Number(cfg.minQvol24h); // 24h quote volume floor (liquidity)
 const EXCLUDE = (process.env.EXCLUDE || "").split(",");
 
 function analyze(symbol, kl) {
@@ -93,7 +96,7 @@ function analyze(symbol, kl) {
       sDrift24: a.sDrift24, sDrift72: a.sDrift72,
       range24: +(a.range24 * 100).toFixed(1), range7d: +(a.range7d * 100).toFixed(1),
       drift24: +(a.drift24 * 100).toFixed(2), fundingRate,
-      qvol24: Math.round(qvol), tickSize, minQuantity, minOrderUsd,
+      qvol24: Math.round(qvol), tickSize, minQuantity, minOrderUsd, imfFunction:m.imfFunction, quantityStep:m.filters?.quantity?.stepSize,
       grid: { lower, upper, count, widthPct: +(widthPct * 100).toFixed(1), spacingPct: +((widthPct / count) * 100).toFixed(3) },
     });
   }
@@ -110,8 +113,8 @@ function analyze(symbol, kl) {
     .sort((a, b) => Math.abs(b.sDrift24) - Math.abs(a.sDrift24))
     .slice(0, 5)
     .map((r) => ({ symbol: r.symbol, dir: r.sDrift24 > 0 ? "long" : "short", drift24: +(r.sDrift24 * 100).toFixed(2), price: r.price }));
-  const out = { generatedAt: new Date().toISOString(), top, directional };
-  const target = path.join(ROOT, "state", "analysis.json");
+  const out = { schemaVersion: 2, configHash: analysisConfigHash(cfg), accountKey: identity.accountKey, excluded: EXCLUDE, generatedAt: new Date().toISOString(), top, directional };
+  const target = path.join(ROOT, "state", process.env.EXCLUDE ? "analysis_replacements.json" : "analysis.json");
   const tmp = target + `.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(out, null, 2));
   fs.renameSync(tmp, target);

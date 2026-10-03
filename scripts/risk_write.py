@@ -66,6 +66,15 @@ def main():
         else:
             latest = {"peakEquity": 0, "paused": None}
         before = json.dumps(latest, sort_keys=True)
+        identity_path = os.path.join(ROOT, "state", "account_identity.json")
+        if os.path.exists(identity_path):
+            with open(identity_path, encoding="utf8") as f:
+                identity = json.load(f)
+            if not isinstance(arg.get("accountKey"), str) or arg["accountKey"] != identity.get("accountKey") or latest.get("accountKey", arg["accountKey"]) != arg["accountKey"]:
+                raise ValueError("ACCOUNT_IDENTITY_MISMATCH")
+            latest["accountKey"] = arg["accountKey"]
+        elif "accountKey" in arg:
+            raise ValueError("ACCOUNT_IDENTITY_PIN_MISSING")
         latest["peakEquity"] = max(number(latest["peakEquity"]), number(arg.get("peakEquity", 0)))
         latest.setdefault("paused", None)
         if "paused" in arg and latest["paused"] is None:

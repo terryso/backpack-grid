@@ -6,9 +6,11 @@ const finiteNumber = (v) => (typeof v === "number" || (typeof v === "string" && 
 const riskStructOk = (v) => plainObject(v) && finiteNumber(v.peakEquity) && Number(v.peakEquity) >= 0
   && (v.paused == null || plainObject(v.paused));
 const pendingStructOk = (v) => plainObject(v) && Object.values(v).every(plainObject);
+const positionListOk = v => Array.isArray(v) && v.every(p=>plainObject(p)&&typeof p.symbol==='string'&&p.symbol.trim()!=='')
+  && new Set(v.map(p=>p.symbol)).size===v.length;
 const money = (v) => {
   if (typeof v !== "number" && typeof v !== "string") return null;
   const cleaned = typeof v === "string" ? v.replace(/[$,%\s,]/g, "") : v;
   return finiteNumber(cleaned) ? Number(cleaned) : null;
 };
-module.exports = { plainObject, finiteNumber, riskStructOk, pendingStructOk, money };
+module.exports = { plainObject, finiteNumber, riskStructOk, pendingStructOk, positionListOk, money };

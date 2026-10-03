@@ -5,6 +5,7 @@ function validateLedger(v) {
   if (!plainObject(v) || !Array.isArray(v.events) || !plainObject(v.coverage)) throw new Error('invalid attribution ledger');
   const ids = new Set();
   for (const e of v.events) {
+    if(e.accountKey!=null && e.accountKey!==v.accountKey) throw Error('event account mismatch');
     if (!plainObject(e) || typeof e.id !== 'string' || !e.id || ids.has(e.id)
       || !TYPES.includes(e.type) || !finiteNumber(e.amountUsd) || !Number.isFinite(Date.parse(e.at))
       || typeof e.source !== 'string' || !e.source) throw new Error('invalid or duplicate ledger event');

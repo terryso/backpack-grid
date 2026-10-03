@@ -3,7 +3,7 @@
 // suite). act.mjs wires the live io (page.fetch based) into makeStopGrid().
 "use strict";
 
-const { pendingStructOk } = require("./state_schema.cjs");
+const { pendingStructOk, finiteNumber, plainObject, positionListOk } = require("./state_schema.cjs");
 
 // io: {
 //   jget(pathname), jpatch(pathname, body),      — session-authenticated exchange access
@@ -13,6 +13,7 @@ const { pendingStructOk } = require("./state_schema.cjs");
 // }
 function makeStopGrid(io) {
   return async function stopGrid(market, range, reason, results) {
+    if(io.assertAccount) await io.assertAccount();
     const symbol = String(market).replace("-PERP", "_USDC_PERP");
     const loaded = await io.loadPending();
     const pending = loaded.pending;
@@ -26,10 +27,15 @@ function makeStopGrid(io) {
     if (!Array.isArray(auto1.params?.symbols)) throw new Error("automation response malformed; intent retained");
     const entry = auto1.params.symbols.find((s) => s.symbol === symbol);
     if (!entry) {
+      if(pending[market]?.kind==="create" && pending[market]?.phase==="issued") {
+        results.push({act:"stop",market,done:false,unconfirmed:true,manualRequired:true});
+        console.log(`STOP ${market}: creation response unknown and config absent; intent remains latched until an applied grid or authoritative rejection is confirmed`);
+        return {done:false};
+      }
       // grid gone from config — cleanup may still be needed if residue exists.
       // A malformed position response is UNKNOWN, not flat: keep the intent, retry later.
       const pos = await io.jget(`/api/v1/position`);
-      if (!Array.isArray(pos)) {
+      if (!positionListOk(pos)) {
         pending[market] = { at: new Date().toISOString(), reason: reason + " (position response malformed)" };
         await io.savePending(pending);
         results.push({ act: "stop", market, done: false, unconfirmed: true });
@@ -40,8 +46,7 @@ function makeStopGrid(io) {
       if (p) {
         const raw = p.netQuantity;
         // 平仓判定只接受明确的数值 0：先限类型（拒绝 null/布尔/对象/数组），再限数值
-        const nqKnown = (typeof raw === "number" && Number.isFinite(raw))
-          || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+        const nqKnown = finiteNumber(raw);
         const nq = nqKnown ? Number(raw) : NaN;
         if (!nqKnown) {
           pending[market] = { at: new Date().toISOString(), reason: reason + " (netQuantity unreadable)" };
@@ -69,12 +74,11 @@ function makeStopGrid(io) {
     try {
       posGone = await io.waitFor(async () => {
         const pos = await io.jget(`/api/v1/position`);
-        if (!Array.isArray(pos)) return false; // malformed = unknown, never "flat"
+        if (!positionListOk(pos)) return false; // malformed = unknown, never "flat"
         const p = pos.find((x) => x.symbol === symbol);
         if (!p) return true; // 条目消失 = 无持仓
         const raw = p.netQuantity;
-        const typeOk = (typeof raw === "number" && Number.isFinite(raw))
-          || (typeof raw === "string" && raw.trim() !== "" && Number.isFinite(Number(raw)));
+        const typeOk = finiteNumber(raw);
         if (!typeOk) return false; // 未知 ≠ 已平仓
         const nq = Number(raw);
         return nq === 0;
@@ -117,8 +121,7 @@ function makeStopGrid(io) {
     }
     const finalPositions = await io.jget(`/api/v1/position`);
     const finalPos = Array.isArray(finalPositions) ? finalPositions.find((p) => p.symbol === symbol) : null;
-    const { finiteNumber } = require("./state_schema.cjs");
-    if (!Array.isArray(finalPositions) || (finalPos && (!finiteNumber(finalPos.netQuantity) || Number(finalPos.netQuantity) !== 0))) {
+    if (!positionListOk(finalPositions) || (finalPos && (!finiteNumber(finalPos.netQuantity) || Number(finalPos.netQuantity) !== 0))) {
       results.push({ act: "stop", market, done: false, unconfirmed: true });
       return { done: false }; // config disappeared, but final flatness must still be known
     }
@@ -134,6 +137,7 @@ function makeStopGrid(io) {
 // unresolvedCleanup}; pendingKeys: live ledger market names; corruptFlag: persistent
 // corrupt-ledger flag file presence (decide/act block new risk while it exists).
 function evaluateCreateGate(flags, pendingKeys, corruptFlag) {
+  if (flags.riskChanged) return { blocked:true,why:"live risk changed; reobserve and replan" };
   if (flags.stopIncomplete) return { blocked: true, why: "unresolved stop" };
   if (flags.unresolvedCleanup) return { blocked: true, why: "unresolved emergency cleanup" };
   if (flags.protectIncomplete) return { blocked: true, why: "unresolved protect repair (budget premise unverified)" };

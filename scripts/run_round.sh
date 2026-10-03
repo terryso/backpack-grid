@@ -8,12 +8,19 @@ if [ "${BG_LOCKED:-}" != "1" ]; then
   exec /Users/nick/.browser-use-env/bin/python3 scripts/with_lock.py --wait 45 bash scripts/run_round.sh "$@"
 fi
 mkdir -p state
-node scripts/run_events.cjs start || exit 1
+node scripts/run_events.cjs start || { echo start_failed > state/last_round_status; exit 1; }
 write_status() { echo "$1" > state/last_round_status; node scripts/run_events.cjs end "$1"; }
 upload_dashboard() { [ -f scripts/upload_dashboard.sh ] && bash scripts/upload_dashboard.sh || true; }
-finish() { write_status "$1"; upload_dashboard; exit "$2"; }
+finish() { write_status "$1"; ROUND_FINISHED=1; upload_dashboard; exit "$2"; }
+ROUND_FINISHED=0
+round_exit() { if [ "$ROUND_FINISHED" != "1" ]; then write_status aborted || true; fi; }
+trap round_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+heartbeat() { node scripts/run_events.cjs heartbeat || true; }
 echo "=== ROUND $(date '+%F %T') dryrun=${DRYRUN:-0} ==="
 rm -f state/needs_create_plan
+heartbeat
 if ! ego-browser nodejs < scripts/observe.mjs; then
   echo OBSERVE_FAILED | tee -a state/log.md
   finish observe_failed 1
@@ -30,6 +37,7 @@ if ! grep -q '"act"' state/actions.json 2>/dev/null; then
   echo 'no actions to execute.'
   finish ok 0
 fi
+heartbeat
 if ! ego-browser nodejs < scripts/act.mjs; then
   node scripts/run_events.cjs actions phase1 || true
   finish act_failed 2

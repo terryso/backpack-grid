@@ -4,30 +4,36 @@ const path = require('node:path');
 const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns } = require('./dashboard_metrics.cjs');
+const {identityOk,manualPausesFor}=require('./contracts.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
 const file = (p) => path.join(ROOT, p);
 const read = (p) => { try { return JSON.parse(fs.readFileSync(file(p), 'utf8')); } catch { return null; } };
 const jsonl = (p) => { try { return fs.readFileSync(file(p), 'utf8').split('\n').filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return null; } }).filter(Boolean); } catch { return []; } };
 const cfg = read('config.json') || {};
 const obs = read('state/observed.json');
+const identity=read('state/account_identity.json');
+const identityValid=identityOk(identity)&&identityOk(obs?.identity)&&obs.identity.accountKey===identity.accountKey;
 const risk = read('state/risk.json');
 const pending = read('state/pending_stops.json');
 const campaign = read('state/campaign.json');
-const results = read('state/act_results.json');
+const activeResults=read('state/act_results.json');
+const results=Array.isArray(activeResults?.results)&&activeResults.results.length?activeResults:read('state/last_action.json');
 const writeState = read('state/risk_write_status.json');
 const grids = Array.isArray(obs?.gridRows) ? obs.gridRows : [];
 const positions = Array.isArray(obs?.positions) ? obs.positions : [];
 const equity = num(obs?.margin?.totalEquity);
 const age = obs?.at ? (Date.now() - Date.parse(obs.at)) / 1000 : null;
-const dataValid = !!obs && !obs.error && age !== null && Number.isFinite(age) && age >= -60 && age <= 20 * 60
+const dataValid = identityValid && !!obs && !obs.error && age !== null && Number.isFinite(age) && age >= -60 && age <= 20 * 60
   && equity !== null && Array.isArray(obs.gridRows) && Array.isArray(obs.positions);
-const riskStateValid = riskStructOk(risk);
-const pendingValid = pendingStructOk(pending) || (!fs.existsSync(file('state/pending_stops.json')));
+const riskStateValid = riskStructOk(risk)&&(!risk.accountKey||risk.accountKey===identity?.accountKey);
+const pendingValid = (pendingStructOk(pending)&&Object.values(pending).every(p=>p.accountKey===identity?.accountKey)) || (!fs.existsSync(file('state/pending_stops.json')));
 const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
+let manualPauses=[],manualPauseValid=true;
+try{manualPauses=Object.keys(manualPausesFor(ROOT,identity));}catch{manualPauseValid=false;}
 let lastRoundStatus = null;
 try { lastRoundStatus = fs.readFileSync(file('state/last_round_status'), 'utf8').trim() || null; } catch {}
 let lastAction = null, lastActionNote = null;
-if (results && Array.isArray(results.results) && Date.now() - Date.parse(results.at) < 86400000) {
+if (results && Array.isArray(results.results) && results.results.length && Date.now() - Date.parse(results.at) < 86400000) {
   const failures = results.results.filter((r) => r.done !== true);
   const done = results.results.filter((r) => r.done === true);
   lastAction = failures.length ? `${failures.length} 个动作失败／跳过` : `${done.length} 个动作完成`;
@@ -39,7 +45,7 @@ const exits = new Set();
 for (const e of events.filter((e) => e.type === 'actions' && !e.dryrun)) {
   for (const r of e.results || []) if (r.act === 'stop' && r.done === true && r.note !== 'already deleted') exits.add(`${e.runId}|${e.phase}|${r.market}`);
 }
-const history = historyMetrics(jsonl('state/equity_curve.jsonl'), dataValid ? { at: obs.at, equity } : null);
+const history = historyMetrics(jsonl('state/equity_curve.jsonl').filter(r=>!r.accountKey||r.accountKey===identity?.accountKey), dataValid ? { at: obs.at, equity } : null);
 const points = history.points;
 const curve = history.curve;
 const maxDD = history.maxDrawdown;
@@ -52,19 +58,20 @@ const equityChange = equity !== null && baseline !== null ? equity - baseline : 
 let accounting = { complete: false, strategyPnl: null };
 try {
   const ledger = read('state/attribution_ledger.json');
-  if (ledger && ledger.subaccountId !== (cfg.subaccountId || 3)) throw new Error('ledger account mismatch');
+  if (ledger && (ledger.subaccountId !== (cfg.subaccountId ?? 3) || ledger.accountKey !== read('state/account_identity.json')?.accountKey)) throw new Error('ledger account mismatch');
   accounting = attribution(ledger, baselineAt, obs?.at, equityChange);
 } catch (e) { accounting.error = String(e.message); }
 const f = read('state/fees.json');
+const historyStatus=read('state/history_status.json');
 let fees = null;
 if (f?.symbols && typeof f.symbols === 'object' && !Array.isArray(f.symbols)) {
   let feeUsd = 0, maker = 0, total = 0, fills = 0;
   for (const r of Object.values(f.symbols)) { feeUsd += num(r.feeUsd) || 0; maker += num(r.makerVol) || 0; total += (num(r.makerVol) || 0) + (num(r.takerVol) || 0); fills += (num(r.makerN) || 0) + (num(r.takerN) || 0); }
-  fees = { feeUsd, makerPct: total > 0 ? maker / total * 100 : null, fills, acquiredAt: f.acquiredAt, incomplete: f.incomplete !== false || !Number.isFinite(Date.parse(f.acquiredAt)) || Date.now() - Date.parse(f.acquiredAt) > 30 * 60000, source: f.source || 'legacy-aggregates', otherFeeCurrencies: [...new Set(Object.values(f.symbols).flatMap((r) => Object.keys(r.otherFees || {})))] };
+  fees = { feeUsd, makerPct: total > 0 ? maker / total * 100 : null, fills, acquiredAt: f.acquiredAt, incomplete: (f.accountKey&&f.accountKey!==identity?.accountKey) || historyStatus?.ok===false || f.incomplete !== false || !Number.isFinite(Date.parse(f.acquiredAt)) || Date.now() - Date.parse(f.acquiredAt) > 30 * 60000, source: f.source || 'legacy-aggregates', otherFeeCurrencies: [...new Set(Object.values(f.symbols).flatMap((r) => Object.keys(r.otherFees || {})))] };
 }
 const snapshot = {
   updatedAt: obs?.at || null, generatedAt: new Date().toISOString(), snapshotAge: Number.isFinite(age) ? age : null,
-  equity, available: num(obs?.margin?.availableEquity), dataValid, riskStateValid, pendingCorrupt, lastRoundStatus,
+  equity, available: num(obs?.margin?.availableEquity), dataValid, identityValid, manualPauses, manualPauseValid, riskStateValid, pendingCorrupt, lastRoundStatus,
   riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
   strategyTotalPnl: accounting.strategyPnl, equityChange, accounting,
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,
@@ -73,6 +80,7 @@ const snapshot = {
   drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
   riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: num(campaign?.campaignVolume), tier1: 50000, tier1Secured: num(campaign?.campaignVolume) >= 50000 && num(campaign?.campaignVolume) !== null,
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
+  marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
   pending: pendingValid ? Object.keys(pending || {}) : null,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),

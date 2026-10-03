@@ -172,6 +172,12 @@ function makeFixture(mods) {
   for (const [rel, content] of Object.entries(mods || {})) {
     fs.writeFileSync(path.join(dir, rel), typeof content === "string" ? content : JSON.stringify(content, null, 2));
   }
+  const identity={userId:"fixture",subaccountId:cfg.subaccountId??3,accountKey:"fixture-"+(cfg.subaccountId??3)};
+  fs.writeFileSync(path.join(dir,"state/account_identity.json"),JSON.stringify(identity));
+  const pendingFile=path.join(dir,'state/pending_stops.json');
+  if(fs.existsSync(pendingFile)){const p=JSON.parse(fs.readFileSync(pendingFile));if(p&&typeof p==='object'&&!Array.isArray(p)){for(const e of Object.values(p))if(e&&typeof e==='object'&&!Array.isArray(e)&&!e.accountKey)e.accountKey=identity.accountKey;fs.writeFileSync(pendingFile,JSON.stringify(p));}}
+  const obsFile=path.join(dir,"state/observed.json");const fixtureObs=JSON.parse(fs.readFileSync(obsFile));fixtureObs.identity=identity;fs.writeFileSync(obsFile,JSON.stringify(fixtureObs));
+  const anaFile=path.join(dir,"state/analysis.json");if(fs.existsSync(anaFile)){const a=JSON.parse(fs.readFileSync(anaFile));a.schemaVersion=2;a.accountKey=identity.accountKey;a.configHash=require("../scripts/contracts.cjs").analysisConfigHash(JSON.parse(fs.readFileSync(path.join(dir,"config.json"))));fs.writeFileSync(anaFile,JSON.stringify(a));}
   return dir;
 }
 // NOTE: BG_ROOT redirects FILE paths only. decide still calls getTickers() unless
@@ -181,6 +187,7 @@ function makeFixture(mods) {
 function runDecide(dir, offline, tickersFile) {
   const env = { ...process.env, BG_ROOT: dir, BG_OFFLINE: offline ? "1" : "0" };
   if (tickersFile) env.BG_TICKERS_FILE = tickersFile;
+  if(tickersFile){const ts=JSON.parse(fs.readFileSync(tickersFile));for(const t of ts)if(t.quoteVolume===undefined)t.quoteVolume="100000000";fs.writeFileSync(tickersFile,JSON.stringify(ts));}
   return spawnSync(process.execPath, [path.join(ROOT, "scripts", "decide.cjs")], {
     env, encoding: "utf8", timeout: 180000,
   });
@@ -246,7 +253,7 @@ function runDecide(dir, offline, tickersFile) {
 
 // ---------- RWP: risk_write.py 单一写入通道（F01 事务 + 合并语义） ----------
 function runRiskWrite(dir, payload) {
-  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify(payload)],
+  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey,...payload})],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -272,7 +279,7 @@ function runRiskWrite(dir, payload) {
   runRiskWrite(dir, { peakEquity: 600, paused: { at: "T0", reason: "trip" } });
   const kids = [];
   for (let i = 1; i <= 12; i++) {
-    kids.push(spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: 550 + i * 5 })],
+    kids.push(spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey, peakEquity: 550 + i * 5 })],
       { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 }));
   }
   const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
@@ -393,7 +400,7 @@ T("T20f decide validates structure", decideSrc.includes("invalid pending ledger 
     && markerWritten);
   // step 2 (phase 2): re-observed state (grid gone) -> replacement create planned
   fs.writeFileSync(path.join(dir, "state", "observed.json"), JSON.stringify({ at: new Date().toISOString(),
-    source: "api", url: "fixture", gridRows: [], positions: [],
+    identity: JSON.parse(fs.readFileSync(path.join(dir,"state/account_identity.json"))), source: "api", url: "fixture", gridRows: [], positions: [],
     margin: { totalEquity: "$500.00", availableEquity: "$400.00", openPnl: "$0.00", initMarginPct: "0%" },
     badges: {}, ledger: [] }));
   const r1b = runDecide(dir, false, tickersPath);
@@ -537,7 +544,7 @@ function act_core_ok() { try { require(path.join(ROOT, "scripts", "act_core.cjs"
 
 // ---------- T25 (round-8): config wiring + margin reservation + staleness + orphans ----------
 T("T25a minQvol24h wired into analyzer", analyzeSrc.includes("Number(cfg.minQvol24h)"));
-T("T25b cumulative margin reservation", decideSrc.includes("numAvail - plannedMargin - estMargin < 20"));
+T("T25b cumulative margin reservation", decideSrc.includes("numAvail-plannedMargin-marginEstimate"));
 T("T25c stale observation gate", decideSrc.includes("STALE OBSERVATION"));
 T("T25d orphan positions veto create", decideSrc.includes("ORPHAN POSITIONS") && decideSrc.includes("orphanPositions.length === 0"));
 T("T25e BG_OFFLINE implemented in decide", decideSrc.includes('process.env.BG_OFFLINE === "1"'));
@@ -671,7 +678,7 @@ T("T27c create requires zero stops in the round", decideSrc.includes("planCreate
   }
   T("T29 complete window advances cursor exactly to window end (resumable)", cursor === start + 86400000);
 }
-T("T29b fees loop: slices + verified-only cursor advance", historySrc.includes("6 * 3600 * 1000") && historySrc.includes("rec.lastTo = lo") && !observeSrc.includes("history/fills"));
+T("T29b fees loop: slices + verified-only cursor advance", historySrc.includes("6 * 3600 * 1000") && historySrc.includes("rec.lastTo = Math.max(previousTo, lo)") && !observeSrc.includes("history/fills"));
 
 // ---------- T30 (round-9 F08): deploy script aligned with live protocol ----------
 T("T30a deploy uses DASH_WRITE_TOKEN", deploySrc.includes("DASH_WRITE_TOKEN") && !deploySrc.includes("DASH_TOKEN=") );
@@ -714,7 +721,7 @@ T("T32c held lock → skip with exit 3", fs.readFileSync(path.join(ROOT, "script
 
 // ---------- T35 (round-12): runner wiring ----------
 T("T35a write_status defined in runner", runRoundSrc.includes("write_status() {"));
-T("T35b upload wired into round body (direct calls at exits)", runRoundSrc.includes("upload_dashboard") && runRoundSrc.includes("finish ok 0") && runRoundSrc.includes('finish() { write_status "$1"; upload_dashboard; exit "$2"; }'));
+T("T35b upload wired into round body (direct calls at exits)", runRoundSrc.includes("upload_dashboard") && runRoundSrc.includes("finish ok 0") && runRoundSrc.includes('finish() { write_status "$1"; ROUND_FINISHED=1; upload_dashboard; exit "$2"; }'));
 T("T35c status file written on ok exit", runRoundSrc.includes("finish ok 0"));
 
 console.log(`\n${pass} passed, ${fail} failed`);

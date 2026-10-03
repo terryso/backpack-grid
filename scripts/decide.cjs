@@ -10,11 +10,15 @@ const { spawnSync } = require("node:child_process");
 const { getTickers } = require("./api.cjs");
 
 const { riskStructOk, pendingStructOk, finiteNumber, money } = require("./state_schema.cjs");
+const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
+validateConfig(cfg);
+const identity = expectedIdentity(ROOT, cfg);
 const obs = read("state/observed.json");
+assertIdentity(identity, obs.identity);
 if (obs.error) { console.log("OBSERVE_ERROR: " + obs.error); process.exit(1); }
 {
   const obsAgeMin = (Date.now() - new Date(obs.at).getTime()) / 60000;
@@ -43,6 +47,10 @@ const writeAtomic = (p, data) => {
   // canonical perp base name, used everywhere ecosystems/counts are compared
   const perpBase = (m) => String(m).replace("-PERP", "").replace("_USDC_PERP", "");
 
+  let manualPauses={},manualCorrupt=false;
+  try { manualPauses=manualPausesFor(ROOT,identity); }catch {manualCorrupt=true;}
+  if(manualCorrupt)lines.push("MANUAL PAUSE REGISTRY INVALID: automatic rotation and creation blocked; account breaker/pending cleanup still active");
+  const heldByUser=m=>!!manualPauses["*"]||!!manualPauses[m];
   // ---------- pending stops: persisted cleanup state (survives restarts/timeouts) ----------
   // Entries are removed ONLY by act.stopGrid after verified cleanup (grid gone + position
   // flat). decide never clears them on its own: a vanished grid still gets a stop action
@@ -56,7 +64,10 @@ const writeAtomic = (p, data) => {
     // shared canary): non-null plain object, non-array,
     // every value a non-null plain object (an array ledger silently drops entries on save)
     const structOk = pendingStructOk(parsedPending);
-    if (structOk) pending = parsedPending;
+    if (structOk) {
+      if(Object.values(parsedPending).some(p=>p.accountKey!==identity.accountKey))pendCorrupt=true;
+      else pending=parsedPending;
+    }
     else pendCorrupt = true;
   } catch (e) {
     if (fs.existsSync(pendPath)) { pendCorrupt = true; pending = {}; }
@@ -75,7 +86,8 @@ const writeAtomic = (p, data) => {
       const pkNum = Number(parsed?.peakEquity);
       const structOk = riskStructOk(parsed);
       if (structOk) {
-        risk = { peakEquity: pkNum, paused: parsed.paused === undefined ? null : parsed.paused };
+        if (parsed.accountKey && parsed.accountKey !== identity.accountKey) throw Error("risk account mismatch");
+        risk = { accountKey: identity.accountKey, peakEquity: pkNum, paused: parsed.paused === undefined ? null : parsed.paused };
         if (parsed.lastEquity !== undefined) risk.lastEquity = parsed.lastEquity;
         if (parsed.lastAt !== undefined) risk.lastAt = parsed.lastAt;
       } else {
@@ -110,17 +122,17 @@ const writeAtomic = (p, data) => {
     const riskIntentPath = path.join(ROOT, "state", "risk_write_pending.json");
     let oldIntent = null;
     try { oldIntent = JSON.parse(fs.readFileSync(riskIntentPath, "utf8")); } catch (e) { if (e.code !== "ENOENT") riskCorrupt = true; }
-    const payload = { peakEquity: risk.peakEquity, assessment: { equity: eq, budgetPct: cfg.riskBudgetPct, at: obs.at } };
+    const payload = { accountKey: identity.accountKey, peakEquity: risk.peakEquity, assessment: { equity: eq, budgetPct: cfg.riskBudgetPct, at: obs.at } };
     if (risk.lastEquity !== undefined) payload.lastEquity = risk.lastEquity;
     if (risk.lastAt !== undefined) payload.lastAt = risk.lastAt;
     if (fs.existsSync(riskIntentPath)) {
-      if (!riskStructOk(oldIntent) || !oldIntent.paused) riskCorrupt = true;
+      if (!riskStructOk(oldIntent) || !oldIntent.paused || oldIntent.accountKey!==identity.accountKey) riskCorrupt = true;
       else { payload.paused = oldIntent.paused; payload.peakEquity = Math.max(payload.peakEquity, Number(oldIntent.peakEquity)); }
     }
     if (justTripped && !payload.paused) payload.paused = risk.paused;
     // Persist the latch intention before the writer: a transient commit failure
     // must not allow equity recovery to erase an uncommitted circuit breaker.
-    if (payload.paused && !riskCorrupt) writeAtomic(riskIntentPath, JSON.stringify({ peakEquity: risk.peakEquity, paused: payload.paused }));
+    if (payload.paused && !riskCorrupt) writeAtomic(riskIntentPath, JSON.stringify({ accountKey:identity.accountKey, peakEquity: risk.peakEquity, paused: payload.paused }));
     const w = riskCorrupt ? { status: 2, stderr: "risk write intent corrupt" } : spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8", timeout: 8000 });
     try {
       if (riskCorrupt) throw new Error("risk write intent corrupt — kept for manual recovery");
@@ -205,7 +217,7 @@ const writeAtomic = (p, data) => {
   // ---------- backstop reconciliation: enabled/disabled grids must carry native protection ----------
   const wantTP = Number(cfg.takeProfitPct), wantSL = Number(cfg.stopLossPct);
   for (const g of grids) {
-    if (pending[g.market]) continue; // will be deleted anyway
+    if (pending[g.market] || heldByUser(g.market) || manualCorrupt) continue; // do not override explicit user intention
     const bad = g.nativeTP === null || g.nativeSL === null
       || Number(g.nativeTP) !== wantTP || Number(g.nativeSL) !== wantSL
       || g.nativeCloseOnStop !== true;
@@ -219,6 +231,7 @@ const writeAtomic = (p, data) => {
   // ---------- per-grid rules ----------
   for (const g of grids) { // 阶段标签只控制是否规划新增仓位，风控复评两阶段都做
     if (pending[g.market]) continue; // handled by pending-stop retry above
+    if(heldByUser(g.market)||manualCorrupt){lines.push(`MANUAL HOLD ${g.market}: automatic rotation disabled; account breaker/pending cleanup still active`);continue;}
     const [lo, hi] = g.range.map(Number);
     const price = priceOf(g.market);
     const allocRaw = Number(g.allocationRaw || 0);
@@ -281,24 +294,26 @@ const writeAtomic = (p, data) => {
   try {
     ana = JSON.parse(fs.readFileSync(anaPath, "utf8"));
     anaAgeMin = (Date.now() - new Date(ana.generatedAt).getTime()) / 60000;
-    if (!Array.isArray(ana.top)) ana = null;
+    if (ana.schemaVersion !== 2 || ana.configHash !== analysisConfigHash(cfg) || ana.accountKey !== identity.accountKey) ana = null;
+    if (!Array.isArray(ana?.top)) ana = null;
     if (!Number.isFinite(anaAgeMin) || anaAgeMin < 0 || anaAgeMin > cfg.analysisMaxAgeMin) ana = null;
   } catch {}
   // whether new grids are allowed at all: breaker states, corrupt risk file, ticker outage,
   // or a queued pending stop (cleanup before new risk) all veto creation
   const corruptFlagExists = fs.existsSync(path.join(ROOT, "state", "pending_corrupt.json"));
   if (orphanPositions.length) lines.push(`ORPHAN POSITIONS (no grid): ${orphanPositions.map((p) => p.market).join(", ")} — new-risk blocked; pending verification still runs`);
-  const mayCreate = breaker === null && riskWriteOk && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
+  const mayCreate = !manualCorrupt && !manualPauses["*"] && obs.marketDataAvailable !== false && breaker === null && riskWriteOk && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
     && Object.keys(pending).length === 0 && orphanPositions.length === 0;
   // phase semantics: risk exits must never wait for market analysis. When stops are
   // planned, defer creation to phase 2 (run_round re-observes, then BG_PHASE=creates);
   // when nothing needs to stop, plan creations inline. Phase 2 only creates.
-  if (!PHASE2 && stops.length > 0 && mayCreate && slots > 0) {
+  const repairs = actions.filter(a=>a.act==="protect");
+  if (!PHASE2 && (stops.length > 0 || repairs.length > 0) && mayCreate && slots > 0) {
     fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
     lines.push(`CREATE PLANNING DEFERRED to phase 2 (${stops.length} risk exit(s) execute first)`);
   }
   // 有风险退出的轮次一律延后创建（两段式）：本阶段只执行退出，下轮 phase 1 无退出时才内联规划
-  const planCreatesNow = mayCreate && slots > 0 && stops.length === 0;
+  const planCreatesNow = mayCreate && slots > 0 && stops.length === 0 && repairs.length === 0;
   if (PHASE2 && stops.length > 0) {
     // phase 2 复评发现新的风险退出 → 立即执行，补仓再次顺延（下一轮 phase 1 无退出时内联规划）
     fs.writeFileSync(path.join(ROOT, "state", "needs_create_plan"), String(Date.now()));
@@ -318,7 +333,7 @@ const writeAtomic = (p, data) => {
         usedRisk += Number(g.allocationRaw || 0) * (effSl / 100);
       }
     }
-    const exitCostBuffer = Number(cfg.exitCostBufferUsd || 15);
+    const exitCostBuffer = Number(cfg.exitCostBufferUsd);
     const budget = eqN * (cfg.riskBudgetPct / 100) - exitCostBuffer;
     if (!ana) {
       console.log("analysis stale/missing -> recomputing ...");
@@ -328,7 +343,8 @@ const writeAtomic = (p, data) => {
         execFileSync(process.execPath, [path.join(ROOT, "scripts", "analyze.cjs")], {
           env: { ...process.env, EXCLUDE: ex.join(",") }, stdio: "inherit", timeout: 300000,
         });
-        ana = JSON.parse(fs.readFileSync(anaPath, "utf8"));
+        ana = JSON.parse(fs.readFileSync(path.join(ROOT, "state", "analysis_replacements.json"), "utf8"));
+        if (ana.schemaVersion !== 2 || ana.configHash !== analysisConfigHash(cfg) || ana.accountKey !== identity.accountKey || !Array.isArray(ana.top)) throw Error("analysis contract mismatch");
         anaAgeMin = 0;
       } catch (e) {
         // analysis failure must never discard already-planned stops — only creation is cancelled
@@ -345,6 +361,8 @@ const writeAtomic = (p, data) => {
       if (created >= slots) break;
       const mkt = cand.symbol.replace("_USDC_PERP", "-PERP");
       if (grids.some((g) => g.market === mkt) || remaining.includes(mkt) || stops.includes(mkt)) continue;
+      const latestTicker = tmap?.get(cand.symbol);
+      if (!finiteNumber(latestTicker?.quoteVolume) || Number(latestTicker.quoteVolume) < cfg.minQvol24h) { lines.push(`PLAN skip ${mkt}: liquidity below configured minimum or unknown`); continue; }
       if (!Number.isFinite(priceOf(mkt))) { lines.push(`PLAN skip ${mkt}: current price unknown`); continue; }
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
@@ -367,14 +385,15 @@ const writeAtomic = (p, data) => {
         value = maxByRisk;
         lines.push(`PLAN shrink: full ${cfg.gridValueUsd} exceeds remaining risk budget — creating ${value} instead`);
       }
-      const estMargin = value / cfg.leverageCap;
+      const marginCfg={...cfg,leverageCap:Math.min(cfg.leverageCap,Number(obs.accountLeverageLimit)||cfg.leverageCap)};
+      let estMargin;try{estMargin=marginEstimate(value,marginCfg,cand.imfFunction);}catch{lines.push(`SKIP create ${mkt}: market IMF unknown`);continue;}
       const numAvail = num(obs.margin.availableEquity);
       // cumulative reservation: N planned grids must not all size against the same balance
-      if (numAvail - plannedMargin - estMargin < 20) value = Math.floor((numAvail - plannedMargin - 20) * cfg.leverageCap / 50) * 50;
+      while(value>=500 && numAvail-plannedMargin-marginEstimate(value,marginCfg,cand.imfFunction)<20) value-=50;
       if (value < 500) { lines.push(`SKIP create ${mkt}: available equity ${(numAvail - plannedMargin).toFixed(0)} too low`); break; }
       const sizedGrid = sizeGrid(cand, value);
       if (!sizedGrid) { lines.push(`SKIP create ${mkt}: final allocation cannot support exchange minimum order size`); continue; }
-      plannedMargin += value / cfg.leverageCap;
+      plannedMargin += marginEstimate(value,marginCfg,cand.imfFunction);
       plannedRisk += value * (wantSL / 100);
       actions.push({
         act: "create", market: mkt, urlSymbol: cand.symbol.replace("_USDC_PERP", "_USD_PERP"),
@@ -414,7 +433,7 @@ const writeAtomic = (p, data) => {
   // ---------- equity curve: one JSONL line per round ----------
   try {
     const rec = {
-      at: obs.at, dryrun: process.env.DRYRUN === "1", phase: PHASE2 ? "creates" : "risk",
+      at: obs.at, accountKey: identity.accountKey, dryrun: process.env.DRYRUN === "1", phase: PHASE2 ? "creates" : "risk",
       equity: num(obs.margin.totalEquity),
       available: num(obs.margin.availableEquity),
       ledgerPnl: +grids.reduce((s, g) => s + (Number(g.pnlRaw) || 0), 0).toFixed(2),
@@ -487,10 +506,16 @@ const writeAtomic = (p, data) => {
     }
   }
   const { createHash } = require("node:crypto");
-  writeAtomic(path.join(ROOT, "state", "actions_meta.json"), JSON.stringify({ at: obs.at,
+  let runContext;
+  try { runContext = read("state/run_context.json"); } catch {}
+  const runId = runContext?.runId || "manual-" + require("node:crypto").randomUUID();
+  if(runContext) assertIdentity(identity, runContext.identity);
+  else writeAtomic(path.join(ROOT,"state/run_context.json"),JSON.stringify({runId,identity,startedAt:obs.at,dryrun:process.env.DRYRUN==="1"}));
+  const planId = require("node:crypto").randomUUID();
+  writeAtomic(path.join(ROOT, "state", "actions_meta.json"), JSON.stringify({ at: obs.at, planId, runId, identity,
     configHash: createHash("sha256").update(JSON.stringify(cfg)).digest("hex"),
     actionsHash: createHash("sha256").update(JSON.stringify(actions)).digest("hex"),
-    riskWriteOk, subaccountId: cfg.subaccountId || 3 }));
+    riskWriteOk, subaccountId: cfg.subaccountId ?? 3 }));
   writeAtomic(path.join(ROOT, "state", "actions.json"), JSON.stringify(actions, null, 2));
   // append log
   const logLine = `[${obs.at}] grids=${grids.length} pnl=${grids.map((g) => `${g.market}:${g.pnlPct}%`).join(" ")} actions=${actions.length ? actions.map((a) => a.act + ":" + (a.market || "")).join(",") : "none"}\n`;

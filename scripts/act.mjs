@@ -11,8 +11,16 @@
 const fs = await import("node:fs/promises");
 const path = await import("node:path");
 const ROOT = "/Users/nick/CascadeProjects/backpack_grid"; // ego-browser does not inherit cwd/env
+const { createRequire } = await import("node:module");
+const requireLocal = createRequire(path.join(ROOT, "scripts/act.mjs"));
+const { expectedIdentity, assertIdentity, collateralFor, validateConfig, positionsRisk, gridConfigConfirmed, gridConfirmed, forwardRisk, marginEstimate, manualPausesFor } = requireLocal("./contracts.cjs");
+const {verifyLease} = requireLocal("./execution_lease.cjs");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
-const SUB = cfg.subaccountId || 3;
+validateConfig(cfg);
+const identity = expectedIdentity(ROOT, cfg);
+const runContext = JSON.parse(await fs.readFile(path.join(ROOT, "state/run_context.json"), "utf8"));
+assertIdentity(identity, runContext.identity);
+const SUB = cfg.subaccountId ?? 3;
 const API = "https://api.backpack.exchange";
 const actionsFile = path.join(ROOT, "state/actions.json");
 const actionsStat = await fs.stat(actionsFile);
@@ -26,17 +34,20 @@ if (ageMin > 15) {
 const actions = JSON.parse(await fs.readFile(actionsFile, "utf8"));
 const { createHash } = await import("node:crypto");
 const meta = JSON.parse(await fs.readFile(path.join(ROOT, "state/actions_meta.json"), "utf8"));
+assertIdentity(identity, meta.identity);
+if(meta.runId !== runContext.runId || typeof meta.planId !== "string") throw Error("plan/run binding failed");
 const hash = (v) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 if (meta.configHash !== hash(cfg) || meta.actionsHash !== hash(actions) || meta.subaccountId !== SUB
   || !Number.isFinite(Date.parse(meta.at)) || Date.now() - Date.parse(meta.at) > 10 * 60000 || Date.parse(meta.at) > Date.now() + 60000) {
   throw new Error("action plan binding/staleness check failed");
 }
 const results = [];
+const resultEnvelope = (status) => ({ at:new Date().toISOString(),runId:meta.runId,planId:meta.planId,identity,status,results });
+async function persistResults(status="executing") { await assertExecutionLease(); const target=path.join(ROOT,"state/act_results.json");const tmp=target+".tmp";await fs.writeFile(tmp,JSON.stringify(resultEnvelope(status),null,2));await fs.rename(tmp,target); }
+await persistResults("executing");
 if (!actions.length) { console.log("no actions"); process.exit(0); }
 
-let task;
-try { task = await taskSpace(cfg.watch.spaceId); }
-catch { task = await taskSpace("backpack grid bot"); cfg.watch.spaceId = task.spaceId; }
+const task = await taskSpace(cfg.watch.spaceId);
 const page = task.page(cfg.watch.page);
 // session origin
 await page.goto(cfg.tradeUrlBase + "SOL_USD_PERP");
@@ -48,6 +59,9 @@ async function jget(pathname) {
   return JSON.parse(r.body);
 }
 async function jpatch(pathname, body) {
+  await assertExecutionLease();
+  await accountCheck();
+  await assertExecutionLease();
   const r = await page.fetch(API + pathname, {
     method: "PATCH", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -55,6 +69,9 @@ async function jpatch(pathname, body) {
   return { status: r.status, body: String(r.body).slice(0, 300) };
 }
 async function jpost(pathname, body) {
+  await assertExecutionLease();
+  await accountCheck();
+  await assertExecutionLease();
   const r = await page.fetch(API + pathname, {
     method: "POST", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -66,7 +83,6 @@ const symOf = (market) => market.replace("-PERP", "_USDC_PERP");
 const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.rename(p + ".tmp", p));
 // production control flow lives in act_core.cjs (CJS) with injected io so the REAL
 // stop/create-gate logic is executable under Node with mocked exchange access
-const { createRequire } = await import("node:module");
 // import.meta.url is an eval artifact under the ego-browser runner — anchor the require
 // base to the real file location (round-7 #1: MODULE_NOT_FOUND before any action)
 const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
@@ -91,10 +107,12 @@ async function loadPending() {
   const p = path.join(ROOT, "state/pending_stops.json");
   try {
     const parsed = JSON.parse(await fs.readFile(p, "utf8"));
+    if (pendingStructOk(parsed) && Object.values(parsed).some(e=>e.accountKey!==identity.accountKey)) throw Error("pending account mismatch");
     const structOk = pendingStructOk(parsed);
     if (!structOk) throw Object.assign(new Error("invalid pending ledger structure"), { code: "EBADSTRUCT" });
     return { pending: parsed, corrupt: false };
   } catch (e) {
+    if (e.message === "pending account mismatch") throw e;
     if (e.code === "ENOENT") return { pending: {}, corrupt: false };
     // corrupt or malformed ledger: archive the evidence and leave a persistent block flag —
     // it must never be silently treated as empty (unknown unresolved cleanups)
@@ -105,9 +123,14 @@ async function loadPending() {
   }
 }
 async function savePending(p) {
+  await assertExecutionLease();
+  for(const entry of Object.values(p)) entry.accountKey=identity.accountKey;
   await writeAtomic(path.join(ROOT, "state/pending_stops.json"), JSON.stringify(p, null, 2));
 }
+async function assertExecutionLease() { verifyLease(ROOT,meta,identity); }
+async function accountCheck() { const all = await jget("/wapi/v1/portfolio/collateral"); return collateralFor(all, identity); }
 const io = {
+  assertAccount: accountCheck,
   jget: async (pathname) => {
     const real = pathname === "/api/v1/position" ? `/api/v1/position?subaccountId=${SUB}` : pathname;
     return jget(real);
@@ -133,15 +156,19 @@ let stopIncomplete = false;
 let protectIncomplete = false;
 let unresolvedCleanup = false; // emergency stop did not complete — grid may be live unprotected
 let anyFailure = false;
+let riskChanged = false;
 for (const a of actions) {
   const result = await (async () => {
     try {
+      await accountCheck(); // every action, including stops/protects, belongs to the pinned owner
       if (a.act === "stop") {
         const r = await stopGrid(a.market, a.range, a.reason, results);
         if (!r || r.done !== true) stopIncomplete = true;
         return { done: true };
       }
       if (a.act === "protect") {
+        const held=manualPausesFor(ROOT,identity);
+        if(held['*']||held[a.market])throw Error('manual hold: protection edit skipped');
         const symbol = symOf(a.market);
         const auto1 = await getAutomation();
         const entry = (auto1.params?.symbols || []).find((s) => s.symbol === symbol);
@@ -164,12 +191,14 @@ for (const a of actions) {
         return { done: true };
       }
       if (a.act === "create") {
+        const held=manualPausesFor(ROOT,identity);
+        if(held['*']||held[a.market])throw Error('manual hold: creation blocked');
         // HARD GATE, re-verified per create: no unresolved stop/protect/emergency cleanup,
         // and the live pending ledger (re-read, not the run-start snapshot) must be empty
         const live = await loadPending();
         const corruptFlag = await fs.readFile(path.join(ROOT, "state/pending_corrupt.json"), "utf8").then(() => true).catch(() => false);
         const gate = evaluateCreateGate(
-          { stopIncomplete, protectIncomplete, unresolvedCleanup },
+          { stopIncomplete, protectIncomplete, unresolvedCleanup, riskChanged },
           Object.keys(live.pending), corruptFlag || live.corrupt);
         if (gate.blocked) {
           console.log(`SKIPPED create ${a.market}: ${gate.why} — no new grids this run`);
@@ -189,8 +218,14 @@ for (const a of actions) {
         if (auto1.params.symbols.length >= cfg.maxGrids) throw new Error("live grid slot cap reached");
         const livePositions = await jget(`/api/v1/position?subaccountId=${SUB}`);
         if (!Array.isArray(livePositions) || livePositions.some((p) => !auto1.params.symbols.some((g) => g.symbol === p.symbol))) throw new Error("live orphan/unknown positions: new risk blocked");
+        const latestRisk = positionsRisk(livePositions, cfg, identity);
+        if (latestRisk.blocked) {
+          riskChanged = true;
+          if (latestRisk.market) await stopGrid(latestRisk.market, null, latestRisk.reason, results);
+          throw Error("new risk veto: " + latestRisk.reason);
+        }
         const colAll = await jget("/wapi/v1/portfolio/collateral");
-        const col = colAll[Object.keys(colAll).find((k) => k.endsWith("-" + SUB))];
+        const col = collateralFor(colAll, identity);
         const { finiteNumber } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./state_schema.cjs");
         if (!finiteNumber(col?.netEquity)) throw new Error("account equity unknown");
         const eq = Number(col.netEquity);
@@ -198,12 +233,20 @@ for (const a of actions) {
         if (dd >= cfg.warnDrawdownPct) throw new Error("account drawdown warning: new risk blocked");
         let existingRisk = 0;
         for (const g of auto1.params.symbols) {
-          if (!finiteNumber(g.allocationUsd) || !finiteNumber(g.stopLossPercentage) || g.closePositionsOnStop !== true) throw new Error("existing grid risk premise unconfirmed");
+          if (!finiteNumber(g.allocationUsd) || Number(g.allocationUsd)<=0 || !finiteNumber(g.stopLossPercentage) || Number(g.stopLossPercentage)<=0 || g.closePositionsOnStop !== true) throw new Error("existing grid risk premise unconfirmed");
           existingRisk += Number(g.allocationUsd) * Math.max(Number(g.stopLossPercentage), cfg.stopLossPct) / 100;
         }
         if (!finiteNumber(a.value) || Number(a.value) <= 0 || existingRisk + Number(a.value) * cfg.stopLossPct / 100 + cfg.exitCostBufferUsd > eq * cfg.riskBudgetPct / 100) throw new Error("live forward-risk budget exceeded");
+        const liveAccount=await jget(`/api/v1/account?subaccountId=${SUB}`);
+        if(liveAccount.liquidating===true) {riskChanged=true;throw Error("account liquidating: new risk blocked");}
+        if(!finiteNumber(liveAccount.leverageLimit)||Number(liveAccount.leverageLimit)<=0||!finiteNumber(col.netEquityAvailable)) throw Error("available margin/leverage unknown");
+        const markets=await jget("/api/v1/markets");const marketInfo=Array.isArray(markets)?markets.find(m=>m.symbol===symbol):null;
+        if(!marketInfo?.imfFunction)throw Error("market margin constraints unknown");
+        const marginCfg={...cfg,leverageCap:Math.min(cfg.leverageCap,Number(liveAccount.leverageLimit))};
+        if(marginEstimate(a.value,marginCfg,marketInfo.imfFunction)+20>Number(col.netEquityAvailable))throw Error("live margin reservation insufficient");
         const mark = await currentMark(symbol);
         if (!Number.isFinite(Number(mark)) || Number(mark) <= 0) throw new Error(`create ${a.market}: no mark price`);
+        if(Number(mark)<Number(a.lower)||Number(mark)>Number(a.upper))throw Error("current mark outside proposed grid range");
         const base = {
           strategyType: "Grid", symbol,
           priceLow: String(a.lower), priceHigh: String(a.upper),
@@ -222,19 +265,26 @@ for (const a of actions) {
         // cleanup releases it. Request-issued-but-unknown outcomes MUST keep this entry.
         {
           const intent = await loadPending();
-          intent.pending[a.market] = { at: new Date().toISOString(), reason: "create intent (unconfirmed)" };
+          intent.pending[a.market] = { kind:"create",phase:"issued",accountKey: identity.accountKey, planId: meta.planId, runId: meta.runId, at: new Date().toISOString(), reason: "create intent (unconfirmed)" };
           await savePending(intent.pending);
         }
         const r = await jpatch(`/wapi/v1/subaccount/${SUB}/automation`, {
           params: { strategyType: "Grid", symbols: [{ operation: "Upsert", ...base, enabled: true, initialPrice: mark }] },
         });
         if (r.status !== 200) throw new Error(`create ${a.market}: upsert failed ${r.status} ${r.body}`);
+        const acknowledged=await loadPending();
+        acknowledged.pending[a.market].phase="acknowledged";await savePending(acknowledged.pending);
         const ok = await waitFor(async () => {
           const auto2 = await getAutomation();
           const e = (auto2.params?.symbols || []).find((s) => s.symbol === symbol);
-          return !!e && String(e.priceLow) === String(a.lower) && Number(e.levels) === Number(a.count);
+          return gridConfigConfirmed(e, a);
         }, 10000);
-        if (!ok) throw new Error(`create ${a.market}: config not confirmed after upsert`);
+        if (!ok) {
+          let cleaned=false;
+          try { const stopped=await stopGrid(a.market,null,"emergency: stored grid parameters not confirmed",results); cleaned=stopped?.done===true; } catch {}
+          if(!cleaned) { unresolvedCleanup=true;stopIncomplete=true; }
+          throw Error("create parameters unconfirmed" + (cleaned ? "; emergency cleanup verified" : "; MANUAL INTERVENTION REQUIRED"));
+        }
         // verify backstops actually stored; self-heal once if not. ANY error in this stage
         // (timeout / lost response / read failure) leaves protection UNCONFIRMED — the grid
         // may be live unpatched — so the whole stage funnels into the emergency cleanup flow.
@@ -299,12 +349,26 @@ for (const a of actions) {
           placed = await waitFor(ordersUp, 15000);
         }
         if (!placed) throw new Error(`create ${a.market}: orders not placed even after disable/enable kick`);
-        results.push({ ...a, done: true });
+        const finalAuto = await getAutomation();
+        const finalEntry = finalAuto.params?.symbols?.find(e=>e.symbol===symbol);
+        const finalCol = await accountCheck();
+        const finalPositions=await jget(`/api/v1/position?subaccountId=${SUB}`);
+        const finalRisk=positionsRisk(finalPositions,cfg,identity);
+        let finalBudgetOk=false;try{finalBudgetOk=forwardRisk(finalAuto.params?.symbols,finalCol.netEquity,cfg);}catch{}
+        const finalDD=Number(risk.peakEquity)>0?(Number(risk.peakEquity)-Number(finalCol.netEquity))/Number(risk.peakEquity)*100:0;
+        const finalOrphan=!Array.isArray(finalPositions)||finalPositions.some(p=>!finalAuto.params?.symbols?.some(g=>g.symbol===p.symbol));
+        if(!gridConfirmed(finalEntry,a,cfg) || !finalBudgetOk || finalRisk.blocked || finalOrphan || finalDD>=cfg.warnDrawdownPct) {
+          let cleaned=false;try { const r=await stopGrid(a.market,null,"emergency: final grid/risk reconciliation failed",results);cleaned=r?.done===true; } catch {}
+          if(!cleaned){unresolvedCleanup=true;stopIncomplete=true;}
+          throw Error("final grid reconciliation failed"+(cleaned?"; cleanup verified":"; MANUAL INTERVENTION REQUIRED"));
+        }
         console.log(`CREATED ${a.market} ${a.lower}~${a.upper} x${a.count} $${a.value} (mark ${mark}, backstops TP=${cfg.takeProfitPct}/SL=${cfg.stopLossPct}, orders verified)`);
         // fully confirmed — release the create intent
         const rel = await loadPending();
+        if(rel.pending[a.market]?.planId!==meta.planId) throw Error("creation intent ownership lost");
         delete rel.pending[a.market];
         await savePending(rel.pending);
+        results.push({ ...a, done: true });
         return { done: true };
       }
       return { done: true };
@@ -320,8 +384,9 @@ for (const a of actions) {
     }
   })();
   if (result.done === false && result.skipped) anyFailure = true;
+  await persistResults();
 }
-await writeAtomic(path.join(ROOT, "state/act_results.json"), JSON.stringify({ at: new Date().toISOString(), results }, null, 2));
+await persistResults(anyFailure || stopIncomplete ? "failed" : "complete");
 if (anyFailure || stopIncomplete) {
   console.log("COMPLETED_WITH_FAILURES — see state/act_results.json" + (stopIncomplete ? " (pending_stops.json has unresolved cleanups; next round will retry and creations stay blocked until clear)" : ""));
   process.exit(2);

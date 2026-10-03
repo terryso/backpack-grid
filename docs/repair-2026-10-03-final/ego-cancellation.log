@@ -1,0 +1,7 @@
+{
+  realEgoEvaluator: true,
+  ownerKilled: true,
+  staleWritePrevented: true,
+  evaluatorResult: { rejected: true },
+  supervisorStatus: 'aborted'
+}

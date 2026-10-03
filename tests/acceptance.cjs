@@ -14,11 +14,16 @@ function fixture(eq = 1000, risk = { peakEquity: 1000, paused: null }, grids = [
   const dir = fs.mkdtempSync(path.join(tmp, 'fixture-')), at = new Date().toISOString();
   const files = { 'config.json': cfg, 'state/observed.json': { at, gridRows: grids, positions: [], ledger: [], margin: { totalEquity: String(eq), availableEquity: '500', openPnl: '0' } }, 'state/risk.json': risk, 'state/pending_stops.json': {}, 'state/tickers.json': [{ symbol: 'ETH_USDC_PERP', lastPrice: '100' }], 'state/analysis.json': { generatedAt: at, top: [{ symbol: 'ETH_USDC_PERP', score: 10, chop: 10, range24: 5, qvol24: 1e6, minQuantity: .1, grid: { lower: 90, upper: 110, count: 100 } }], directional: [] } };
   for (const [f, v] of Object.entries(files)) put(dir, f, v);
+  const identity={userId:'fixture',subaccountId:cfg.subaccountId??3,accountKey:'fixture-'+(cfg.subaccountId??3)};
+  put(dir,'state/account_identity.json',identity);
+  const o=JSON.parse(fs.readFileSync(path.join(dir,'state/observed.json')));o.identity=identity;put(dir,'state/observed.json',o);
+  const a=JSON.parse(fs.readFileSync(path.join(dir,'state/analysis.json')));Object.assign(a,{schemaVersion:2,accountKey:identity.accountKey,configHash:require('../scripts/contracts.cjs').analysisConfigHash(cfg)});put(dir,'state/analysis.json',a);
+  const ts=JSON.parse(fs.readFileSync(path.join(dir,'state/tickers.json')));ts.forEach(t=>t.quoteVolume='100000000');put(dir,'state/tickers.json',ts);
   return dir;
 }
 const env = (d) => ({ ...process.env, BG_ROOT: d, BG_TICKERS_FILE: path.join(d, 'state/tickers.json'), BG_OFFLINE: '0' });
 const decide = (d, extra = {}) => spawnSync(process.execPath, [path.join(ROOT, 'scripts/decide.cjs')], { env: { ...env(d), ...extra }, encoding: 'utf8', timeout: 15000 });
-const writer = (d, payload) => spawnSync(PY, [path.join(ROOT, 'scripts/risk_write.py'), JSON.stringify(payload)], { env: env(d), encoding: 'utf8', timeout: 10000 });
+const writer = (d, payload) => spawnSync(PY, [path.join(ROOT, 'scripts/risk_write.py'), JSON.stringify({accountKey:json(d,'state/account_identity.json').accountKey,...payload})], { env: env(d), encoding: 'utf8', timeout: 10000 });
 const grid = { market: 'OLD-PERP', symbol: 'OLD_USDC_PERP', range: ['90', '110'], allocationRaw: 1000, pnlRaw: 0, pnlPct: 0, status: 'Triggered', nativeTP: 10, nativeSL: 6, nativeCloseOnStop: true };
 const { riskStructOk, pendingStructOk, finiteNumber } = require('../scripts/state_schema.cjs');
 const { collectHistory, summarizeHistory, fillTimestamp, START } = require('../scripts/history_core.cjs');
@@ -29,7 +34,11 @@ async function observedCase(mode) {
   const auto = { params: { symbols: mode === 'orphan' ? [] : [{ symbol: pos.symbol, enabled: true, allocationUsd: '500', priceLow: '90', priceHigh: '110', levels: 20, direction: 'Neutral', takeProfitPercentage: 10, stopLossPercentage: 6, closePositionsOnStop: true }] }, snapshot: { symbols: [{ symbol: pos.symbol, pnl: { soldValue: '0', boughtValue: '100', netPosition: '1', quoteAssetFees: '0' } }] } };
   if (mode === 'null-ledger') auto.snapshot.symbols[0].pnl.soldValue = null;
   if (mode === 'false-position') pos.netQuantity = false;
-  const inputs = { auto, positionsRaw: mode === 'missing-position' ? [] : [pos], account: { limitOrders: 0, liquidating: false }, collateralAll: { 'fixture-3': { netEquity: '500', netEquityAvailable: '300' } }, markAll: [], cfg, SUB: 3, ROOT: '/fixture', API: 'mock', path, finiteNumber,
+  if (mode === 'unknown-liquidation') pos.estLiquidationPrice = null;
+  if (mode === 'zero-liquidation') pos.estLiquidationPrice = '0';
+  if (mode === 'ledger-live-position-zero') {pos.netQuantity='0';pos.markPrice=null;}
+  const inputs = { auto, positionsRaw: mode === 'missing-position' ? [] : [pos], account: { limitOrders: 0, liquidating: false }, collateralAll: { 'fixture-3': { netEquity: '500', netEquityAvailable: '300' } }, markAll: [], cfg, identity:{userId:'fixture',subaccountId:3,accountKey:'fixture-3'},marketDataAvailable:true,col:{netEquity:'500',netEquityAvailable:'300'}, SUB: 3, ROOT: '/fixture', API: 'mock', path, finiteNumber,
+    positionListOk: require('../scripts/state_schema.cjs').positionListOk,
     fs: { writeFile: async (p, s) => files.set(p, s), rename: async (a, b) => files.set(b, files.get(a)) },
     console: { log: () => {} }, process: { exit: (n) => { throw new Error('exit:' + n); } } };
   let error = null;
@@ -72,16 +81,16 @@ async function main() {
   check('empty ticker response blocks new risk', () => assert(!json(d, 'state/actions.json').some((a) => a.act === 'create')));
   d = fixture(); const latch = { at: 'original', reason: 'trip' }; writer(d, { peakEquity: 1000, paused: latch });
   await Promise.all(Array.from({ length: 12 }, (_, i) => new Promise((resolve, reject) => {
-    const p = spawn(PY, [path.join(ROOT, 'scripts/risk_write.py'), JSON.stringify({ peakEquity: 1000 + i * 10 })], { env: env(d), stdio: 'ignore' }); p.on('error', reject); p.on('close', (c) => c === 0 ? resolve() : reject(new Error('writer exit ' + c)));
+    const p = spawn(PY, [path.join(ROOT, 'scripts/risk_write.py'), JSON.stringify({accountKey:json(d,'state/account_identity.json').accountKey, peakEquity: 1000 + i * 10 })], { env: env(d), stdio: 'ignore' }); p.on('error', reject); p.on('close', (c) => c === 0 ? resolve() : reject(new Error('writer exit ' + c)));
   })));
   check('12 genuinely concurrent writers keep highest peak and original latch', () => { assert.equal(json(d, 'state/risk.json').peakEquity, 1110); assert.deepEqual(json(d, 'state/risk.json').paused, latch); });
   for (const phase of ['', 'creates']) {
     d = fixture(1000, { peakEquity: 1000 }, [grid]); obs = json(d, 'state/observed.json'); obs.positions = [{ market: 'OLD-PERP', size: '1', mark: '100', liq: '99', fundingRaw: 0 }]; put(d, 'state/observed.json', obs); decide(d, { BG_PHASE: phase });
     check('new danger blocks create in phase ' + (phase || 'risk'), () => { const a = json(d, 'state/actions.json'); assert(a.some((r) => r.act === 'stop')); assert(!a.some((r) => r.act === 'create')); });
   }
-  for (const mode of ['null-ledger', 'false-position', 'missing-position', 'orphan']) {
+  for (const mode of ['null-ledger', 'false-position', 'missing-position', 'orphan','unknown-liquidation','zero-liquidation','ledger-live-position-zero']) {
     const r = await observedCase(mode);
-    check('production observe data contract: ' + mode, () => mode === 'orphan' ? assert.equal(r.error, null) : assert(r.obs.error));
+    check('production observe data contract: ' + mode, () => ['orphan','zero-liquidation'].includes(mode) ? assert.equal(r.error, null) : assert(r.obs.error));
   }
   const fill = (id, timestamp, feeSymbol = 'USDC') => ({ id, timestamp, price: '100', quantity: '1', fee: '.1', feeSymbol, isMaker: true });
   check('WAPI ISO timestamp without timezone parses as UTC', () => assert.equal(fillTimestamp('2026-09-30T04:56:59.848'), Date.parse('2026-09-30T04:56:59.848Z')));
@@ -117,7 +126,7 @@ async function main() {
     d = fixture(1000, { peakEquity: 1000 }, [grid]); fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
     obs = json(d, 'state/observed.json'); obs.gridRows[0].pnlRaw = -100; put(d, 'state/observed.json', obs);
     fs.mkdirSync(path.join(d, '.local/bin'), { recursive: true }); fs.symlinkSync(process.execPath, path.join(d, '.local/bin/node'));
-    fs.writeFileSync(path.join(d, '.local/bin/ego-browser'), `#!${process.execPath}\nconst fs=require('fs');const text=fs.readFileSync(0,'utf8');if(text.includes('// observe.mjs')){let n=Number(fs.existsSync('state/observe_calls')?fs.readFileSync('state/observe_calls','utf8'):0)+1;fs.writeFileSync('state/observe_calls',String(n));if(n===${failCall})process.exit(1);if(n>1){let o=JSON.parse(fs.readFileSync('state/observed.json'));o.gridRows=[];o.at=new Date().toISOString();fs.writeFileSync('state/observed.json',JSON.stringify(o));}}else{fs.appendFileSync('state/act_calls','act\\n');fs.writeFileSync('state/act_results.json',JSON.stringify({at:new Date().toISOString(),results:[{act:'stop',market:'OLD-PERP',done:true}]}));}\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(d, '.local/bin/ego-browser'), `#!${process.execPath}\nconst fs=require('fs');const text=fs.readFileSync(0,'utf8');if(text.includes('// observe.mjs')){let n=Number(fs.existsSync('state/observe_calls')?fs.readFileSync('state/observe_calls','utf8'):0)+1;fs.writeFileSync('state/observe_calls',String(n));if(n===${failCall})process.exit(1);if(n>1){let o=JSON.parse(fs.readFileSync('state/observed.json'));o.gridRows=[];o.at=new Date().toISOString();fs.writeFileSync('state/observed.json',JSON.stringify(o));}}else{fs.appendFileSync('state/act_calls','act\\n');fs.writeFileSync('state/act_results.json',JSON.stringify({at:new Date().toISOString(),...JSON.parse(fs.readFileSync('state/actions_meta.json')),status:'complete',results:[{act:'stop',market:'OLD-PERP',done:true}]}));}\n`, { mode: 0o755 });
     fs.writeFileSync(path.join(d, 'scripts/upload_dashboard.sh'), '#!/bin/bash\necho upload >> state/upload_calls\n');
     const run = spawnSync('/bin/bash', [path.join(d, 'scripts/run_round.sh')], { env: { ...env(d), HOME: d, DRYRUN: '0', BG_LOCKED: '0' }, encoding: 'utf8', timeout: 15000 });
     check('runner refresh failure/status and upload: ' + failCall, () => { assert.equal(run.status, failCall ? 1 : 0, run.stderr); assert.equal(fs.readFileSync(path.join(d, 'state/last_round_status'), 'utf8').trim(), failCall === 2 ? 'observe_failed_post_exit' : failCall === 3 ? 'observe_failed_confirm' : 'ok'); assert(fs.existsSync(path.join(d, 'state/upload_calls'))); if (failCall === 2) assert.equal(fs.readFileSync(path.join(d, 'state/act_calls'), 'utf8').trim().split('\n').length, 1); });
@@ -144,7 +153,8 @@ async function main() {
     d = fixture(); fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
     const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500 }));
     const { createHash } = require('node:crypto'); const h = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
-    put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h(cfg), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 });
+    const identity=json(d,'state/account_identity.json');const runId='accept-'+mode;put(d,'state/run_context.json',{runId,identity,startedAt:new Date().toISOString(),ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(d,'state/last_round_status'),'running');
+    put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { planId:'plan-'+mode,runId,identity, at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h(cfg), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 });
     let autos = [], writes = 0, clock = Date.now(), firstProtectionRead = false;
     class Clock extends Date { static now() { return clock += 1000; } }
     const page = { goto: async () => {}, waitForTimeout: async () => {}, fetch: async (url, options = {}) => {
@@ -164,8 +174,10 @@ async function main() {
         else if (mode === 'protect-read-fails' && autos.length && writes === 1 && firstProtectionRead) { writes++; throw new Error('protection read failure'); }
         data = { params: { symbols: structuredClone(autos) } };
       } else if (u.pathname.endsWith('/position')) data = mode === 'cleanup-incomplete' && autos.length ? [{ symbol: autos[0].symbol, netQuantity: null }] : [];
-      else if (u.pathname.endsWith('/collateral')) data = { 'fixture-3': { netEquity: mode === 'budget-changed' ? '1' : '1000' } };
+      else if (u.pathname.endsWith('/collateral')) data = { 'fixture-3': { netEquity: mode === 'budget-changed' ? '1' : '1000',netEquityAvailable:'500' } };
       else if (u.pathname.endsWith('/markPrices')) data = ['ETH', 'BTC'].map((m) => ({ symbol: m + '_USDC_PERP', markPrice: '100' }));
+      else if(u.pathname.endsWith('/account')) data={leverageLimit:'10',liquidating:false};
+      else if(u.pathname.endsWith('/markets')) data=['ETH','BTC'].map(m=>({symbol:m+'_USDC_PERP',imfFunction:{type:'sqrt',base:'.02',factor:'.00001'}}));
       else if (u.pathname.endsWith('/orders')) data = autos.flatMap((g) => Array.from({ length: 20 }, () => ({ symbol: g.symbol })));
       else throw new Error('unknown mock endpoint ' + u.pathname);
       return { status: 200, body: JSON.stringify(data) };

@@ -14,6 +14,7 @@
 import fcntl
 import os
 import math
+import json
 import subprocess
 import sys
 import time
@@ -26,7 +27,7 @@ while args and args[0].startswith("--"):
     if option == "--wait":
         wait_secs = float(args[1])
         if not math.isfinite(wait_secs) or wait_secs < 0 or wait_secs > 60: raise ValueError("wait must be 0..60 seconds")
-    elif option == "--name" and args[1] in ("round", "history", "research"):
+    elif option == "--name" and args[1] in ("round", "history", "research", "ledger"):
         lock_name = args[1]
     else:
         raise ValueError("invalid lock option")
@@ -59,4 +60,15 @@ lock.flush()
 
 rc = subprocess.call(args, pass_fds=(lock.fileno(),),
                      env={**os.environ, "BG_LOCKED": "1" if lock_name == "round" else "0"})
-sys.exit(rc)
+if lock_name == "round" and rc != 0:
+    status_path = os.path.join(ROOT, "state", "last_round_status")
+    try:
+        if open(status_path).read().strip() == "running":
+            tmp = status_path + ".supervisor." + str(os.getpid())
+            with open(tmp, "w") as f: f.write("aborted")
+            os.replace(tmp, status_path)
+            context = json.load(open(os.path.join(ROOT,"state","run_context.json")))
+            event = {**context, "type":"end", "status":"aborted", "at":__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "exitCode":rc}
+            with open(os.path.join(ROOT,"state","run_events.jsonl"),"a") as f: f.write(json.dumps(event)+"\n")
+    except (OSError, ValueError): pass
+sys.exit(rc if rc >= 0 else 128 - rc)

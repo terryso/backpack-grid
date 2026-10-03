@@ -6,18 +6,16 @@ const fs = await import("node:fs/promises");
 const path = await import("node:path");
 const ROOT = "/Users/nick/CascadeProjects/backpack_grid"; // ego-browser does not inherit cwd/env
 const { createRequire } = await import("node:module");
-const { finiteNumber } = createRequire(path.join(ROOT, "scripts/observe.mjs"))("./state_schema.cjs");
+const requireLocal = createRequire(path.join(ROOT, "scripts/observe.mjs"));
+const { expectedIdentity, collateralFor, validateConfig } = requireLocal("./contracts.cjs");
+const { finiteNumber, positionListOk } = createRequire(path.join(ROOT, "scripts/observe.mjs"))("./state_schema.cjs");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
-const SUB = cfg.subaccountId || 3;
+validateConfig(cfg);
+const identity = expectedIdentity(ROOT, cfg);
+const SUB = cfg.subaccountId ?? 3;
 const API = "https://api.backpack.exchange";
 
-let task;
-try { task = await taskSpace(cfg.watch.spaceId); }
-catch {
-  task = await taskSpace("backpack grid bot");
-  cfg.watch.spaceId = task.spaceId;
-  await fs.writeFile(path.join(ROOT, "config.json"), JSON.stringify(cfg, null, 2));
-}
+const task = await taskSpace(cfg.watch.spaceId);
 const page = task.page(cfg.watch.page);
 // any backpack.exchange page provides the session origin; trade page also lets us
 // cross-check the DOM when needed
@@ -34,12 +32,16 @@ const auto = await jget(`/wapi/v1/subaccount/${SUB}/automation`);
 const positionsRaw = await jget(`/api/v1/position?subaccountId=${SUB}`);
 const account = await jget(`/api/v1/account?subaccountId=${SUB}`);
 const collateralAll = await jget(`/wapi/v1/portfolio/collateral`);
-const markAll = await jget(`/api/v1/markPrices`);
+const col = collateralFor(collateralAll, identity);
+let markAll = [], marketDataAvailable = true;
+try { markAll = await jget(`/api/v1/markPrices`); if (!Array.isArray(markAll)) throw Error("invalid mark prices"); }
+catch { marketDataAvailable = false; markAll = []; }
 
 // --- grids from automation snapshot ---
 // grid pnl ledger: pnl = (soldValue - boughtValue) + netPosition*mark - fees  (verified vs UI)
-if (!Array.isArray(auto.params?.symbols) || !Array.isArray(auto.snapshot?.symbols) || !Array.isArray(positionsRaw) || !Array.isArray(markAll)) throw new Error("invalid account response structure");
+if (!Array.isArray(auto.params?.symbols) || !Array.isArray(auto.snapshot?.symbols) || !Array.isArray(positionsRaw)) throw new Error("invalid account response structure");
 const params = auto.params.symbols;
+if(!positionListOk(positionsRaw))throw Error("position response malformed or duplicate symbol");
 const snapshot = (auto.snapshot && auto.snapshot.symbols) || [];
 const markOf = new Map(positionsRaw.map((p) => [p.symbol, Number(p.markPrice)]));
 const posBy = new Map(positionsRaw.map((p) => [p.symbol, p]));
@@ -61,7 +63,7 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
     if (pnlLedger.baseAssetFees != null && !finiteNumber(pnlLedger.baseAssetFees)) dataIssues.push("invalid baseAssetFees for " + g.symbol);
     const hasLivePosition = posEntry && finiteNumber(posEntry.netQuantity) && Number(posEntry.netQuantity) !== 0;
     const markRaw = posEntry ? Number(posEntry.markPrice) : NaN;
-    if (hasLivePosition && (!isFinite(markRaw) || markRaw <= 0)) {
+    if ((hasLivePosition || netPosition !== 0) && (!finiteNumber(posEntry?.markPrice) || markRaw <= 0)) {
       // a live position without a valid mark would turn its inventory PnL into garbage —
       // fail loud instead of reading it as zero
       dataIssues.push("live position without valid mark price for " + g.symbol);
@@ -101,6 +103,8 @@ const DIR = { Neutral: "中性", Long: "开多", Short: "开空" };
 
 // --- positions ---
 const positions = positionsRaw.map((p) => {
+  if(!finiteNumber(p.estLiquidationPrice)||Number(p.estLiquidationPrice)<0)dataIssues.push("invalid liquidation price for "+p.symbol);
+  if((p.userId!=null&&String(p.userId)!==identity.userId)||(p.subaccountId!=null&&Number(p.subaccountId)!==identity.subaccountId))dataIssues.push("position account mismatch for "+p.symbol);
   if (!["netQuantity", "markPrice", "breakEvenPrice", "netExposureNotional", "imf", "cumulativeFundingPayment"].every((k) => finiteNumber(p[k]))) dataIssues.push("invalid position fields for " + p.symbol);
   const netQty = Number(p.netQuantity);
   const mark = Number(p.markPrice);
@@ -122,9 +126,6 @@ const positions = positionsRaw.map((p) => {
 });
 
 // --- margin: pick this subaccount's collateral entry ---
-const colKey = Object.keys(collateralAll).find((k) => k.endsWith("-" + SUB)) || String(cfg.userId || "") + "-" + SUB;
-const col = collateralAll[colKey];
-if (!col) throw new Error("collateral entry not found for subaccount " + SUB + " (keys: " + Object.keys(collateralAll).join(",") + ")");
 const netEquity = Number(col.netEquity);
 const netEquityAvailable = Number(col.netEquityAvailable);
 const margin = {
@@ -145,8 +146,8 @@ const strategyEquity = {
 };
 
 const observed = {
-  at: new Date().toISOString(), source: "api",
-  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity,
+  at: new Date().toISOString(), source: "api", identity, marketDataAvailable,
+  url: API, ...{ gridRows, margin, badges, positions }, strategyEquity, accountLeverageLimit: finiteNumber(account.leverageLimit) ? Number(account.leverageLimit) : null,
   // per-symbol strategy ledger volumes (bought+sold) for campaign volume tracking
   ledger: snapshot.map((s) => ({
     symbol: s.symbol,
