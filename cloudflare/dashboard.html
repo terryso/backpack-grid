@@ -21,6 +21,9 @@
   .gridcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
   .gcard { background: #0f1522; border: 1px solid #1f2737; border-radius: 8px; padding: 10px 12px; }
   .ghead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+  .grid-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; }
+  .grid-header .gdir { grid-column: 1 / -1; }
+  .grid-header .gstatus { margin: 0; white-space: nowrap; justify-self: end; }
   .gmkt { font-weight: 600; font-size: 14px; }
   .gdir { color: #8b94a7; font-size: 12px; }
   .grow { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; }
@@ -167,8 +170,9 @@ function render(s) {
       <h2>网格（${g.length}）</h2>
       <div class="gridcards">
         ${g.map((x) => `<div class="gcard">
-          <div class="ghead"><span class="gmkt">${x.market}</span><span class="gdir">${x.direction} · ${x.count} 格 · 投入 ${fmt(x.value, 0)}</span>
-            <span class="${x.status === "Triggered" ? "chip ok" : "chip bad"}" style="margin-left:auto">${x.status === "Triggered" ? "运行" : "已停止"}</span></div>
+          <div class="ghead grid-header"><span class="gmkt">${x.market}</span>
+            <span class="gstatus ${x.status === "Triggered" ? "chip ok" : "chip bad"}">${x.status === "Triggered" ? "运行" : "已停止"}</span>
+            <span class="gdir">${x.direction} · ${x.count} 格 · 投入 ${fmt(x.value, 0)}</span></div>
           ${(x.price != null && x.pnlPct != null && s.dataValid) ? healthRow(x, s) : ""}
           <div class="grow"><span class="k">区间</span><span>${x.rangeLow} ~ ${x.rangeHigh}</span></div>
           <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
