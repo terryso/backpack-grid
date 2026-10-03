@@ -1,0 +1,313 @@
+{
+  "baseline": "56d0cde",
+  "codeHashes": {
+    "act.mjs": "77f7ca1864668ed6dd72429003170b8478cd53ffb6f027c8f4df5453aa757571",
+    "observe.mjs": "cb2b9cc5874cff837bc26c86ff61a15c01e9cc3928a59bb7152d53bfb5087f2e",
+    "run_events.cjs": "71d92cf1f42691b474c5b861fb6a97da87625c3909e6ad80fe06b6425975411a",
+    "history_core.cjs": "8ef6b8f8c6f0fa42a51464c854bf2ba62ad8efeb3dde6b5a5ca7d411b8307e34",
+    "import_ledger.cjs": "47f29646783fece25a8c443bfabaa6b9816fafe08a3af3fd7087473aac09d324",
+    "decide.cjs": "72fc67392f4ddd893dc2ec41234ff2bee92ee081056c0a204a0bf740f7de77b7",
+    "accounting.cjs": "548feb2951217d07f841df13420e9f04348a461e437b02cdc3de67dd84088216"
+  },
+  "rows": [
+    {
+      "id": "N01a_config_confirmation_ignores_actual_allocation",
+      "reproduced": true,
+      "requestedValue": 500,
+      "storedValue": 100000,
+      "storedSlRisk": 6000,
+      "accountBudgetBeforeBuffer": 800,
+      "exit": 0,
+      "writes": 1,
+      "result": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 500,
+          "done": true
+        }
+      ],
+      "applied": {
+        "operation": "Upsert",
+        "strategyType": "Grid",
+        "symbol": "ETH_USDC_PERP",
+        "priceLow": "90",
+        "priceHigh": "110",
+        "levels": 20,
+        "allocationUsd": "100000",
+        "closePositionsOnStop": true,
+        "direction": "Neutral",
+        "takeProfitPercentage": 10,
+        "stopLossPercentage": 6,
+        "enabled": true,
+        "initialPrice": "100"
+      },
+      "pendingCleared": true
+    },
+    {
+      "id": "N01b_config_confirmation_ignores_upper_bound",
+      "reproduced": true,
+      "requestedUpper": 110,
+      "exit": 0,
+      "writes": 1,
+      "result": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 500,
+          "done": true
+        }
+      ],
+      "applied": {
+        "operation": "Upsert",
+        "strategyType": "Grid",
+        "symbol": "ETH_USDC_PERP",
+        "priceLow": "90",
+        "priceHigh": "150",
+        "levels": 20,
+        "allocationUsd": "500",
+        "closePositionsOnStop": true,
+        "direction": "Neutral",
+        "takeProfitPercentage": 10,
+        "stopLossPercentage": 6,
+        "enabled": true,
+        "initialPrice": "100"
+      },
+      "pendingCleared": true
+    },
+    {
+      "id": "N02a_live_liquidation_danger_does_not_veto_create",
+      "reproduced": true,
+      "mark": 100,
+      "liq": 99,
+      "distancePct": 1,
+      "configuredDangerPct": 12,
+      "exit": 0,
+      "writes": 1,
+      "result": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 500,
+          "done": true
+        }
+      ],
+      "applied": {
+        "operation": "Upsert",
+        "strategyType": "Grid",
+        "symbol": "ETH_USDC_PERP",
+        "priceLow": "90",
+        "priceHigh": "110",
+        "levels": 20,
+        "allocationUsd": "500",
+        "closePositionsOnStop": true,
+        "direction": "Neutral",
+        "takeProfitPercentage": 10,
+        "stopLossPercentage": 6,
+        "enabled": true,
+        "initialPrice": "100"
+      },
+      "pendingCleared": true
+    },
+    {
+      "id": "N02b_live_unknown_quantity_does_not_veto_create",
+      "reproduced": true,
+      "freshQuantity": null,
+      "exit": 0,
+      "writes": 1,
+      "result": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 500,
+          "done": true
+        }
+      ],
+      "applied": {
+        "operation": "Upsert",
+        "strategyType": "Grid",
+        "symbol": "ETH_USDC_PERP",
+        "priceLow": "90",
+        "priceHigh": "110",
+        "levels": 20,
+        "allocationUsd": "500",
+        "closePositionsOnStop": true,
+        "direction": "Neutral",
+        "takeProfitPercentage": 10,
+        "stopLossPercentage": 6,
+        "enabled": true,
+        "initialPrice": "100"
+      },
+      "pendingCleared": true
+    },
+    {
+      "id": "N08_expected_user_identity_is_not_checked_against_live_collateral_owner",
+      "reproduced": true,
+      "configuredUserId": "expected-owner",
+      "liveCollateralKey": "different-owner-3",
+      "exit": 0,
+      "writes": 1,
+      "result": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 500,
+          "done": true
+        }
+      ],
+      "applied": {
+        "operation": "Upsert",
+        "strategyType": "Grid",
+        "symbol": "ETH_USDC_PERP",
+        "priceLow": "90",
+        "priceHigh": "110",
+        "levels": 20,
+        "allocationUsd": "500",
+        "closePositionsOnStop": true,
+        "direction": "Neutral",
+        "takeProfitPercentage": 10,
+        "stopLossPercentage": 6,
+        "enabled": true,
+        "initialPrice": "100"
+      },
+      "pendingCleared": true
+    },
+    {
+      "id": "N03_old_act_results_relabelled_as_current_run_successful_stop",
+      "reproduced": true,
+      "oldResultAt": "2026-10-01T00:00:00Z",
+      "events": [
+        {
+          "runId": "3c035189-1fa6-46e8-a404-68945adeb499",
+          "startedAt": "2026-10-03T02:08:24.351Z",
+          "dryrun": false,
+          "at": "2026-10-03T02:08:24.389Z",
+          "type": "actions",
+          "results": [
+            {
+              "act": "stop",
+              "market": "OLD-PERP",
+              "done": true
+            }
+          ],
+          "phase": "phase1"
+        },
+        {
+          "runId": "3c035189-1fa6-46e8-a404-68945adeb499",
+          "startedAt": "2026-10-03T02:08:24.351Z",
+          "dryrun": false,
+          "at": "2026-10-03T02:08:24.439Z",
+          "type": "end",
+          "status": "act_failed"
+        }
+      ]
+    },
+    {
+      "id": "N04a_conflicting_duplicate_ids_in_same_page_silently_overwrite",
+      "reproduced": true,
+      "feeUsd": 0.2,
+      "retainedFills": 1,
+      "cursor": 1790726410000,
+      "incomplete": false
+    },
+    {
+      "id": "N04b_future_cursor_is_reported_caught_up",
+      "reproduced": true,
+      "acquiredAt": "2026-09-30T00:00:10.000Z",
+      "futureCursor": 1790812810000,
+      "incomplete": false
+    },
+    {
+      "id": "N04c_late_indexed_fill_is_never_revisited",
+      "reproduced": true,
+      "queryFrom": 1790726410000,
+      "lateTimestamp": 1790726409000,
+      "fees": 0,
+      "incomplete": false,
+      "boundary": "mocked delayed history indexing; not evidence it happened live"
+    },
+    {
+      "id": "N05_import_retains_foreign_account_events_under_current_account",
+      "reproduced": true,
+      "imported": {
+        "subaccountId": 3,
+        "events": [
+          {
+            "id": "foreign-deposit",
+            "type": "cashflow",
+            "amountUsd": 100,
+            "at": "2026-10-01T00:00:00Z",
+            "source": "account-2-export"
+          }
+        ],
+        "coverage": {
+          "cashflow": {
+            "from": "2026-09-30T00:00:00Z",
+            "through": "2026-10-03T00:00:00Z",
+            "source": "fixture-reconciled"
+          }
+        }
+      },
+      "attributed": {
+        "complete": false,
+        "netCashflow": 100,
+        "strategyPnl": 10,
+        "funding": null,
+        "interest": null,
+        "reward": null
+      }
+    },
+    {
+      "id": "N06_cached_analysis_bypasses_changed_liquidity_gate",
+      "reproduced": true,
+      "configuredMinQuoteVolume": 5000000,
+      "cachedQuoteVolume": 1000000,
+      "latestQuoteVolume": 1000000,
+      "actions": [
+        {
+          "act": "create",
+          "market": "ETH-PERP",
+          "urlSymbol": "ETH_USD_PERP",
+          "lower": 90,
+          "upper": 110,
+          "count": 20,
+          "value": 2500,
+          "why": "score=10 chop=10 r24=5% qvol=$1000k"
+        }
+      ]
+    },
+    {
+      "id": "N07_public_mark_price_outage_aborts_account_risk_snapshot",
+      "reproduced": true,
+      "error": "GET /api/v1/markPrices -> 503 market data unavailable",
+      "newestFetchedEquity": 100,
+      "previousObservedEquity": 1000,
+      "previouslyKnownPeak": 1000,
+      "drawdownPct": 90,
+      "budgetPct": 80,
+      "snapshotUnchanged": true,
+      "effect": "run_round exits OBSERVE_FAILED before decide can latch/dispatch the account breaker",
+      "healthyContrast": {
+        "pausedPersisted": true,
+        "stopDispatched": true,
+        "onlyPublicMarksResponseChanged": true
+      }
+    }
+  ],
+  "boundary": "Production code executed with simulated session I/O and temporary BG_ROOT files. No real account writes, no trading, no service restart, no deployment."
+}
