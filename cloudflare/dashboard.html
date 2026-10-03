@@ -117,8 +117,17 @@ function render(s) {
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
-  const camp = s.campaignVolume || 0, tier = s.tier1 || 50000;
-  const pct = Math.min(100, camp / tier * 100);
+  const camp = s.campaignVolume || 0;
+  // 盲盒档位：50k→1盒、300k→2、600k→3、之后每 500k 一盒，封顶 4.1M/10 盒
+  const TIERS = [50000, 300000, 600000, 1100000, 1600000, 2100000, 2600000, 3100000, 3600000, 4100000];
+  const boxes = TIERS.filter((t) => camp >= t).length;
+  const nextTier = TIERS.find((t) => camp < t) || null;
+  const tierPct = nextTier ? Math.min(100, camp / nextTier * 100) : 100;
+  const fmtShort = (n) => n >= 1000000 ? (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1000 ? Math.round(n / 1000) + "k" : fmt(n, 0);
+  const ladder = TIERS.map((t) => {
+    const done = camp >= t, isNext = nextTier === t;
+    return `<span class="chip" style="${done ? "border-color:#14532d;color:#4ade80" : isNext ? "border-color:#1d4ed8;color:#93c5fd" : ""}">${fmtShort(t)}${done ? " ✓" : ""}</span>`;
+  }).join("");
   const chips = [];
   if(s.identityValid===false)chips.push(`<span class="chip bad">账户身份未确认</span>`);
   if(s.manualPauseValid===false)chips.push(`<span class="chip bad">手动暂停记录异常</span>`);
@@ -171,9 +180,12 @@ function render(s) {
         <details style="margin-top:6px"><summary style="cursor:pointer">查看账本拆分</summary><div>资金费 ${fmt(s.verifiedWindow.funding,4)} USD<br>借贷利息 ${fmt(s.verifiedWindow.interest,4)} USD<br>奖励 ${fmt(s.verifiedWindow.reward,4)} USD<br>其他交易与估值 ${fmt(s.verifiedWindow.otherTradingAndValuationPnl,4)} USD<br>${s.verifiedWindow.decompositionComplete?'本窗口拆分已核对':'拆分尚未完整核对'}</div></details></div></div>` : ''}
     </div>
     <div class="section">
-      <h2>交易量活动 · 第 1 档盲盒（${fmt(camp, 0)} / ${fmt(tier, 0)}）</h2>
-      <div class="bar"><i style="width:${pct}%"></i></div>
-      <div class="muted">${pct.toFixed(1)}%${s.tier1Secured ? " · 第 1 档已锁定" : ""} · 活动截止 10-06 23:59 UTC</div>
+      <h2>交易量活动 · 累计 ${fmt(camp, 0)} USD · 已锁定 ${boxes} 盲盒</h2>
+      <div>${ladder}</div>
+      <div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>
+      <div class="muted">${nextTier
+        ? `下一档：第 ${boxes + 1} 盒 @ ${fmt(nextTier, 0)} USD · 进度 ${tierPct.toFixed(1)}% · 还差 ${fmt(nextTier - camp, 0)} USD`
+        : "已达封顶 10 盒 🎉"} · 活动截止 10-06 23:59 UTC</div>
     </div>
     <div class="section">
       <h2>网格（${g.length}）</h2>
