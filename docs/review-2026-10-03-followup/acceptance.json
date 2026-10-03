@@ -1,0 +1,87 @@
+{
+  "baseline": "9bf711f",
+  "codeCommit": "389831b",
+  "workerVersion": "67264b93-298a-4beb-a661-66b05ef6db83",
+  "offline": {
+    "regression": 151,
+    "productionAcceptance": 66,
+    "network": "forbidden"
+  },
+  "online": {
+    "domains": [
+      {
+        "host": "https://grid.terryso.dev",
+        "home": 200,
+        "snapshot": 200,
+        "at": "2026-10-03T01:03:39.751Z",
+        "generation": "2026-10-03T01:03:41.269Z",
+        "days": 3,
+        "records": 257,
+        "confirmed": 18,
+        "scope": "all-recorded-observation-samples",
+        "old400Copy": false,
+        "profitLabel": true
+      },
+      {
+        "host": "https://backpack-grid-dashboard.oxtiger.workers.dev",
+        "home": 200,
+        "snapshot": 200,
+        "at": "2026-10-03T01:03:39.751Z",
+        "generation": "2026-10-03T01:03:41.269Z",
+        "days": 3,
+        "records": 257,
+        "confirmed": 18,
+        "scope": "all-recorded-observation-samples",
+        "old400Copy": false,
+        "profitLabel": true
+      }
+    ],
+    "api": {
+      "snapshotHttp": 200,
+      "rejectUnauthorized": 403,
+      "likesRead": {
+        "likes": 58,
+        "alreadyLiked": true
+      },
+      "likeReplay": {
+        "first": {
+          "likes": 58,
+          "alreadyLiked": true
+        },
+        "second": {
+          "likes": 58,
+          "alreadyLiked": true
+        },
+        "countUnchanged": true
+      }
+    },
+    "upload": {
+      "at": "2026-10-03T01:03:42.247Z",
+      "httpStatus": 200,
+      "readBack": true,
+      "snapshotAt": "2026-10-03T01:03:39.751Z",
+      "quotaExhausted": false,
+      "ok": true
+    }
+  },
+  "ui": {
+    "desktopWidth": 1440,
+    "mobileWidth": 390,
+    "noHorizontalOverflow": true,
+    "historicalPnlTitle": true,
+    "daysDecimalPlaces": 1,
+    "lifetimeDrawdown": true
+  },
+  "history": {
+    "records": 257,
+    "newSuccessfulRounds": 18,
+    "confirmedSince": "2026-10-02T20:45:52.264Z",
+    "originalDataRetained": true
+  },
+  "pending": [
+    "Reconciled historical cashflow/funding/interest/reward coverage and exact baseline time",
+    "Long-term out-of-sample strategy validation (after campaign)",
+    "Exchange stop-cause field unavailable: Disabled remains heuristic"
+  ],
+  "boundary": "No manual act or test grid. Online like replay was performed only for alreadyLiked=true and count remained 58. High concurrency was tested locally, not by fabricating production visitors."
+}

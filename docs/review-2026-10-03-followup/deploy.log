@@ -1,0 +1,26 @@
+
+ ⛅️ wrangler 4.147.0
+────────────────────
+[custom build] Running: node scripts/build_dashboard.cjs
+[custom build] static dashboard built; fallback timestamp: 2026-10-03T01:00:59.479Z
+[custom build]
+🌀 Building list of assets...
+✨ Read 1 file from the assets directory /Users/nick/CascadeProjects/backpack_grid/cloudflare/public
+🌀 Starting asset upload...
+🌀 Found 1 new or modified static asset to upload. Proceeding with upload...
++ /index.html
+Uploaded 1 of 1 asset
+✨ Success! Uploaded 1 file (1.59 sec)
+
+Total Upload: 4.35 KiB / gzip: 1.68 KiB
+Worker Startup Time: 1 ms
+Your Worker has access to the following bindings:
+Binding                                           Resource
+env.LIKES (LikeCounter)                           Durable Object
+env.DASH (40e078ae20c84612bce7ddfb711f7992)       KV Namespace
+
+Uploaded backpack-grid-dashboard (11.24 sec)
+Deployed backpack-grid-dashboard triggers (4.70 sec)
+  https://backpack-grid-dashboard.oxtiger.workers.dev
+  grid.terryso.dev (custom domain)
+Current Version ID: 67264b93-298a-4beb-a661-66b05ef6db83

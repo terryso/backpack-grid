@@ -1,0 +1,28 @@
+[
+  {
+    "host": "https://grid.terryso.dev",
+    "home": 200,
+    "snapshot": 200,
+    "at": "2026-10-03T01:03:39.751Z",
+    "generation": "2026-10-03T01:03:41.269Z",
+    "days": 3,
+    "records": 257,
+    "confirmed": 18,
+    "scope": "all-recorded-observation-samples",
+    "old400Copy": false,
+    "profitLabel": true
+  },
+  {
+    "host": "https://backpack-grid-dashboard.oxtiger.workers.dev",
+    "home": 200,
+    "snapshot": 200,
+    "at": "2026-10-03T01:03:39.751Z",
+    "generation": "2026-10-03T01:03:41.269Z",
+    "days": 3,
+    "records": 257,
+    "confirmed": 18,
+    "scope": "all-recorded-observation-samples",
+    "old400Copy": false,
+    "profitLabel": true
+  }
+]

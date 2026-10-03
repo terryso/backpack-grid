@@ -131,7 +131,7 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 | ACT_FAILED | 读 `state/act_results.json` 定位；`pending_stops.json` 非空表示有未完成清理，下轮自动重试 |
 | 熔断恢复 | 修复 `state/risk.json`：保留 `peakEquity`、删除 `paused` 字段 |
 | 手动暂停某网格 | 直接在交易所侧关闭即可——巡检识别"Disabled 且盈亏未越阈值"不会动它；**注意**若盈亏已越过阈值会被视为兜底触发而轮换 |
-| 仪表盘 403 | `state/dashboard.env` 的 DASH_TOKEN 与 Worker secret 不一致，重跑 deploy |
+| 仪表盘 403 | `state/dashboard.env` 的 DASH_WRITE_TOKEN 与 Worker secret 不一致，重跑 deploy |
 
 ## 已知引擎 quirk
 
@@ -150,7 +150,7 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 ## 安全
 
 无 API key、无私钥；交易所操作依赖 ego lite 浏览器会话。全部密钥（仪表盘
-DASH_TOKEN 等）只存 `state/dashboard.env`，`state/` 整体被 gitignore，仓库可安全推送。
+DASH_WRITE_TOKEN 等）只存 `state/dashboard.env`，`state/` 整体被 gitignore，仓库可安全推送。
 
 ## 2026-10-03 执行与数据契约
 

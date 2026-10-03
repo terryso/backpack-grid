@@ -1,0 +1,19 @@
+{
+  "snapshotHttp": 200,
+  "rejectUnauthorized": 403,
+  "likesRead": {
+    "likes": 58,
+    "alreadyLiked": true
+  },
+  "likeReplay": {
+    "first": {
+      "likes": 58,
+      "alreadyLiked": true
+    },
+    "second": {
+      "likes": 58,
+      "alreadyLiked": true
+    },
+    "countUnchanged": true
+  }
+}

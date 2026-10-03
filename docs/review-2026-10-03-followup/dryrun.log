@@ -1,0 +1,36 @@
+=== ROUND 2026-10-03 09:00:51 dryrun=1 ===
+{
+ "at": "2026-10-03T01:00:59.479Z",
+ "badges": {
+  "持仓": 3,
+  "当前委托": 111,
+  "网格": 4
+ },
+ "margin": {
+  "totalEquity": "$648.98",
+  "availableEquity": "$258.06",
+  "openPnl": "-$9.62",
+  "initMarginPct": "60%"
+ },
+ "grids": [
+  "HYPE-PERP 中性 80.704~91.868 x20 $1500.00 pnl=$17.31 (1.15%)",
+  "PUMP-PERP 中性 0.0050775~0.0063327 x28 $1500.00 pnl=$73.81 (4.92%)",
+  "SUI-PERP 中性 1.0016~1.3068 x33 $2500.00 pnl=$44.61 (1.78%)",
+  "ZEC-PERP 中性 1218.7~1549.78 x30 $2250.00 pnl=$0.63 (0.03%)"
+ ],
+ "positions": [
+  "ZEC-PERP long size=0.32 mark=1320.62 liq=0 pnl=-$2.68 (-9.5%)",
+  "SUI-PERP short size=196.9 mark=1.1812 liq=3.5145371879574894 pnl=-$0.80 (-6.84%)",
+  "HYPE-PERP short size=5.21 mark=89.411 liq=177.59412712261607 pnl=-$6.14 (-26.37%)"
+ ]
+}
+
+GRID HYPE-PERP 中性 80.704~91.868 pnl=1.15% value=$1500.00  ok
+GRID PUMP-PERP 中性 0.0050775~0.0063327 pnl=4.92% value=$1500.00  ok
+GRID SUI-PERP 中性 1.0016~1.3068 pnl=1.78% value=$2500.00  ok
+GRID ZEC-PERP 中性 1218.7~1549.78 pnl=0.03% value=$2250.00  ok
+CAMPAIGN volume 51463 / 50000 USD (102.9%) TIER1 SECURED
+DIR-PAPER open=[-] closedTotal=0.00% (n=0)
+ACTIONS: none
+DRYRUN: no actions executed.
+dashboard updated and read back
