@@ -1,0 +1,11 @@
+{
+  "at": "2026-10-03T08:45:34.483431+00:00",
+  "accountBound": true,
+  "asOf": "2026-10-03T08:40:58.039Z",
+  "incomplete": false,
+  "rawFills": 1049,
+  "legacyFills": 1024,
+  "legacyIdsMissing": 0,
+  "independentTotalsMatch": true,
+  "symbolCount": 8
+}

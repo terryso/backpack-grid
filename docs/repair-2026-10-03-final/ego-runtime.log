@@ -1,3 +1,3 @@
 CREATED ETH-PERP 90~110 x20 $500 (mark 100, backstops TP=10/SL=6, orders verified)
 ALL_DONE 1 actions
-{ realEgoEvaluator: true, mockedWrites: 1, pending: {}, status: 'complete', root: '/var/folders/zd/ygt_wt3x0wbdl1lwfddnstqh0000gn/T/bg-ego-probe-zpY3Fr' }
+{ realEgoEvaluator: true, mockedWrites: 1, pending: {}, status: 'complete', root: '/var/folders/zd/ygt_wt3x0wbdl1lwfddnstqh0000gn/T/bg-ego-probe-o65CXB' }

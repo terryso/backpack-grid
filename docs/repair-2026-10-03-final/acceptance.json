@@ -1,0 +1,129 @@
+{
+  "at": "2026-10-03T09:02:35.227Z",
+  "timezone": "Asia/Shanghai",
+  "softwareAcceptance": "PASS",
+  "scope": "Known reviewed code defects, offline failure paths, real evaluator with mock I/O, readonly account flow, deployment/readback, UI and launchd entries",
+  "offline": {
+    "regression": 151,
+    "productionAcceptance": 69,
+    "safetyScenarios": 27,
+    "contractAndStorage": 38,
+    "total": 285,
+    "network": "forbidden"
+  },
+  "runtime": {
+    "realEgoMockLifecycle": "PASS",
+    "realEgoOwnerDeath": "PASS",
+    "exchangeMutationDuringAcceptance": false
+  },
+  "liveReadonly": {
+    "snapshotAt": "2026-10-03T08:57:11.856Z",
+    "grids": 4,
+    "nativeProtectionsConfirmed": true,
+    "pendingCount": 0,
+    "riskPaused": false,
+    "uploadAndReadback": true,
+    "realDryrun": "PASS"
+  },
+  "services": [
+    {
+      "label": "com.backpack.grid-monitor",
+      "loaded": true,
+      "state": "not running",
+      "runs": 0,
+      "lastExit": "(never exited)",
+      "intervalSeconds": 900
+    },
+    {
+      "label": "com.backpack-grid-peak",
+      "loaded": true,
+      "state": "not running",
+      "runs": 19,
+      "lastExit": "0",
+      "intervalSeconds": 60
+    },
+    {
+      "label": "com.backpack-grid-history",
+      "loaded": true,
+      "state": "not running",
+      "runs": 2,
+      "lastExit": "0",
+      "intervalSeconds": 900
+    },
+    {
+      "label": "com.backpack-grid-research",
+      "loaded": true,
+      "state": "not running",
+      "runs": 2,
+      "lastExit": "0",
+      "intervalSeconds": 900
+    }
+  ],
+  "workerVersion": "9a811d3d-a4bf-4948-8a82-5c4bc8569179",
+  "history": {
+    "at": "2026-10-03T08:45:34.483431+00:00",
+    "accountBound": true,
+    "asOf": "2026-10-03T08:40:58.039Z",
+    "incomplete": false,
+    "rawFills": 1049,
+    "legacyFills": 1024,
+    "legacyIdsMissing": 0,
+    "independentTotalsMatch": true,
+    "symbolCount": 8
+  },
+  "ui": {
+    "desktopWidth": 1440,
+    "statusBadgeSameRow": true,
+    "mobileWidth": 390,
+    "noHorizontalOverflow": true,
+    "runDaysOneDecimal": true,
+    "originalProfitTitle": true,
+    "drawdownUsesAllRecordedHistory": true
+  },
+  "strategyParametersUnchanged": {
+    "riskBudgetPct": 80,
+    "tp": 10,
+    "sl": 6
+  },
+  "localBrowserConfigDifferencePreserved": true,
+  "externalDataGates": {
+    "historicalNetPnlAttribution": "PENDING: approximate three-day baseline is not exact time or complete scoped cashflows",
+    "longTermOutOfSampleProfitability": "PENDING: not inferred from software PASS"
+  },
+  "sourceHashes": {
+    "accounting.cjs": "35ee93fb81a0fbb9c46730014b715a897d5cca69f24fdca6fa06fa3cd36c17dd",
+    "act.mjs": "1a3691990d36641db160bd45aaee2c6e6405586805d876bca8ad6b4a8840bbb6",
+    "act_core.cjs": "3ef88e7f26e5d7b167c9df6bb428e23acb583b7f0e924238da5597f266f8391d",
+    "analyze.cjs": "5c9074079feb6d32e50b0615449868137b21d2f24a896cec151a1d8767fe7583",
+    "api.cjs": "2705c2b8f7281c4e22e7637ffaab1679a2ace9f65701c180922f052b7f12494f",
+    "attribution_sources.cjs": "f37faa6143f1acaec42cf6e351452dade6ee5295de8a9edb8996daad99994c01",
+    "build_dashboard.cjs": "8d445148cc9418e07a1c4a2ba3d4f12c1c457b9d0c263dff578711622b56dc3e",
+    "collect_attribution.mjs": "7c5d3dd017d92d4979c4e52337f6e64a63fe0afaf475f897c2840967d440c0dc",
+    "collect_history.mjs": "5cf26cdda74755eccca999c6191a58c90a2609f3dd8dcc0215f781cca6ef0411",
+    "collect_history.sh": "864c1ad4b7d0f070fbaf00e6d4b14407cb5fe85bf7468353d415d221d444929a",
+    "contracts.cjs": "6498aaca2968d478dde36ae83a9ef85c76d2ad0d3abc2e466a6475a3a3b87554",
+    "dashboard_data.cjs": "b76ac4dde718107500e33000ca1b4d319134dac0c84cc614b5f4c0ed41942ac6",
+    "dashboard_metrics.cjs": "3a25a79baf8aa11f4c613176737c01473efd2c8f1ee4635975e3259f6c3481ef",
+    "decide.cjs": "c165b2569f740264e1b5dc01ba273efdf843d5718e2383a5ac1fcaf9b8cc3ab0",
+    "deploy_dashboard.sh": "c57b247b085dfee0809a1bc90bd413abfe175704d13cb534d486cd537e37ef51",
+    "execution_lease.cjs": "2e9f285ad65fa5dae6973e1561106431682194c7d54cf24279dfd834c4336759",
+    "grid_sizing.cjs": "2e872b8f7a7d119f9d87624db3fcae9f7aba0aa0bdd37c7324e47ef7e8610468",
+    "history_core.cjs": "60b5f73bd0fb48ea31d81feb10eeb76aab1777b2cb61f879ef7cb1041dc91674",
+    "history_status.cjs": "64cdcf11f6b415e9e47fabb91aac91b9836a8be6f9c803367031f8fa471ab386",
+    "history_store.py": "54184c014c07f7defc1eaf3413660de87f77ee7deaaa56ed3795cbde39e6e316",
+    "import_ledger.cjs": "7ece38a07b9a90f8f0a0eb09165af9773690561e77be28c5d8fd1f1a54c53fb7",
+    "install_launch_agents.py": "2f2f24d10d31be0436840d53fc5154a7f914491920b789e0d368c5e4c7f3d31e",
+    "manual_pause.cjs": "c22f29674c596be41854f6999f4e19bc0c1aaeecbbc420fa8b85cceb1f5daee1",
+    "observe.mjs": "f6575cf43f44519da62b6de64dcbb8984ae77dcdfab003ede8a231cd3ac5e5de",
+    "peak_probe.mjs": "9a9fd6cf5856c0f81cdb24f9583a11a3c94aaefe431a561b3b9d71beb0c63e4f",
+    "peak_probe.sh": "04a86676d115da5207857536750d7793cffff2d73385c07187081ce71fd8d12a",
+    "refresh_research.sh": "bf3f193df969075899b56725a7b6dc7ca94a45c041b9b4142f384ae1f284c7df",
+    "risk_write.py": "6c69eae303a2b8a2936c25e9b097381232b5dc3b830c148011b9aeb1e89e309c",
+    "round_locked.sh": "4957ecb945f30012234a619c218a46f4501fcf569d5d4cbf929736db71aa57fd",
+    "run_events.cjs": "8f01a8a65a4debfc00ca26a232d155cf4d316652fe9ea058e251666e38e979ae",
+    "run_round.sh": "cd4e92b559c02f33dd31023a3ad91eb7e31de47ff9df4291f9f4da567e142b00",
+    "state_schema.cjs": "118d8210848d77ed0502fe5d9c928234cad7cd7ea93facbc9d83b51c9125a5f0",
+    "upload_dashboard.sh": "7c87d23a26f196bf16c6ae519035b1d57d01d86f6b6a98bd181a20eb6dabb482",
+    "with_lock.py": "a766bd729491367391b7ad8e8c8a366248069c96419b418e2c882b38d7e25b87"
+  }
+}

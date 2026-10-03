@@ -1,0 +1,44 @@
+{
+  "at": "2026-10-03T08:48:52.525Z",
+  "workerVersion": "9a811d3d-a4bf-4948-8a82-5c4bc8569179",
+  "results": [
+    {
+      "domain": "https://grid.terryso.dev",
+      "home": 200,
+      "snapshot": 200,
+      "likes": 200,
+      "unauthorizedWrite": 403,
+      "snapshotMatches": true,
+      "identityConfirmed": true,
+      "manualPauseRegistryConfirmed": true,
+      "publicSnapshotNoIdentity": true,
+      "newUI": true,
+      "duplicateSnapshotPrefixRemoved": true,
+      "latestReadback": {
+        "at": "2026-10-03T09:04:07.751Z",
+        "snapshotAt": "2026-10-03T08:57:11.856Z",
+        "matches": true,
+        "status": 200
+      }
+    },
+    {
+      "domain": "https://backpack-grid-dashboard.oxtiger.workers.dev",
+      "home": 200,
+      "snapshot": 200,
+      "likes": 200,
+      "unauthorizedWrite": 403,
+      "snapshotMatches": true,
+      "identityConfirmed": true,
+      "manualPauseRegistryConfirmed": true,
+      "publicSnapshotNoIdentity": true,
+      "newUI": true,
+      "duplicateSnapshotPrefixRemoved": true,
+      "latestReadback": {
+        "at": "2026-10-03T09:04:07.947Z",
+        "snapshotAt": "2026-10-03T08:57:11.856Z",
+        "matches": true,
+        "status": 200
+      }
+    }
+  ]
+}

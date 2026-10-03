@@ -230,7 +230,7 @@ PASS 20 concurrent same-visitor likes count once with legacy seed
 PASS 20 different concurrent visitors lose no increments
 PASS day rollover expires markers; delayed old day cannot reset state
 69 production acceptance cases passed
-(node:58614) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(node:64209) ExperimentalWarning: SQLite is an experimental feature and might change at any time
 (Use `node --trace-warnings ...` to show where the warning was created)
 PASS healthy_create_positive_control
 STOPPED ETH-PERP — emergency: stored grid parameters not confirmed
@@ -247,6 +247,8 @@ STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
 PASS N01_full_and_final_config_kick-drift
 STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
 PASS N01_full_and_final_config_final-orphan
+STOPPED ETH-PERP — emergency: final grid/risk reconciliation failed
+PASS N01_full_and_final_config_final-liquidating
 STOPPED OLD-PERP — LIQ_DANGER OLD_USDC_PERP
 PASS N02a_fresh_liquidation_danger_exits_before_create
 PASS N02b_unknown_quantity_blocks_all_new_writes
@@ -258,6 +260,7 @@ PASS actor_veto_pending-unbound
 PASS actor_veto_pending-foreign
 PASS actor_veto_manual-global
 PASS actor_veto_config-after-validate
+PASS actor_veto_account-unknown
 PASS N03_old_results_rejected_by_run_binding
 PASS N04a_conflicting_batch_ids_rejected
 PASS N04b_future_cursor_is_rejected
@@ -265,7 +268,7 @@ PASS N04c_late_fills_captured_by_overlap
 PASS N05_foreign_old_ledger_is_not_retagged
 PASS N06_updated_liquidity_threshold_enforced
 PASS N07_public_market_failure_preserves_breaker_and_exits
-25 new safety scenarios passed
+27 new safety scenarios passed
 PASS invalid config is refused before trading
 PASS actual collateral owner must match pin
 PASS decimal formatting normalization confirms identical parameters

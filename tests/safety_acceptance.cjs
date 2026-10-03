@@ -22,6 +22,7 @@ async function actualAct(mode) {
   put(dir,'state/account_identity.json',identity);
   const runId='safety-'+mode,planId='plan-'+mode;put(dir,'state/run_context.json',{runId,identity,startedAt:at,ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(dir,'state/last_round_status'),'running');
   const actions = mode==='identity-stop'?[{act:'stop',market:'ETH-PERP',reason:'SL'}]:mode==='identity-protect'?[{act:'protect',market:'ETH-PERP',tp:10,sl:6,closeOnStop:true}]:[{ act: 'create', market: 'ETH-PERP', lower: 90, upper: 110, count: 20, value: 500 }];
+  if(mode==='final-liquidating')actions.push({act:'create',market:'BTC-PERP',lower:90,upper:110,count:20,value:500});
   const hash = (o) => createHash('sha256').update(JSON.stringify(o)).digest('hex');
   put(dir, 'state/actions.json', actions);
   put(dir, 'state/actions_meta.json', { at, runId,planId,identity, configHash: hash(localCfg), actionsHash: hash(actions), subaccountId: cfg.subaccountId || 3, riskWriteOk: true });
@@ -51,7 +52,7 @@ async function actualAct(mode) {
     else if (u.pathname.endsWith('/position')) data = mode==='final-orphan'&&writes===1?[{symbol:'ORPHAN_USDC_PERP',netQuantity:'1',markPrice:'100',estLiquidationPrice:'0'}]:mode.startsWith('live-') && autos.some(g=>g.symbol==='OLD_USDC_PERP'&&g.enabled) ? [{ symbol: 'OLD_USDC_PERP', netQuantity: mode === 'live-unknown' ? null : '1', markPrice: '100', estLiquidationPrice: mode==='live-liq-unknown'?null:'99' }] : [];
     else if (u.pathname.endsWith('/collateral')) data = { [mode.startsWith('identity-') ? 'different-owner-3' : 'fixture-3']: { netEquity:'1000',netEquityAvailable:'500' } };
     else if (u.pathname.endsWith('/markPrices')) data = [{ symbol: 'ETH_USDC_PERP', markPrice: '100' }];
-    else if(u.pathname.endsWith('/account')) data={leverageLimit:'10',liquidating:false};
+    else if(u.pathname.endsWith('/account')) data={leverageLimit:'10',liquidating:mode==='account-unknown'?null:mode==='final-liquidating'&&writes===1?true:false};
     else if(u.pathname.endsWith('/markets')) data=['ETH','BTC'].map(m=>({symbol:m+'_USDC_PERP',imfFunction:{type:'sqrt',base:'.02',factor:'.00001'}}));
     else if (u.pathname.endsWith('/orders')) {data = mode==='kick-drift'&&writes<3?[]:Array.from({ length: 20 }, () => ({ symbol: 'ETH_USDC_PERP' }));if(mode==='final-drift')autos.find(g=>g.symbol==='ETH_USDC_PERP').allocationUsd='100000';}
     else throw new Error('unexpected mock endpoint ' + u.pathname);
@@ -62,6 +63,7 @@ async function actualAct(mode) {
   try { await new AsyncFunction('taskSpace', 'console', 'process', 'Date', source)(async () => ({ page: () => page }), { log() {} }, { exit: (code) => { throw Object.assign(new Error('mock exit'), { exit: code }); } },Clock); }
   catch (e) { if (e.exit === undefined) {if(mode!=='config-after-validate')throw e;assert.match(e.message,/CONFIG_CHANGED/);exit=2;}else exit = e.exit; }
   const result = get(dir, 'state/act_results.json');
+  if(mode==='final-liquidating')assert(result.results.some(r=>r.market==='BTC-PERP'&&r.skipped));
   if(mode==='healthy') {assert.equal(exit,0);assert(result.results.some(r=>r.act==='create'&&r.done));} else {assert.notEqual(exit,0);assert(!result.results.some(r=>r.act==='create'&&r.done));}
   const applied = autos.find((g) => g.symbol === 'ETH_USDC_PERP');
   return { exit, writes, result: result.results, applied, pendingCleared: Object.keys(get(dir,'state/pending_stops.json')).length===0 };
@@ -70,12 +72,12 @@ async function main() {
   let r=await actualAct('healthy');record('healthy_create_positive_control',r);
   r=await actualAct('stored-allocation');assert(!r.applied);record('N01a_applied_allocation_drift_is_cleaned_up',r);
   r=await actualAct('stored-upper');assert(!r.applied);record('N01b_applied_upper_drift_is_cleaned_up',r);
-  for(const mode of ['stored-direction','stored-disabled','final-drift','kick-drift','final-orphan']){r=await actualAct(mode);assert(!r.applied);record('N01_full_and_final_config_'+mode,r);}
+  for(const mode of ['stored-direction','stored-disabled','final-drift','kick-drift','final-orphan','final-liquidating']){r=await actualAct(mode);assert(!r.applied);record('N01_full_and_final_config_'+mode,r);}
   r=await actualAct('live-danger');assert.equal(r.writes>0,true);assert(!r.applied);record('N02a_fresh_liquidation_danger_exits_before_create',r);
   r=await actualAct('live-unknown');assert.equal(r.writes,0);record('N02b_unknown_quantity_blocks_all_new_writes',r);
   r=await actualAct('live-liq-unknown');assert.equal(r.writes,0);record('N02c_unknown_liquidation_price_blocks_create',r);
   r=await actualAct('identity-mismatch');assert.equal(r.writes,0);record('N08_foreign_identity_blocks_all_mutations',r);
-  for(const mode of ['identity-stop','identity-protect','pending-unbound','pending-foreign','manual-global','config-after-validate']){r=await actualAct(mode);assert.equal(r.writes,0);record('actor_veto_'+mode,r);}
+  for(const mode of ['identity-stop','identity-protect','pending-unbound','pending-foreign','manual-global','config-after-validate','account-unknown']){r=await actualAct(mode);assert.equal(r.writes,0);record('actor_veto_'+mode,r);}
   // run_events copies a previous result file into a newly started run without binding.
   let dir = fixture(); const oldAt = '2026-10-01T00:00:00Z';
   put(dir, 'state/act_results.json', { at: oldAt, results: [{ act: 'stop', market: 'OLD-PERP', done: true }] });

@@ -238,6 +238,7 @@ for (const a of actions) {
         }
         if (!finiteNumber(a.value) || Number(a.value) <= 0 || existingRisk + Number(a.value) * cfg.stopLossPct / 100 + cfg.exitCostBufferUsd > eq * cfg.riskBudgetPct / 100) throw new Error("live forward-risk budget exceeded");
         const liveAccount=await jget(`/api/v1/account?subaccountId=${SUB}`);
+        if(typeof liveAccount.liquidating!=="boolean") {riskChanged=true;throw Error("account liquidation status unknown: new risk blocked");}
         if(liveAccount.liquidating===true) {riskChanged=true;throw Error("account liquidating: new risk blocked");}
         if(!finiteNumber(liveAccount.leverageLimit)||Number(liveAccount.leverageLimit)<=0||!finiteNumber(col.netEquityAvailable)) throw Error("available margin/leverage unknown");
         const markets=await jget("/api/v1/markets");const marketInfo=Array.isArray(markets)?markets.find(m=>m.symbol===symbol):null;
@@ -353,11 +354,13 @@ for (const a of actions) {
         const finalEntry = finalAuto.params?.symbols?.find(e=>e.symbol===symbol);
         const finalCol = await accountCheck();
         const finalPositions=await jget(`/api/v1/position?subaccountId=${SUB}`);
+        const finalAccount=await jget(`/api/v1/account?subaccountId=${SUB}`);
         const finalRisk=positionsRisk(finalPositions,cfg,identity);
         let finalBudgetOk=false;try{finalBudgetOk=forwardRisk(finalAuto.params?.symbols,finalCol.netEquity,cfg);}catch{}
         const finalDD=Number(risk.peakEquity)>0?(Number(risk.peakEquity)-Number(finalCol.netEquity))/Number(risk.peakEquity)*100:0;
         const finalOrphan=!Array.isArray(finalPositions)||finalPositions.some(p=>!finalAuto.params?.symbols?.some(g=>g.symbol===p.symbol));
-        if(!gridConfirmed(finalEntry,a,cfg) || !finalBudgetOk || finalRisk.blocked || finalOrphan || finalDD>=cfg.warnDrawdownPct) {
+        if(finalAccount.liquidating!==false || !finalBudgetOk || finalRisk.blocked || finalOrphan || finalDD>=cfg.warnDrawdownPct)riskChanged=true;
+        if(finalAccount.liquidating!==false || !gridConfirmed(finalEntry,a,cfg) || !finalBudgetOk || finalRisk.blocked || finalOrphan || finalDD>=cfg.warnDrawdownPct) {
           let cleaned=false;try { const r=await stopGrid(a.market,null,"emergency: final grid/risk reconciliation failed",results);cleaned=r?.done===true; } catch {}
           if(!cleaned){unresolvedCleanup=true;stopIncomplete=true;}
           throw Error("final grid reconciliation failed"+(cleaned?"; cleanup verified":"; MANUAL INTERVENTION REQUIRED"));
