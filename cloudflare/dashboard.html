@@ -36,6 +36,7 @@
   @media (max-width: 640px) {
     .wrap { padding: 10px 8px 24px; }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .cards > .card:last-child:nth-child(odd) { grid-column: 1 / -1; }
     .card { padding: 10px; }
     .card .v { font-size: 17px; }
     .section { padding: 10px; }
@@ -83,6 +84,10 @@
 <script>
 const fmt = (n, d = 2) => n == null || !Number.isFinite(Number(n)) ? "未知" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 const pnlCls = (v) => v == null ? "muted" : v >= 0 ? "pos" : "neg";
+// 活动档期与历史：静态 JSON（cloudflare/assets/campaign-history.json，构建时拷贝）。
+// 新活动只需改该文件：current.tiers/endsAt 换新档，旧活动连同战果写进 past。
+let HIST = { current: { name: "Mystery Box 活动 · 第 1 期", endsAt: "2026-10-06T23:59:59Z", tiers: [50000, 300000, 600000, 1100000, 1600000, 2100000, 2600000, 3100000, 3600000, 4100000] }, past: [] };
+fetch("/campaign-history.json").then((r) => r.ok ? r.json() : null).then((h) => { if (h) { HIST = h; if (!document.hidden) load(); } }).catch(() => {});
 // 健康徽标：距最近触发条件（止盈/止损/出界）的余量，三档颜色
 function healthRow(x, s) {
   // 与决策同口径：资金费调整后的盈亏百分比
@@ -118,8 +123,8 @@ function render(s) {
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
   const camp = s.campaignVolume || 0;
-  // 盲盒档位：50k→1盒、300k→2、600k→3、之后每 500k 一盒，封顶 4.1M/10 盒
-  const TIERS = [50000, 300000, 600000, 1100000, 1600000, 2100000, 2600000, 3100000, 3600000, 4100000];
+  // 档位来自活动历史 JSON 的 current.tiers（缺省回退到第 1 期阶梯）
+  const TIERS = (HIST?.current?.tiers || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
   const boxes = TIERS.filter((t) => camp >= t).length;
   const nextTier = TIERS.find((t) => camp < t) || null;
   const tierPct = nextTier ? Math.min(100, camp / nextTier * 100) : 100;
@@ -180,13 +185,33 @@ function render(s) {
         <details style="margin-top:6px"><summary style="cursor:pointer">查看账本拆分</summary><div>资金费 ${fmt(s.verifiedWindow.funding,4)} USD<br>借贷利息 ${fmt(s.verifiedWindow.interest,4)} USD<br>奖励 ${fmt(s.verifiedWindow.reward,4)} USD<br>其他交易与估值 ${fmt(s.verifiedWindow.otherTradingAndValuationPnl,4)} USD<br>${s.verifiedWindow.decompositionComplete?'本窗口拆分已核对':'拆分尚未完整核对'}</div></details></div></div>` : ''}
     </div>
     <div class="section">
+      ${(() => {
+        const endsAt = HIST?.current?.endsAt ? Date.parse(HIST.current.endsAt) : Infinity;
+        const active = isFinite(endsAt) ? Date.now() < endsAt : true;
+        const d = isFinite(endsAt) ? new Date(endsAt) : null;
+        const deadlineText = d ? `活动截止 ${d.getUTCMonth() + 1}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC` : "";
+        if (active) return `
       <h2>交易量活动 · 累计 ${fmt(camp, 0)} USD · 已锁定 ${boxes} 盲盒</h2>
       <div>${ladder}</div>
       <div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>
       <div class="muted">${nextTier
         ? `下一档：第 ${boxes + 1} 盒 @ ${fmt(nextTier, 0)} USD · 进度 ${tierPct.toFixed(1)}% · 还差 ${fmt(nextTier - camp, 0)} USD`
-        : "已达封顶 10 盒 🎉"} · 活动截止 10-06 23:59 UTC</div>
+        : TIERS.length ? "已达封顶 🎉" : ""}${deadlineText ? " · " + deadlineText : ""}</div>`;
+        return `
+      <h2>交易量活动（已结束）· 最终累计 ${fmt(camp, 0)} USD · 获得 ${boxes} 盲盒</h2>
+      <div>${ladder}</div>
+      <div class="muted">${escape(HIST?.current?.name || "活动")}已结束 · 开盒结果更新在下方活动历史</div>`;
+      })()}
     </div>
+    ${HIST?.past?.length ? `<div class="section">
+      <h2>活动历史</h2>
+      ${HIST.past.map((p) => `<div class="card" style="margin-bottom:8px">
+        <div style="font-weight:600">${escape(String(p.name || ""))}</div>
+        <div class="muted" style="font-size:11px">${escape(String(p.period || ""))}</div>
+        <div style="margin-top:4px">${escape(String(p.result || ""))}</div>
+        ${p.rewards ? `<div class="muted" style="margin-top:2px">奖励：${escape(String(p.rewards))}</div>` : ""}
+      </div>`).join("")}
+    </div>` : ""}
     <div class="section">
       <h2>网格（${g.length}）</h2>
       <div class="gridcards">
