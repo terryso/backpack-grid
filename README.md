@@ -4,6 +4,8 @@
 
 An autonomous crypto grid-trading system that designs its own strategy, runs on a **live Backpack perpetual-futures account with real money**, and re-balances itself every 15 minutes — no human in the loop.
 
+> **📌 Account prerequisite**: Backpack perp grids are **only available on Bot-type subaccounts** — regular subaccounts have no grid feature and cannot be managed by this system. Every grid create/stop call here runs against a Bot subaccount; to replicate, log that bot account into the ego lite browser so the system can reuse its session.
+
 <p align="center">
   <a href="https://grid.terryso.dev">
     <img src="docs/dashboard.png" alt="Live dashboard" width="860">
