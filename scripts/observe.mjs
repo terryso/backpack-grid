@@ -145,6 +145,14 @@ const strategyEquity = {
   totalPnl: null, // cash-flow coverage is required before calling equity change strategy PnL
 };
 
+// 官方活动量（Mystery Box 1011，与官网弹窗同源，每小时更新）；失败为 null，回退账本增量口径
+let officialCampaignVolume = null;
+try {
+  const cv = await page.fetch("https://api.backpack.exchange/wapi/v1/campaigns/1011/volume", { credentials: "include", timeout: 15000 });
+  const v = Number(JSON.parse(cv.body)?.totalVolume);
+  if (Number.isFinite(v) && v >= 0) officialCampaignVolume = v;
+} catch {}
+
 const observed = {
   at: new Date().toISOString(), source: "api", identity, marketDataAvailable,
   url: API, ...{ gridRows, margin, badges, positions }, strategyEquity, accountLeverageLimit: finiteNumber(account.leverageLimit) ? Number(account.leverageLimit) : null,
@@ -153,6 +161,7 @@ const observed = {
     symbol: s.symbol,
     vol: Number(s.pnl?.boughtValue || 0) + Number(s.pnl?.soldValue || 0),
   })),
+  officialCampaignVolume,
 };
 
 // --- validation --- zero grids is a legal state (all rotated out / deliberately empty)

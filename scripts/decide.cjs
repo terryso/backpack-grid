@@ -423,6 +423,13 @@ const writeAtomic = (p, data) => {
       camp.last[l.symbol] = l.vol;
     }
     camp.campaignVolume += delta;
+    // 官方口径优先（Backpack 服务端计数，每小时更新；含手动交易/全部子账户，
+    // 排除 API 交易与 USDT 对）——账本增量仅在官方值缺失时兜底
+    const official = Number(obs.officialCampaignVolume);
+    if (Number.isFinite(official) && official >= 0) {
+      camp.campaignVolume = official;
+      camp.officialAt = obs.at;
+    }
     writeAtomic(campPath, JSON.stringify(camp, null, 2));
     const pct = (camp.campaignVolume / CAMP.tier1 * 100).toFixed(1);
     lines.push(`CAMPAIGN volume ${camp.campaignVolume.toFixed(0)} / ${CAMP.tier1} USD (${pct}%) ${camp.campaignVolume >= CAMP.tier1 ? "TIER1 SECURED" : "to tier1"}`);
