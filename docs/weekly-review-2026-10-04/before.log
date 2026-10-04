@@ -1,0 +1,22 @@
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'python3'
+- '/Users/nick/.browser-use-env/bin/python3'
+
+    at /Users/nick/.codex/worktrees/weekly-interpreter-contract/backpack_grid/tests/env_propagation.cjs:49:122
+    at check (/Users/nick/.codex/worktrees/weekly-interpreter-contract/backpack_grid/tests/env_propagation.cjs:13:33)
+    at run (/Users/nick/.codex/worktrees/weekly-interpreter-contract/backpack_grid/tests/env_propagation.cjs:49:7)
+    at Object.<anonymous> (/Users/nick/.codex/worktrees/weekly-interpreter-contract/backpack_grid/tests/env_propagation.cjs:63:50)
+    at Module._compile (node:internal/modules/cjs/loader:1554:14)
+    at Object..js (node:internal/modules/cjs/loader:1706:10)
+    at Module.load (node:internal/modules/cjs/loader:1289:32)
+    at Function._load (node:internal/modules/cjs/loader:1108:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:220:24) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 'python3',
+  expected: '/Users/nick/.browser-use-env/bin/python3',
+  operator: 'strictEqual'
+}

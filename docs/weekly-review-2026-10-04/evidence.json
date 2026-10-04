@@ -1,0 +1,27 @@
+{
+  "baseline": "20addee24df7f3bd842111c71ec6c4516448e5f8",
+  "topic": "configured interpreter propagation across launchd wrapper and Node risk writer",
+  "before": {
+    "expectedInterpreter": "/Users/nick/.browser-use-env/bin/python3",
+    "requestedInterpreter": "python3",
+    "wrongInterpreterExecution": "intercepted, not executed",
+    "exit": 1
+  },
+  "after": {
+    "focusedCases": 10,
+    "fullCases": 337,
+    "failures": 0,
+    "npmTestExit": 0,
+    "normalAndTripPaths": true,
+    "kernelLockReleased": true
+  },
+  "scope": {
+    "productionScriptsUnchangedInFixture": true,
+    "browser": "mocked session boundary, no real browser",
+    "upload": "mocked",
+    "network": "forbidden",
+    "state": "disposable fixture only"
+  },
+  "merged": false,
+  "deployed": false
+}

@@ -46,6 +46,7 @@ async function observedCase(mode) {
   return { error, obs: JSON.parse(files.get('/fixture/state/observed.json')) };
 }
 async function main() {
+  count += require('./env_propagation.cjs').run();
   for (const bad of [null, false, '', '  ', [], {}]) check('strict numeric rejects ' + JSON.stringify(bad), () => assert.equal(finiteNumber(bad), false));
   for (const pk of [null, false, '', [], -1]) {
     const r = { peakEquity: pk };

@@ -3,6 +3,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 if [ -f .env ]; then . ./.env; fi
+# Sourcing assigns shell variables; Node children need the configured paths exported.
+export PY_BIN NODE_BIN
 export PATH="${NODE_BIN:+$(dirname "$NODE_BIN"):}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
 if [ "${BG_LOCKED:-}" != "1" ]; then

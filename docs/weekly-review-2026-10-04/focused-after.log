@@ -1,0 +1,11 @@
+PASS production runner exports configured interpreter: healthy
+PASS configured risk writer commits in fixture: healthy
+PASS runner dry-run and identity-bound plan preserved: healthy
+PASS kernel lock released after runner: healthy
+PASS healthy fixture has no false latch
+PASS production runner exports configured interpreter: breaker trip
+PASS configured risk writer commits in fixture: breaker trip
+PASS runner dry-run and identity-bound plan preserved: breaker trip
+PASS kernel lock released after runner: breaker trip
+PASS trip latch persists under configured writer
+10 interpreter propagation cases passed
