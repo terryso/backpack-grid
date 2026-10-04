@@ -149,8 +149,10 @@ const strategyEquity = {
 let officialCampaignVolume = null;
 try {
   const cv = await page.fetch("https://api.backpack.exchange/wapi/v1/campaigns/1011/volume", { credentials: "include", timeout: 15000 });
-  const v = Number(JSON.parse(cv.body)?.totalVolume);
-  if (Number.isFinite(v) && v >= 0) officialCampaignVolume = v;
+  if (cv.status === 200) {
+    const v = JSON.parse(cv.body)?.totalVolume;
+    if (finiteNumber(v) && Number(v) >= 0) officialCampaignVolume = Number(v);
+  }
 } catch {}
 
 const observed = {

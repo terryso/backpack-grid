@@ -1,0 +1,5 @@
+Baseline: 20addee; disposable fixture, network forbidden.
+Expected: 60100; actual: 0; exit: 1.
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+0 !== 60100

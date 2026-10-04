@@ -1,0 +1,18 @@
+{
+  "baseline": "20addee24df7f3bd842111c71ec6c4516448e5f8",
+  "before": {
+    "expected": 60100,
+    "actual": 0,
+    "exit": 1
+  },
+  "after": {
+    "npmTestExit": 0,
+    "passCount": 359,
+    "failCount": 0,
+    "campaignCases": 32
+  },
+  "network": "forbidden Node transport and mocked session I/O",
+  "productionWrites": false,
+  "merged": false,
+  "deployed": false
+}
