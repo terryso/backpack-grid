@@ -1,4 +1,4 @@
-#!/Users/nick/.browser-use-env/bin/python3
+#!/usr/bin/env python3
 """以内核 flock 互斥执行命令——巡检与峰值探测的统一包装。
 
 用法: with_lock.py [--wait N] <命令...>

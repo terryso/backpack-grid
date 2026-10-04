@@ -11,6 +11,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync, spawn } = require("node:child_process");
+const { PY } = require("./env.cjs");
 const sleepSync = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 const ROOT = path.join(__dirname, "..");
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
@@ -253,7 +254,7 @@ function runDecide(dir, offline, tickersFile) {
 
 // ---------- RWP: risk_write.py 单一写入通道（F01 事务 + 合并语义） ----------
 function runRiskWrite(dir, payload) {
-  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey,...payload})],
+  return spawnSync(PY, [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey,...payload})],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -279,7 +280,7 @@ function runRiskWrite(dir, payload) {
   runRiskWrite(dir, { peakEquity: 600, paused: { at: "T0", reason: "trip" } });
   const kids = [];
   for (let i = 1; i <= 12; i++) {
-    kids.push(spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey, peakEquity: 550 + i * 5 })],
+    kids.push(spawnSync(PY, [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({accountKey:JSON.parse(fs.readFileSync(path.join(dir,'state/account_identity.json'))).accountKey, peakEquity: 550 + i * 5 })],
       { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 }));
   }
   const after = JSON.parse(fs.readFileSync(path.join(dir, "state", "risk.json"), "utf8"));
@@ -289,7 +290,7 @@ function runRiskWrite(dir, payload) {
 
 // ---------- LC: with_lock.py 锁生命周期（14 轮复核三场景） ----------
 function runWithLock(dir, args) {
-  return spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), ...args],
+  return spawnSync(PY, [path.join(ROOT, "scripts", "with_lock.py"), ...args],
     { env: { ...process.env, BG_ROOT: dir }, encoding: "utf8", timeout: 30000 });
 }
 {
@@ -301,7 +302,7 @@ function runWithLock(dir, args) {
     && fs.existsSync(path.join(dir, "state", "round.lock")));
 
   // LC1: SIGKILL 包装器 → 业务子进程树存活并共同持锁 → 第二包装器被拒（exit 3）
-  const biz = spawn("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "with_lock.py"), "sleep", "4"],
+  const biz = spawn(PY, [path.join(ROOT, "scripts", "with_lock.py"), "sleep", "4"],
     { env: { ...process.env, BG_ROOT: dir }, stdio: "ignore" });
   sleepSync(800);
   const bizAlive = spawnSync("/usr/bin/pgrep", ["-f", "sleep 4"]).status === 0;
@@ -316,7 +317,7 @@ function runWithLock(dir, args) {
 
   // LC4: --wait 短持锁等待后获取；长持锁超时跳过（不排队）
   const lockFile = JSON.stringify(path.join(dir, "state", "round.lock"));
-  const holder = spawn("/Users/nick/.browser-use-env/bin/python3", ["-c",
+  const holder = spawn(PY, ["-c",
     `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(2)`],
     { stdio: "ignore" });
   sleepSync(300);
@@ -324,7 +325,7 @@ function runWithLock(dir, args) {
   const r4a = runWithLock(dir, ["--wait", "5", "echo", "waited"]);
   T("LC4a --wait waits out a short holder then acquires",
     r4a.status === 0 && Date.now() - t0 >= 1200);
-  const holder2 = spawn("/Users/nick/.browser-use-env/bin/python3", ["-c",
+  const holder2 = spawn(PY, ["-c",
     `import fcntl, time; f=open(${lockFile}, "a+"); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(30)`],
     { stdio: "ignore" });
   sleepSync(300);

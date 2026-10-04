@@ -58,7 +58,7 @@ async function actualAct(mode) {
     else throw new Error('unexpected mock endpoint ' + u.pathname);
     return { status: 200, body: JSON.stringify(data) };
   } };
-  const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "/Users/nick/CascadeProjects/backpack_grid";', 'const ROOT = ' + JSON.stringify(dir) + ';');
+  const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(dir) + ';');
   let exit = 0;let clock=Date.now();class Clock extends Date{static now(){return clock+=1000;}}
   try { await new AsyncFunction('taskSpace', 'console', 'process', 'Date', source)(async () => ({ page: () => page }), { log() {} }, { exit: (code) => { throw Object.assign(new Error('mock exit'), { exit: code }); } },Clock); }
   catch (e) { if (e.exit === undefined) {if(mode!=='config-after-validate')throw e;assert.match(e.message,/CONFIG_CHANGED/);exit=2;}else exit = e.exit; }
@@ -134,7 +134,7 @@ async function main() {
     else throw new Error('unexpected mock endpoint ' + u.pathname);
     return { status: 200, body: JSON.stringify(data) };
   } };
-  const observeSource = fs.readFileSync(path.join(ROOT, 'scripts/observe.mjs'), 'utf8').replace('const ROOT = "/Users/nick/CascadeProjects/backpack_grid";', 'const ROOT = ' + JSON.stringify(dir) + ';');
+  const observeSource = fs.readFileSync(path.join(ROOT, 'scripts/observe.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(dir) + ';');
   await new AsyncFunction('taskSpace','console','process',observeSource)(async()=>({page:()=>page}),{log(){}},{exit:c=>{throw Error('exit '+c)}});
   const degraded=get(dir,'state/observed.json');assert.equal(degraded.marketDataAvailable,false);assert.equal(degraded.margin.totalEquity,'$100.00');
   const d=spawnSync(process.execPath,[path.join(ROOT,'scripts/decide.cjs')],{env:{...process.env,BG_ROOT:dir,BG_OFFLINE:'1'},encoding:'utf8'});

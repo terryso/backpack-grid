@@ -156,12 +156,12 @@ DASH_WRITE_TOKEN 等）只存 `state/dashboard.env`，`state/` 整体被 gitigno
 
 ## 2026-10-03 执行与数据契约
 
-- Python 固定 `/Users/nick/.browser-use-env/bin/python3`；开发测试使用 Node 22，运行 `npm ci && npm test`。测试禁止网络、直接执行生产核心和完整 act／runner 的模拟 I/O。
+- 机器本地解释器路径（Python／Node）统一放在仓库根 `.env`（不提交，模板见 `.env.example`，新机器 `cp .env.example .env` 后修改）；所有 shell 入口自动 source，测试经 `tests/env.cjs` 读取。仓库源码零绝对路径：ego-browser 派发的脚本用 `__BG_ROOT__`／`__PY_BIN__` 占位符，由 `scripts/ego_dispatch.sh` 注入后派发。开发测试使用 Node 22，运行 `npm ci && npm test`。测试禁止网络、直接执行生产核心和完整 act／runner 的模拟 I/O。
 - `risk_write.py` 是唯一风险状态写入通道；失败禁开仓，未落盘熔断由 risk_write_pending.json 重放，已有 paused 不自动清除。
 - history／research 为独立定时任务；手续费按原始成交 ID 去重并报告覆盖范围，未知资金费不按零打分。
 - `run_events.jsonl` 记录确认事件，旧计划日志不再作为实盘换仓次数；权益变化不直接称作策略收益。完整归因需精确基线时间及核对过的现金流等导出，导入说明见 docs/project-review-2026-10-02.md。
 - 首页由 Workers Static Assets 提供；API 免费额度耗尽时显示注明时间的部署快照，动态接口需额度重置后恢复。上传成功后会读回确认，运输结果记录 dashboard_upload.json。
-- 可复现的任务配置：`/Users/nick/.browser-use-env/bin/python3 scripts/install_launch_agents.py --install`，仅写 plist，不会启动服务；RunAtLoad=false。
+- 可复现的任务配置：`"$PY_BIN" scripts/install_launch_agents.py --install`（PY_BIN 来自 `.env`），仅写 plist，不会启动服务；RunAtLoad=false；launchd PATH 由 `.env` 的 NODE_BIN 推导。
 - 详细完成／待验收状态：[修复与验收文档](docs/project-review-2026-10-02.md)。
 
 ## 支持

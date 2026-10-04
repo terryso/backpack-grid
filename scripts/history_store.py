@@ -1,4 +1,4 @@
-#!/Users/nick/.browser-use-env/bin/python3
+#!/usr/bin/env python3
 """Incremental, account-bound SQLite raw fill store; no growing JSON rewrites."""
 import json, os, sqlite3, sys
 ROOT=os.environ.get('BG_ROOT') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

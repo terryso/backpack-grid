@@ -5,8 +5,9 @@
 #   CF_API_TOKEN     — API token with Workers Scripts:Edit + Workers KV Storage:Edit
 # DASH_WRITE_TOKEN (upload key) is generated here if absent. Dashboard reads are public.
 set -euo pipefail
-export PATH="/Users/nick/.nvm/versions/node/v22.14.0/bin:$PATH"
 cd "$(dirname "$0")/.."
+if [ -f .env ]; then . ./.env; fi
+[ -n "${NODE_BIN:-}" ] && export PATH="$(dirname "$NODE_BIN"):$PATH"
 
 [ -f state/dashboard.env ] || { echo "missing state/dashboard.env — see state/dashboard.env.example"; exit 1; }
 # shellcheck disable=SC1091

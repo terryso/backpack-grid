@@ -133,7 +133,7 @@ const writeAtomic = (p, data) => {
     // Persist the latch intention before the writer: a transient commit failure
     // must not allow equity recovery to erase an uncommitted circuit breaker.
     if (payload.paused && !riskCorrupt) writeAtomic(riskIntentPath, JSON.stringify({ accountKey:identity.accountKey, peakEquity: risk.peakEquity, paused: payload.paused }));
-    const w = riskCorrupt ? { status: 2, stderr: "risk write intent corrupt" } : spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8", timeout: 8000 });
+    const w = riskCorrupt ? { status: 2, stderr: "risk write intent corrupt" } : spawnSync(process.env.PY_BIN || "python3", [path.join(__dirname, "risk_write.py"), JSON.stringify(payload)], { encoding: "utf8", timeout: 8000 });
     try {
       if (riskCorrupt) throw new Error("risk write intent corrupt — kept for manual recovery");
       if (w.status !== 0) throw new Error(String(w.error?.message || w.stderr || w.stdout || w.status).trim());

@@ -4,7 +4,7 @@
 const fs = await import("node:fs/promises");
 const path = await import("node:path");
 const { spawnSync } = await import("node:child_process");
-const ROOT = "/Users/nick/CascadeProjects/backpack_grid";
+const ROOT = "__BG_ROOT__"; // placeholder injected by ego_dispatch.sh
 const RISK = path.join(ROOT, "state/risk.json");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
 const SUB = cfg.subaccountId ?? 3;
@@ -37,7 +37,9 @@ if (!finiteNumber(entry?.netEquity)) { console.log("bad equity:", eq); process.e
 
 // 提交走唯一写入通道：flock 事务内重读磁盘最新值，峰值取 max（较低采样不回退）、
 // paused 逐字保留最新——重读之后发生的熔断写入不可能被本进程覆盖
-const w = spawnSync("/Users/nick/.browser-use-env/bin/python3", [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: Math.max(0,eq), accountKey: identity.accountKey, assessment:{equity:eq,budgetPct:cfg.riskBudgetPct,at:new Date().toISOString()} })], { encoding: "utf8", timeout: 8000 });
+const PY = process.env.PY_BIN || "__PY_BIN__"; // placeholder injected by ego_dispatch.sh
+if (PY.startsWith("__")) throw Error("PY_BIN not injected — dispatch via peak_probe.sh (ego_dispatch.sh)");
+const w = spawnSync(PY, [path.join(ROOT, "scripts", "risk_write.py"), JSON.stringify({ peakEquity: Math.max(0,eq), accountKey: identity.accountKey, assessment:{equity:eq,budgetPct:cfg.riskBudgetPct,at:new Date().toISOString()} })], { encoding: "utf8", timeout: 8000 });
 if (w.status !== 0) { console.log("risk write refused (status", w.status, ") — kept for manual recovery"); process.exit(1); }
 const merged = JSON.parse(String(w.stdout).trim());
 console.log("peak:", pkNum, "->", merged.peakEquity, "| paused 保留:", JSON.stringify(merged.paused), "| equity:", eq);

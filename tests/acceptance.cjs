@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), vm = require('node:vm');
 const { spawn, spawnSync } = require('node:child_process');
-const ROOT = path.join(__dirname, '..'), PY = '/Users/nick/.browser-use-env/bin/python3';
+const ROOT = path.join(__dirname, '..'), PY = require('./env.cjs').PY;
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-acceptance-'));
 let count = 0;
@@ -183,7 +183,7 @@ async function main() {
       return { status: 200, body: JSON.stringify(data) };
     } };
     let exit = 0;
-    const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "/Users/nick/CascadeProjects/backpack_grid";', 'const ROOT = ' + JSON.stringify(d) + ';');
+    const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(d) + ';');
     try { await new AsyncFunction('taskSpace', 'process', 'Date', 'console', source)(async () => ({ page: () => page }), { exit: (c) => { throw Object.assign(new Error('mock exit'), { exit: c }); } }, Clock, { log: () => {} }); }
     catch (e) { if (e.exit !== undefined) exit = e.exit; else if (mode !== 'stale-plan') throw e; else exit = 2; }
     check('production act lifecycle: ' + mode, () => {

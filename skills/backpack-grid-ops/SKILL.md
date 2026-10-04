@@ -10,18 +10,19 @@ description: Backpack 网格巡检系统（~/CascadeProjects/backpack_grid）的
 
 ## 环境要点（先读）
 
-- ego-browser 的 Node 进程不继承 cwd/env：脚本内 ROOT 已写死绝对路径
+- 机器本地解释器路径在仓库根 `.env`（不提交，模板 `.env.example`）：PY_BIN、NODE_BIN；shell 入口自动 source，测试经 `tests/env.cjs` 读取
+- ego-browser 的 Node 进程不继承 cwd/env：被派发脚本内机器相关值写成 `__BG_ROOT__`／`__PY_BIN__` 占位符，由 `scripts/ego_dispatch.sh` 注入后经 stdin 派发。手动派发一律用 `bash scripts/ego_dispatch.sh scripts/xxx.mjs`，**不要直接 `ego-browser nodejs <`**
 - `act.mjs` 加载 `act_core.cjs` 用 `createRequire(path.join(ROOT, "scripts/act.mjs"))` 锚定——**不要改回 `import.meta.url`**（ego-browser 运行器里是 eval 产物，会 MODULE_NOT_FOUND）
-- wrangler 需要 Node ≥22：`export PATH="$HOME/.nvm/versions/node/v22.14.0/bin:$PATH"`
+- wrangler 需要 Node ≥22：`export PATH="$(dirname "$(grep '^NODE_BIN' .env | cut -d= -f2)"):$PATH"` 或直接 source .env（grep 的 ^ 模式务必加引号，zsh 下裸 ^ 会被当 glob 展开）
 - 给用户看的汇报**禁止使用裸 $ 符号**（聊天界面渲染成公式吞字），金额写 "USD" 后缀
-- `state/` 整体 gitignored；任何密钥只进 `state/dashboard.env`
+- `state/` 整体 gitignored；任何密钥只进 `state/dashboard.env`；`.env` 同样不提交
 
 ## 巡检轮次
 
 ```bash
 bash scripts/run_round.sh            # 手动跑一轮（入口自锁——被持有时等待45s后跳过exit 3）
 DRYRUN=1 bash scripts/run_round.sh   # 空跑：只观察+判定（同样持锁）
-PATH=/Users/nick/.nvm/versions/node/v22.14.0/bin:$PATH npm test # 离线回归 + 生产行为验收
+PATH="$(dirname "$(grep '^NODE_BIN' .env | cut -d= -f2)"):$PATH" npm test # 离线回归 + 生产行为验收
 ```
 
 ## 定时巡检（launchd，每 15 分钟）
@@ -50,7 +51,8 @@ launchctl bootout gui/$(id -u)/com.backpack.grid-monitor
 # 地址与密钥
 # 仪表盘公开读取；不要输出 state/dashboard.env 中的上传凭证
 # 改了页面(cloudflare/dashboard.html)或接口(worker.js)后部署：
-export PATH="$HOME/.nvm/versions/node/v22.14.0/bin:$PATH"
+. ./.env 2>/dev/null || true  # 提供 NODE_BIN
+export PATH="$(dirname "$NODE_BIN"):$PATH"
 npx wrangler deploy --config cloudflare/wrangler.toml
 # 只推最新数据：bash scripts/upload_dashboard.sh
 # 本地预览：node scripts/dashboard_data.cjs --preview → state/dashboard_preview.html
@@ -79,7 +81,7 @@ npx wrangler deploy --config cloudflare/wrangler.toml
 
 ## 新增采集与账本
 
-- 所有 Python 命令均使用 `/Users/nick/.browser-use-env/bin/python3`。
+- 所有 Python 命令均使用 `.env` 里的 PY_BIN（本机为 browser-use-env 的 python3）。
 - 定时入口由 `scripts/install_launch_agents.py --install` 生成，RunAtLoad=false，不会因重载立刻执行交易。
 - 历史成交：`collect_history.sh`，独立 history.lock、独立 Page；`trade_history.json` 保存原始 fill ID 和游标，`fees.json` 为派生汇总。
 - 研究候选：`refresh_research.sh`，独立 research.lock，无空槽时也刷新。

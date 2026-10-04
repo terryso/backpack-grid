@@ -2,7 +2,7 @@
 const fs = await import("node:fs/promises");
 const path = await import("node:path");
 const { createRequire } = await import("node:module");
-const ROOT = "/Users/nick/CascadeProjects/backpack_grid";
+const ROOT = "__BG_ROOT__"; // placeholder injected by ego_dispatch.sh
 const { collectHistory, auditHistory } = createRequire(path.join(ROOT, "scripts/collect_history.mjs"))("./history_core.cjs");
 const { expectedIdentity, collateralFor } = createRequire(path.join(ROOT,"scripts/collect_history.mjs"))("./contracts.cjs");
 const { spawnSync } = await import("node:child_process");
@@ -11,7 +11,9 @@ const identity=expectedIdentity(ROOT,cfg);
 const SUB = cfg.subaccountId ?? 3;
 const observed = JSON.parse(await fs.readFile(path.join(ROOT, "state/observed.json"), "utf8"));
 const file = path.join(ROOT, "state/trade_history.json");
-function store(command, input) { const r=spawnSync("/Users/nick/.browser-use-env/bin/python3",[path.join(ROOT,"scripts/history_store.py"),command],{env:{...process.env,BG_ROOT:ROOT},input:input?JSON.stringify(input):undefined,encoding:"utf8",timeout:15000});if(r.status!==0)throw Error("history store failed: "+String(r.stderr).slice(0,150));return JSON.parse(r.stdout); }
+const PY = process.env.PY_BIN || "__PY_BIN__"; // placeholder injected by ego_dispatch.sh
+if (PY.startsWith("__")) throw Error("PY_BIN not injected — dispatch via collect_history.sh (ego_dispatch.sh)");
+function store(command, input) { const r=spawnSync(PY,[path.join(ROOT,"scripts/history_store.py"),command],{env:{...process.env,BG_ROOT:ROOT},input:input?JSON.stringify(input):undefined,encoding:"utf8",timeout:15000});if(r.status!==0)throw Error("history store failed: "+String(r.stderr).slice(0,150));return JSON.parse(r.stdout); }
 let state = store("load");
 const symbols = new Set([...(observed.gridRows || []).map((g) => g.symbol), ...Object.keys(state.symbols)]);
 // Include recorded historical grid names, including deleted grids absent from fees.

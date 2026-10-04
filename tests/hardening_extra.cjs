@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict'),{spawnSync,spawn}=require('node:child_process');
-const ROOT=path.join(__dirname,'..'),PY='/Users/nick/.browser-use-env/bin/python3';
+const ROOT=path.join(__dirname,'..'),PY=require('./env.cjs').PY;
 const cfg=JSON.parse(fs.readFileSync(path.join(ROOT,'config.json'))),contract=require('../scripts/contracts.cjs');
 const {collectHistory,auditHistory,START}=require('../scripts/history_core.cjs');
 const base=fs.mkdtempSync(path.join(os.tmpdir(),'bg-extra-'));let count=0;const test=(name,f)=>{f();count++;console.log('PASS',name);};
@@ -67,7 +67,7 @@ async function main(){
  source=await collectSource(identity,async()=>full,async()=>{},1000);test('source pagination cap is an explicit failure',()=>{assert(!source.complete);assert.match(source.error,/limit/);});
  let checks=0;source=await collectSource(identity,async()=>[],async()=>{if(++checks===2)throw Error('owner switched');});test('session loss at final confirmation invalidates source completion',()=>assert(!source.complete));
  const raw=fixture();put(raw,'state/history_browser.json',{spaceId:51,page:'p2'});const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
- const sourceCode=fs.readFileSync(path.join(ROOT,'scripts/collect_attribution.mjs'),'utf8').replace("const ROOT='/Users/nick/CascadeProjects/backpack_grid';","const ROOT="+JSON.stringify(raw)+";");
+ const sourceCode=fs.readFileSync(path.join(ROOT,'scripts/collect_attribution.mjs'),'utf8').replace("const ROOT='__BG_ROOT__';","const ROOT="+JSON.stringify(raw)+";");
  let foreign=false;const page={fetch:async url=>({status:200,body:JSON.stringify(url.includes('/collateral')?{[foreign?'other-3':'fixture-3']:{netEquity:1000}}:[{id:'row',subaccountId:3,userId:'fixture'}])})};
  await new AsyncFunction('taskSpace','console',sourceCode)(async()=>({page:()=>page}),{log(){}});const savedSource=fs.readFileSync(path.join(raw,'state/attribution_sources.json'),'utf8');
  test('production raw source entry persists all sources with bound identity',()=>{const s=JSON.parse(savedSource);assert.equal(s.identity.accountKey,identity.accountKey);assert(Object.values(s.sources).every(r=>r.complete));});

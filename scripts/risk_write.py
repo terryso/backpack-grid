@@ -1,4 +1,4 @@
-#!/Users/nick/.browser-use-env/bin/python3
+#!/usr/bin/env python3
 """Only risk.json writer. Bounded kernel-flock transaction; peak only rises,
 existing latch is never cleared. Manual recovery may omit paused.
 Optional assessment is evaluated using the latest peak INSIDE the transaction.

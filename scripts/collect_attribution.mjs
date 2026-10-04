@@ -1,6 +1,6 @@
 // Read-only raw source acquisition. No assumed zero cashflows or fabricated coverage.
 const fs=await import('node:fs/promises'),path=await import('node:path'),{createRequire}=await import('node:module');
-const ROOT='/Users/nick/CascadeProjects/backpack_grid';const requireLocal=createRequire(path.join(ROOT,'scripts/collect_attribution.mjs'));
+const ROOT='__BG_ROOT__';const requireLocal=createRequire(path.join(ROOT,'scripts/collect_attribution.mjs')); // placeholder injected by ego_dispatch.sh
 const {expectedIdentity,collateralFor,atomic}=requireLocal('./contracts.cjs');
 const {collectSource}=requireLocal('./attribution_sources.cjs');
 const cfg=JSON.parse(await fs.readFile(path.join(ROOT,'config.json'),'utf8')),identity=expectedIdentity(ROOT,cfg);

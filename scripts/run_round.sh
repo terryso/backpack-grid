@@ -2,10 +2,11 @@
 # Risk exits and replacements run under the same kernel lock. No fee collection here.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
-export PATH="$HOME/.nvm/versions/node/v22.14.0/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+if [ -f .env ]; then . ./.env; fi
+export PATH="${NODE_BIN:+$(dirname "$NODE_BIN"):}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
 if [ "${BG_LOCKED:-}" != "1" ]; then
-  exec /Users/nick/.browser-use-env/bin/python3 scripts/with_lock.py --wait 45 bash scripts/run_round.sh "$@"
+  exec "${PY_BIN:-python3}" scripts/with_lock.py --wait 45 bash scripts/run_round.sh "$@"
 fi
 mkdir -p state
 node scripts/run_events.cjs start || { echo start_failed > state/last_round_status; exit 1; }
@@ -21,7 +22,7 @@ heartbeat() { node scripts/run_events.cjs heartbeat || true; }
 echo "=== ROUND $(date '+%F %T') dryrun=${DRYRUN:-0} ==="
 rm -f state/needs_create_plan
 heartbeat
-if ! ego-browser nodejs < scripts/observe.mjs; then
+if ! bash scripts/ego_dispatch.sh scripts/observe.mjs; then
   echo OBSERVE_FAILED | tee -a state/log.md
   finish observe_failed 1
 fi
@@ -38,7 +39,7 @@ if ! grep -q '"act"' state/actions.json 2>/dev/null; then
   finish ok 0
 fi
 heartbeat
-if ! ego-browser nodejs < scripts/act.mjs; then
+if ! bash scripts/ego_dispatch.sh scripts/act.mjs; then
   node scripts/run_events.cjs actions phase1 || true
   finish act_failed 2
 fi
@@ -46,15 +47,15 @@ node scripts/run_events.cjs actions phase1 || finish event_failed 1
 if [ -f state/needs_create_plan ]; then
   rm -f state/needs_create_plan
   # Failed refresh MUST abort replacements; never reuse a pre-exit snapshot.
-  if ! ego-browser nodejs < scripts/observe.mjs; then finish observe_failed_post_exit 1; fi
+  if ! bash scripts/ego_dispatch.sh scripts/observe.mjs; then finish observe_failed_post_exit 1; fi
   if ! BG_PHASE=creates node scripts/decide.cjs; then finish decide_failed_creates 1; fi
   if grep -q '"act"' state/actions.json 2>/dev/null; then
-    if ! ego-browser nodejs < scripts/act.mjs; then
+    if ! bash scripts/ego_dispatch.sh scripts/act.mjs; then
       node scripts/run_events.cjs actions phase2 || true
       finish act_failed_creates 2
     fi
     node scripts/run_events.cjs actions phase2 || finish event_failed 1
   fi
 fi
-if ! ego-browser nodejs < scripts/observe.mjs; then finish observe_failed_confirm 1; fi
+if ! bash scripts/ego_dispatch.sh scripts/observe.mjs; then finish observe_failed_confirm 1; fi
 finish ok 0

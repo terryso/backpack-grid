@@ -4,7 +4,7 @@
 // Fail-loud: shape-validate everything; on any mismatch write error and exit 1.
 const fs = await import("node:fs/promises");
 const path = await import("node:path");
-const ROOT = "/Users/nick/CascadeProjects/backpack_grid"; // ego-browser does not inherit cwd/env
+const ROOT = "__BG_ROOT__"; // placeholder injected by ego_dispatch.sh (ego-browser does not inherit cwd/env)
 const { createRequire } = await import("node:module");
 const requireLocal = createRequire(path.join(ROOT, "scripts/observe.mjs"));
 const { expectedIdentity, collateralFor, validateConfig } = requireLocal("./contracts.cjs");

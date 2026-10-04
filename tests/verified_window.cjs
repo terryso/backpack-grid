@@ -51,7 +51,7 @@ async function main(){
   else if(u.pathname.endsWith('/deposits')&&!u.searchParams.has('subaccountId'))data=[{id:99,createdAt:start,status:'confirmed'}];
   return {status:200,body:JSON.stringify(data)};
  }};
- const text=fs.readFileSync(path.join(root,'scripts/collect_verified_window.mjs'),'utf8').replace("const ROOT='/Users/nick/CascadeProjects/backpack_grid'","const ROOT="+JSON.stringify(dir));
+ const text=fs.readFileSync(path.join(root,'scripts/collect_verified_window.mjs'),'utf8').replace("const ROOT='__BG_ROOT__'","const ROOT="+JSON.stringify(dir));
  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
  await new AsyncFunction('taskSpace','console',text)(async()=>({spaceId:cfg.watch.spaceId,page:()=>mocked}),{log(){}});
  const saved=JSON.parse(fs.readFileSync(path.join(dir,'state/window_accounting.json')));

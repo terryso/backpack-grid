@@ -1,6 +1,6 @@
 // Read-only accounting; independent of trading observation and risk exits.
 const fs=await import('node:fs/promises'),path=await import('node:path'),{createRequire}=await import('node:module');
-const ROOT='/Users/nick/CascadeProjects/backpack_grid',req=createRequire(path.join(ROOT,'scripts/collect_verified_window.mjs'));
+const ROOT='__BG_ROOT__',req=createRequire(path.join(ROOT,'scripts/collect_verified_window.mjs')); // placeholder injected by ego_dispatch.sh
 const {expectedIdentity,assertIdentity,collateralFor,atomic,hash}=req('./contracts.cjs');
 const {validateWindow,chooseCheckpoint,collectPeriod,reconcile}=req('./verified_window.cjs');
 const cfg=JSON.parse(await fs.readFile(path.join(ROOT,'config.json'),'utf8')),identity=expectedIdentity(ROOT,cfg);

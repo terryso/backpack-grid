@@ -1,4 +1,4 @@
-#!/Users/nick/.browser-use-env/bin/python3
+#!/usr/bin/env python3
 """Generate explicit, reproducible launchd entrypoints. Does not start jobs.
 All jobs have RunAtLoad=false: installing/reloading never forces a trading round.
 """
@@ -9,6 +9,18 @@ import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEST = Path.home() / "Library/LaunchAgents"
+
+def launchd_path() -> str:
+    """PATH for launchd: NODE_BIN dir from the uncommitted .env first, then fallbacks."""
+    node_dir = ""
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            key, _, value = line.strip().partition("=")
+            if key == "NODE_BIN" and value:
+                node_dir = os.path.dirname(value.strip().strip("'\""))
+    parts = [p for p in (node_dir, str(Path.home() / ".local/bin"), "/usr/local/bin", "/usr/bin", "/bin") if p]
+    return ":".join(parts)
 JOBS = [
     ("com.backpack.grid-monitor", "com.backpack.grid-monitor.plist", "round_locked.sh", 900),
     ("com.backpack-grid-peak", "com.backpack-grid-peak.plist", "peak_probe.sh", 60),
@@ -21,7 +33,7 @@ for label, filename, script, interval in JOBS:
             "WorkingDirectory": str(ROOT), "StartInterval": interval, "RunAtLoad": False,
             "StandardOutPath": str(ROOT / "state" / (label + ".log")),
             "StandardErrorPath": str(ROOT / "state" / (label + ".log")),
-            "EnvironmentVariables": {"PATH": "/Users/nick/.nvm/versions/node/v22.14.0/bin:" + str(Path.home() / ".local/bin") + ":/usr/local/bin:/usr/bin:/bin"}}
+            "EnvironmentVariables": {"PATH": launchd_path()}}
     if "--install" in sys.argv:
         DEST.mkdir(parents=True, exist_ok=True)
         if (DEST / filename).exists():

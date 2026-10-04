@@ -6,7 +6,7 @@ const {atomic,expectedIdentity,same}=require('./contracts.cjs');
 const ROOT=process.env.BG_ROOT||path.join(__dirname,'..');
 if(!process.argv[2])throw Error('usage: import_ledger.cjs <reconciled-export.json>');
 if(process.env.BG_LEDGER_LOCKED!=='1') {
-  const r=spawnSync('/Users/nick/.browser-use-env/bin/python3',[path.join(ROOT,'scripts/with_lock.py'),'--name','ledger','--wait','5',process.execPath,__filename,path.resolve(process.argv[2])],{env:{...process.env,BG_ROOT:ROOT,BG_LEDGER_LOCKED:'1'},encoding:'utf8',timeout:10000});
+  const r=spawnSync(process.env.PY_BIN||'python3',[path.join(ROOT,'scripts/with_lock.py'),'--name','ledger','--wait','5',process.execPath,__filename,path.resolve(process.argv[2])],{env:{...process.env,BG_ROOT:ROOT,BG_LEDGER_LOCKED:'1'},encoding:'utf8',timeout:10000});
   process.stdout.write(r.stdout||'');process.stderr.write(r.stderr||'');process.exit(r.status??1);
 }
 const cfg=JSON.parse(fs.readFileSync(path.join(ROOT,'config.json'),'utf8')),identity=expectedIdentity(ROOT,cfg);
