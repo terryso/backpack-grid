@@ -4,6 +4,9 @@
 # runtime state (account snapshots, campaign trackers, logs, locks) — never commit
 state/
 
+# personal strategy config (baseline, browser space, thresholds) — template: config.example.json
+config.json
+
 # unrelated tool caches that predate this project
 .v2c/
 .video_agent/

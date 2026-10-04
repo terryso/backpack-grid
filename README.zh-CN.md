@@ -116,7 +116,7 @@ scripts/   run_round.sh（编排+内核flock自锁） with_lock.py（统一锁�
            analyze.cjs api.cjs dashboard_data.cjs upload/deploy_dashboard.sh
 cloudflare/ worker.js + dashboard.html + wrangler.toml（仪表盘 Worker）
 tests/     regression.cjs（回归套件）
-config.json 全部策略参数
+config.json 个人策略参数（gitignored，模板 config.example.json，新机器 cp 后改）
 state/     运行时数据（gitignored）：observed/actions/act_results/pending_stops/
            risk/campaign/equity_curve.jsonl/log.md/dashboard.env(密钥)/lock
 ```
@@ -128,7 +128,7 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 | 情况 | 处理 |
 |---|---|
 | 暂停自动巡检 | 卸载 launchd：`launchctl bootout gui/$(id -u)/com.backpack.grid-monitor`（网格在交易所侧继续运行，原生兜底仍在） |
-| 改参数 | 编辑 `config.json`，下一轮生效；改 SL/TP 后对账层会自动把交易所侧拉齐 |
+| 改参数 | 编辑本地 `config.json`（不提交；结构模板见 `config.example.json`，改动结构/新增默认值时同步模板），下一轮生效；改 SL/TP 后对账层会自动把交易所侧拉齐 |
 | OBSERVE_FAILED | 多为浏览器登录态失效或数据不完整（fail-loud），重新登录 ego lite 的 Backpack 后下一轮自愈 |
 | ACT_FAILED | 读 `state/act_results.json` 定位；`pending_stops.json` 非空表示有未完成清理，下轮自动重试 |
 | 熔断恢复 | 修复 `state/risk.json`：保留 `peakEquity`、删除 `paused` 字段 |
