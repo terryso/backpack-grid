@@ -1,0 +1,24 @@
+{
+  "baseline": "fcb0a9809d2b3d013d739eb4ad4b3a61dc44f7c2",
+  "topic": "dead-grid path isolation from risk exits and manual intent",
+  "before": {
+    "disabledWasRotated": true,
+    "corruptManualRegistryWasRotated": true,
+    "badHistoryAbortedTPPlan": true,
+    "activityWriteFailureAbortedTPPlan": true
+  },
+  "after": {
+    "newCases": 23,
+    "fullCases": 357,
+    "npmExit": 0,
+    "failures": 0
+  },
+  "runtime24h": {
+    "confirmedOk": 95,
+    "failures": 0
+  },
+  "network": "forbidden; actual production decide with disposable fixtures",
+  "productionWrites": false,
+  "merged": false,
+  "deployed": false
+}

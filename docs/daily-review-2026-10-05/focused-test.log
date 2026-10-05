@@ -1,0 +1,24 @@
+PASS active mature flat grid retains existing rotation
+PASS Disabled within TP/SL is preserved despite mature flat history
+PASS corrupt manual registry vetoes optional dead-grid rotation
+PASS explicit manual hold is preserved
+PASS missing sample array cannot discard a TP stop
+PASS bad activity history cannot discard account breaker stops
+PASS bad activity history cannot discard pending retries
+PASS activity storage I/O error cannot discard a TP stop
+PASS dead-grid stop supersedes same-market protection repair
+PASS missing current ledger is unknown, not a zero-fill observation
+PASS invalid current ledger cannot confirm dead grid: null
+PASS invalid current ledger cannot confirm dead grid: false
+PASS invalid current ledger cannot confirm dead grid: ""
+PASS invalid current ledger cannot confirm dead grid: "  "
+PASS invalid current ledger cannot confirm dead grid: []
+PASS invalid current ledger cannot confirm dead grid: {}
+PASS invalid current ledger cannot confirm dead grid: "0x0"
+PASS invalid history restarts warmup instead of confirming rotation #17
+PASS invalid history restarts warmup instead of confirming rotation #18
+PASS invalid history restarts warmup instead of confirming rotation #19
+PASS invalid history restarts warmup instead of confirming rotation #20
+PASS invalid history restarts warmup instead of confirming rotation #21
+PASS invalid history restarts warmup instead of confirming rotation #22
+23 dead-grid safety cases passed

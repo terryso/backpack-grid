@@ -9,7 +9,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { getTickers } = require("./api.cjs");
 
-const { riskStructOk, pendingStructOk, finiteNumber, money } = require("./state_schema.cjs");
+const { riskStructOk, pendingStructOk, finiteNumber, money, plainObject } = require("./state_schema.cjs");
 const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
@@ -274,10 +274,6 @@ const writeAtomic = (p, data) => {
     }
   }
 
-  for (let i = actions.length - 1; i >= 0; i--) {
-    if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
-  }
-
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------
   // ETH lesson: a calm-major grid can sit for days with zero fills, silently occupying
   // a slot. Track per-symbol ledger samples every round; zero delta over the window
@@ -286,20 +282,36 @@ const writeAtomic = (p, data) => {
   const activityPath = path.join(ROOT, "state", "grid_activity.json");
   let activity = {};
   try { activity = JSON.parse(fs.readFileSync(activityPath, "utf8")); } catch {}
-  if (!activity || typeof activity !== "object" || Array.isArray(activity)) activity = {};
+  if (!plainObject(activity)) activity = {};
   const nowMs = Date.now();
+  const freshActivity = new Set();
+  const historyOk = (e) => plainObject(e) && finiteNumber(e.vol) && Number(e.vol) >= 0
+    && Array.isArray(e.samples) && e.samples.every((s, i, all) => plainObject(s)
+      && finiteNumber(s.at) && Number(s.at) >= 0 && Number(s.at) <= nowMs
+      && finiteNumber(s.vol) && Number(s.vol) >= 0
+      && (i === 0 || (Number(s.at) >= Number(all[i - 1].at) && Number(s.vol) >= Number(all[i - 1].vol))))
+    && (!e.samples.length || Number(e.vol) === Number(e.samples[e.samples.length - 1].vol));
   for (const l of Array.isArray(obs.ledger) ? obs.ledger : []) {
+    if (!plainObject(l) || typeof l.symbol !== "string" || !/^[A-Za-z0-9]+_USDC_PERP$/.test(l.symbol)
+      || !finiteNumber(l.vol) || Number(l.vol) < 0) continue;
     const vol = Number(l.vol);
-    if (!Number.isFinite(vol)) continue;
-    const e = activity[l.symbol] || { vol: null, samples: [] };
+    const stored = activity[l.symbol];
+    const valid = historyOk(stored);
+    if (stored !== undefined && !valid) lines.push(`GRID ACTIVITY INVALID ${l.symbol}: history ignored; dead-grid warmup restarted`);
+    const e = valid ? { vol: Number(stored.vol), samples: stored.samples.map(s => ({ at: Number(s.at), vol: Number(s.vol) })) } : { vol: null, samples: [] };
     if (e.vol !== null && vol < e.vol) e.samples = []; // ledger reset (grid rebuilt) -> warmup restarts
     e.vol = vol;
     e.samples.push({ at: nowMs, vol });
     e.samples = e.samples.filter((s) => nowMs - s.at <= (deadHours + 6) * 3600000); // +6h 容忍漏跑轮次，避免恰好在判定边界的基线样本被修剪
     activity[l.symbol] = e;
+    freshActivity.add(l.symbol);
   }
-  for (const g of grids) {
-    if (pending[g.market] || heldByUser(g.market)) continue; // respect in-flight retries and explicit user intention
+  let activitySaved = true;
+  try { writeAtomic(activityPath, JSON.stringify(activity, null, 2)); }
+  catch (e) { activitySaved = false; lines.push(`GRID ACTIVITY WRITE FAILED: ${String(e.message).slice(0, 140)} — dead-grid rotation skipped; risk exits preserved`); }
+  for (const g of activitySaved ? grids : []) {
+    if (manualCorrupt || g.status === "Disabled" || pending[g.market] || heldByUser(g.market)) continue;
+    if (!freshActivity.has(g.symbol)) continue; // no current ledger observation means activity is unknown
     if (actions.some((a) => a.market === g.market && a.act === "stop")) continue;
     const e = activity[g.symbol];
     if (!e || !Array.isArray(e.samples) || !e.samples.length) continue;
@@ -312,7 +324,10 @@ const writeAtomic = (p, data) => {
     actions.push({ act: "stop", market: g.market, range: g.range, reason: `DEAD_GRID: ledger flat for ${deadHours}h (spacing ${sp.toFixed(2)}%/grid produced no fills) — rotate out` });
     lines.push(`DEAD GRID ${g.market}: zero fills in ${deadHours}h — rotating out (slot freed for a live candidate)`);
   }
-  writeAtomic(activityPath, JSON.stringify(activity, null, 2));
+  // Every stop source, including dead-grid rotation, supersedes protection repair.
+  for (let i = actions.length - 1; i >= 0; i--) {
+    if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
+  }
 
   // ---------- plan replacements for freed slots ----------
   const stops = actions.filter((a) => a.act === "stop").map((a) => a.market);

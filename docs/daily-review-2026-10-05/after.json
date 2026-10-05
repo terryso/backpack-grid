@@ -1,0 +1,38 @@
+{
+  "disabled": {
+    "status": 0,
+    "acts": []
+  },
+  "manualRegistryCorrupt": {
+    "status": 0,
+    "acts": []
+  },
+  "tpStopWithBadHistory": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "stop",
+        "reason": "TP: pnl 12.00% (funding-adj) >= 10%"
+      }
+    ]
+  },
+  "tpStopWithStorageError": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "stop",
+        "reason": "TP: pnl 12.00% (funding-adj) >= 10%"
+      }
+    ],
+    "error": "GRID ACTIVITY WRITE FAILED: EISDIR: illegal operation on a directory, rename '/var/folders/zd/ygt_wt3x0wbdl1lwfddnstqh0000gn/T/bg-dead-grid-8cwS8b/case-b9fYa7/state/gri — dead-grid rotation skipped; risk exits preserved"
+  },
+  "deadStopWithProtect": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "stop",
+        "reason": "DEAD_GRID: ledger flat for 48h (spacing 0.37%/grid produced no fills) — rotate out"
+      }
+    ]
+  }
+}

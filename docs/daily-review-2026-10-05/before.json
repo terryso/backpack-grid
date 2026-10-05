@@ -1,0 +1,41 @@
+{
+  "disabled": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "stop",
+        "reason": "DEAD_GRID: ledger flat for 48h (spacing 0.37%/grid produced no fills) — rotate out"
+      }
+    ]
+  },
+  "manualRegistryCorrupt": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "stop",
+        "reason": "DEAD_GRID: ledger flat for 48h (spacing 0.37%/grid produced no fills) — rotate out"
+      }
+    ]
+  },
+  "tpStopWithBadHistory": {
+    "status": 1,
+    "error": "DECIDE FAILED: Cannot read properties of undefined (reading 'push')"
+  },
+  "tpStopWithStorageError": {
+    "status": 1,
+    "error": "DECIDE FAILED: EISDIR: illegal operation on a directory, rename '/var/folders/zd/ygt_wt3x0wbdl1lwfddnstqh0000gn/T/bg-dead-grid-loISei/case-8VKaAs/state/grid_activity.json.tmp' -> '/var/folders/zd/ygt_wt3x0wbdl1lwfddnstqh0000gn/T/bg-dead-grid-loISei/case-8VKaAs/state/grid_activity.json'"
+  },
+  "deadStopWithProtect": {
+    "status": 0,
+    "acts": [
+      {
+        "act": "protect",
+        "reason": "backstop missing/mismatch (TP=11 SL=6 close=true)"
+      },
+      {
+        "act": "stop",
+        "reason": "DEAD_GRID: ledger flat for 48h (spacing 0.37%/grid produced no fills) — rotate out"
+      }
+    ]
+  }
+}
