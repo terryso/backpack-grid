@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backpack 网格巡检</title>
+<title>Backpack 网格自动驾驶 · 实盘直播</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -68,7 +68,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Backpack 网格巡检</h1>
+  <h1>Backpack 网格自动驾驶</h1>
   <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
@@ -118,7 +118,7 @@ function render(s) {
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
-  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${fmt(s.runStats.days, 1)} 天 · 累计巡检记录 ${fmt(s.runStats.records, 0)} 条`;
+  if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${fmt(s.runStats.days, 1)} 天 · 累计运行记录 ${fmt(s.runStats.records, 0)} 条`;
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
@@ -178,7 +178,7 @@ function render(s) {
         <div class="muted" style="font-size:10px">${s.strategyTotalPnl == null ? "当前权益 − 初始权益；出入金也会影响此值" : "已扣除净入金，含资金费、利息等收益"}</div></div>
       <div class="card"><div class="k">在跑网格盈亏（${g.length} 格）</div><div class="v ${pnlCls(totalPnl)}">${totalPnl >= 0 ? "+" : ""}${fmt(totalPnl)}</div></div>
       <div class="card"><div class="k">回撤（自峰值）</div><div class="v">${fmt(s.drawdownPct, 1)}%</div><div class="muted" style="font-size:10px">峰值采样 1 分钟 · 曲线 15 分钟</div></div>
-      <div class="card"><div class="k">历史最大回撤</div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div><div class="muted" style="font-size:10px" title="按全部已保存的巡检权益计算；未覆盖两次巡检之间的瞬时下跌">记录以来，从高点回落的最大幅度</div></div>
+      <div class="card"><div class="k">历史最大回撤</div><div class="v">${s.maxDrawdown != null ? fmt(s.maxDrawdown, 1) : "-"}%</div><div class="muted" style="font-size:10px" title="按全部已保存的权益采样计算；未覆盖两次采样之间的瞬时下跌">记录以来，从高点回落的最大幅度</div></div>
       <div class="card"><div class="k">止损预算占用</div>
         <div class="v ${s.stopBudget?.overBudget?'neg':''}">${s.stopBudget?.valid?fmt(s.stopBudget.pct,1)+'%':'待核对'}</div>
         <div class="muted" style="font-size:10px">${s.stopBudget?.valid
@@ -248,7 +248,7 @@ function render(s) {
         ${pos.length === 0 ? `<div class="muted">当前无持仓（各网格库存已全部换手）</div>` : ""}
       </div>
     </div>
-    <div class="section"><h2>权益曲线（巡检轮次）</h2>${svg || `<div class="muted">样本积累中</div>`}</div>
+    <div class="section"><h2>权益曲线（运行轮次）</h2>${svg || `<div class="muted">样本积累中</div>`}</div>
     <div class="section"><h2>状态</h2>${chips.join(" ") || '<span class="chip">正常</span>'}
       ${(s.pending || []).length ? `<div class="muted" style="margin-top:8px">待清理：${s.pending.join(", ")}</div>` : ""}
       ${(s.orphans || []).length ? `<div class="muted" style="margin-top:8px">孤儿持仓：${s.orphans.join(", ")}</div>` : ""}
