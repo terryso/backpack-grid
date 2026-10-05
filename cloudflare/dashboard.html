@@ -17,6 +17,7 @@
   .livebadge.stale .dot { background: #71717a; animation: none; }
   @keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
   @media (prefers-reduced-motion: reduce) { .livebadge .dot { animation: none; } }
+  .footer { color: #8b94a7; font-size: 11px; line-height: 1.7; margin-top: 24px; padding-top: 10px; border-top: 1px solid #1f2737; }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .card { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 12px 14px; }
   .card .k { color: #8b94a7; font-size: 11px; letter-spacing: .05em; }
@@ -51,7 +52,7 @@
   }
   .bar { background: #1f2737; border-radius: 99px; height: 10px; overflow: hidden; margin: 8px 0 4px; }
   .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #3b82f6, #4ade80); }
-  .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin-right: 6px; border: 1px solid #1f2737; color: #8b94a7; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin: 0 6px 6px 0; border: 1px solid #1f2737; color: #8b94a7; }
   .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
   .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
   .muted { color: #8b94a7; }
@@ -85,7 +86,7 @@
     <a href="https://backpack.exchange/join/suchuanyi" target="_blank" rel="noopener" title="推荐链接（Referral）"><img src="/backpack-icon.png" alt="" style="width:14px;height:14px;vertical-align:-2px;margin-right:3px">注册 Backpack</a>
   </div>
   <div id="content" class="err">加载中…</div>
-  <div class="sub" style="margin-top:24px">数据仅供参考，不构成投资建议 · 页内 <a href="https://backpack.exchange/join/suchuanyi" target="_blank" rel="noopener" class="muted">注册 Backpack</a> 为推荐链接</div>
+  <div class="footer">数据仅供参考，不构成投资建议 · 页内 <a href="https://backpack.exchange/join/suchuanyi" target="_blank" rel="noopener">注册 Backpack</a> 为推荐链接</div>
 </div>
 <script>
 const fmt = (n, d = 2) => n == null || !Number.isFinite(Number(n)) ? "未知" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -146,7 +147,7 @@ function render(s) {
   if(s.manualPauseValid===false)chips.push(`<span class="chip bad">手动暂停记录异常</span>`);
   if(s.manualPauses?.length)chips.push(`<span class="chip">暂停自动轮换：${s.manualPauses.join('、')}</span>`);
   if(s.marketDataAvailable===false)chips.push(`<span class="chip bad">行情降级，暂停新增网格</span>`);
-  if (s.runStats?.since) chips.push(`<span class="chip">新运行日志：自 ${new Date(s.runStats.since).toLocaleDateString("zh-CN")} 完成 ${fmt(s.runStats.rounds, 0)} 轮${s.runStats.failedRounds ? " · 失败 " + fmt(s.runStats.failedRounds, 0) + " 轮" : ""}</span>`);
+  if (s.runStats?.since) chips.push(`<span class="chip">自 ${new Date(s.runStats.since).toLocaleDateString("zh-CN")} 起 ${fmt(s.runStats.rounds, 0)} 轮${s.runStats.failedRounds ? " · 失败 " + fmt(s.runStats.failedRounds, 0) : ""}</span>`);
   if (s.quotaExceeded) chips.push(`<span class="chip bad">动态接口不可用：显示部署时的历史快照</span>`);
   if (s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun") chips.push(`<span class="chip bad">上轮状态: ${s.lastRoundStatus}</span>`);
   if (s.dataValid === false) chips.push(`<span class="chip bad">数据异常</span>`);
