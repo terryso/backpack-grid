@@ -11,6 +11,12 @@
   .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 18px; margin: 0 0 4px; }
   .sub { color: #8b94a7; font-size: 12px; margin-bottom: 20px; }
+  .livebadge { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; margin-left: 10px; padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; letter-spacing: .5px; border: 1px solid #14532d; background: #0f1f16; color: #4ade80; }
+  .livebadge .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: livepulse 1.6s ease-out infinite; }
+  .livebadge.stale { border-color: #3f3f46; background: #18181b; color: #8b94a7; }
+  .livebadge.stale .dot { background: #71717a; animation: none; }
+  @keyframes livepulse { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.5); } 70% { box-shadow: 0 0 0 8px rgba(34,197,94,0); } 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); } }
+  @media (prefers-reduced-motion: reduce) { .livebadge .dot { animation: none; } }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .card { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 12px 14px; }
   .card .k { color: #8b94a7; font-size: 11px; letter-spacing: .05em; }
@@ -68,7 +74,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Backpack 网格自动驾驶</h1>
+  <h1>Backpack 网格自动驾驶 <span class="livebadge" id="liveBadge"><span class="dot"></span>实盘</span></h1>
   <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
@@ -118,6 +124,8 @@ function render(s) {
   if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
+  const lb = document.getElementById("liveBadge");
+  if (lb) lb.classList.toggle("stale", !(ageMin <= 20 && s.dataValid !== false));
   if (s.runStats) document.getElementById("runStats").textContent = `策略运行 ${fmt(s.runStats.days, 1)} 天 · 累计运行记录 ${fmt(s.runStats.records, 0)} 条`;
   const g = s.grids || [];
   const pos = s.positions || [];
