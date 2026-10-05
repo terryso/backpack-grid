@@ -278,6 +278,42 @@ const writeAtomic = (p, data) => {
     if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
   }
 
+  // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------
+  // ETH lesson: a calm-major grid can sit for days with zero fills, silently occupying
+  // a slot. Track per-symbol ledger samples every round; zero delta over the window
+  // (and enough history to judge) means the market stopped visiting the grid — rotate.
+  const deadHours = Number(cfg.deadGridHours) > 0 ? Number(cfg.deadGridHours) : 48;
+  const activityPath = path.join(ROOT, "state", "grid_activity.json");
+  let activity = {};
+  try { activity = JSON.parse(fs.readFileSync(activityPath, "utf8")); } catch {}
+  if (!activity || typeof activity !== "object" || Array.isArray(activity)) activity = {};
+  const nowMs = Date.now();
+  for (const l of Array.isArray(obs.ledger) ? obs.ledger : []) {
+    const vol = Number(l.vol);
+    if (!Number.isFinite(vol)) continue;
+    const e = activity[l.symbol] || { vol: null, samples: [] };
+    if (e.vol !== null && vol < e.vol) e.samples = []; // ledger reset (grid rebuilt) -> warmup restarts
+    e.vol = vol;
+    e.samples.push({ at: nowMs, vol });
+    e.samples = e.samples.filter((s) => nowMs - s.at <= (deadHours + 6) * 3600000); // +6h 容忍漏跑轮次，避免恰好在判定边界的基线样本被修剪
+    activity[l.symbol] = e;
+  }
+  for (const g of grids) {
+    if (pending[g.market] || heldByUser(g.market)) continue; // respect in-flight retries and explicit user intention
+    if (actions.some((a) => a.market === g.market && a.act === "stop")) continue;
+    const e = activity[g.symbol];
+    if (!e || !Array.isArray(e.samples) || !e.samples.length) continue;
+    const cutoff = nowMs - deadHours * 3600000;
+    const baseline = e.samples.find((s) => s.at <= cutoff);
+    if (!baseline) continue; // warmup: less than deadHours of tracking on this grid
+    const delta = (Number(e.vol) || 0) - Number(baseline.vol);
+    if (delta >= 1) continue; // produced fills within the window
+    const sp = (Number(g.range[1]) - Number(g.range[0])) / Math.max(Number(g.range[0]), 1e-12) / Math.max(Number(g.count) - 1, 1) * 100;
+    actions.push({ act: "stop", market: g.market, range: g.range, reason: `DEAD_GRID: ledger flat for ${deadHours}h (spacing ${sp.toFixed(2)}%/grid produced no fills) — rotate out` });
+    lines.push(`DEAD GRID ${g.market}: zero fills in ${deadHours}h — rotating out (slot freed for a live candidate)`);
+  }
+  writeAtomic(activityPath, JSON.stringify(activity, null, 2));
+
   // ---------- plan replacements for freed slots ----------
   const stops = actions.filter((a) => a.act === "stop").map((a) => a.market);
   const remaining = grids.filter((g) => !stops.includes(g.market)).map((g) => g.market);

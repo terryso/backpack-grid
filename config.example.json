@@ -75,5 +75,6 @@
   },
   "exitCostBufferUsd": 15,
   "strategyStartAt": "2026-09-30",
-  "strategyBaselineUsd": 0
+  "strategyBaselineUsd": 0,
+  "deadGridHours": 48
 }

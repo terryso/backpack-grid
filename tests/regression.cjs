@@ -336,6 +336,52 @@ function runWithLock(dir, args) {
   try { holder.kill("SIGKILL"); holder2.kill("SIGKILL"); } catch {}
 }
 
+// ---------- DG: dead grid rotation (48h flat ledger -> rotate out) ----------
+{
+  const gridRow = { market: "CALM-PERP", symbol: "CALM_USDC_PERP", direction: "中性",
+    range: ["100", "107"], count: 20, value: "$1750.00", allocationRaw: 1750,
+    pnlRaw: 0, pnl: "$0.00", pnlPct: 0, status: "Triggered", control: "开启",
+    nativeTP: 10, nativeSL: 6, nativeCloseOnStop: true };
+  const H = 3600000;
+  const mk = (samples, ledgerVol) => {
+    const dir = makeFixture({
+      "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
+        gridRows: [gridRow], positions: [],
+        margin: { totalEquity: "$500.00", availableEquity: "$400.00", openPnl: "$0.00", initMarginPct: "0%" },
+        badges: {}, ledger: [{ symbol: "CALM_USDC_PERP", vol: ledgerVol }] }),
+      "state/grid_activity.json": JSON.stringify({ CALM_USDC_PERP: { vol: samples[0].vol, samples } }),
+    });
+    runDecide(dir, true);
+    return dir;
+  };
+  const hadDeadStop = (dir) => {
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    return actions.some((a) => a.act === "stop" && a.market === "CALM-PERP" && /DEAD_GRID/.test(a.reason || ""));
+  };
+  const now = Date.now();
+  // DG1: 50h 追踪、账本零增量 -> 死格换仓
+  {
+    const dir = mk([{ at: now - 50 * H, vol: 100 }, { at: now - 25 * H, vol: 100 }, { at: now - 1 * H, vol: 100 }], 100);
+    T("DG1 ledger flat 48h -> dead grid stop planned", hadDeadStop(dir)
+      && fs.existsSync(path.join(dir, "state", "grid_activity.json")));
+  }
+  // DG2: 预热期（仅 10h 追踪）不触发
+  {
+    const dir = mk([{ at: now - 10 * H, vol: 100 }, { at: now - 1 * H, vol: 100 }], 100);
+    T("DG2 warmup (10h window) -> no dead rotation", !hadDeadStop(dir));
+  }
+  // DG3: 账本回退（网格重建）-> 样本重置，不触发
+  {
+    const dir = mk([{ at: now - 50 * H, vol: 100 }, { at: now - 1 * H, vol: 100 }], 5);
+    T("DG3 ledger reset (grid rebuilt) -> warmup restarts, no dead rotation", !hadDeadStop(dir));
+  }
+  // DG4: 窗口内有成交（delta>=1）不触发
+  {
+    const dir = mk([{ at: now - 50 * H, vol: 100 }, { at: now - 1 * H, vol: 350 }], 350);
+    T("DG4 fills within window -> no dead rotation", !hadDeadStop(dir));
+  }
+}
+
 // ---------- T19 (round-5 #1): protection-verify stage funnels into cleanup ----------
 T("T19a protectionConfirmed flow present", actSrc.includes("let protectionConfirmed = false;")
   && actSrc.includes("protectionConfirmed = await backstopsOk();"));
