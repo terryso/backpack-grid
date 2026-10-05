@@ -209,7 +209,7 @@ function render(s) {
       <div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>
       <div class="muted">${nextTier
         ? `下一档：第 ${boxes + 1} 盒 @ ${fmt(nextTier, 0)} USD · 进度 ${tierPct.toFixed(1)}% · 还差 ${fmt(nextTier - camp, 0)} USD`
-        : TIERS.length ? "已达封顶 🎉" : ""}${deadlineText ? " · " + deadlineText : ""}</div>`;
+        : TIERS.length ? "已达封顶 🎉" : ""}${deadlineText ? " · " + deadlineText : ""} · 活动量为 Backpack 官方接口数据（每小时更新）</div>`;
         return `
       <h2>交易量活动（已结束）· 最终累计 ${fmt(camp, 0)} USD · 获得 ${boxes} 盲盒</h2>
       <div>${ladder}</div>
