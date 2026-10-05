@@ -197,7 +197,17 @@ async function main() {
   const html = fs.readFileSync(path.join(ROOT, 'cloudflare/dashboard.html'), 'utf8');
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1].split('function markLiked()')[0];
   const elements = new Map();
-  const document = { getElementById: (id) => { if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', classList: { remove() {} } }); return elements.get(id); } };
+  const document = { getElementById: (id) => {
+    if (!elements.has(id)) {
+      const classes = new Set();
+      elements.set(id, { innerHTML: '', textContent: '', classList: {
+        remove(...tokens) { for (const token of tokens) classes.delete(token); },
+        contains(token) { return classes.has(token); },
+        toggle(token, force) { const enabled = force === undefined ? !classes.has(token) : !!force; if (enabled) classes.add(token); else classes.delete(token); return enabled; },
+      } });
+    }
+    return elements.get(id);
+  } };
   const degraded = { updatedAt: new Date().toISOString(), equity: 500, riskStateValid: true, riskWriteValid: true, dataValid: true, lastRoundStatus: 'ok', riskPaused: false, drawdownPct: 0, grids: [], positions: [], pending: [], curve: [] };
   const context = { document, window: { __SNAPSHOT_FALLBACK__: degraded }, fetch: async () => ({ ok: false, status: 429 }) };
   await vm.runInNewContext(script + '\nload();', context);
@@ -205,6 +215,12 @@ async function main() {
   const uiContext = { document, window: {}, fetch: async () => ({ ok: false, status: 404 }) };
   vm.runInNewContext(script, uiContext);
   const display = { ...degraded, quotaExceeded: false, equityChange: 12.5, strategyBaselineAt: '2026-09-30', runStats: { days: 3.0336669444444446, records: 256, rounds: 17, since: '2026-10-03T00:00:00Z' }, maxDrawdown: 6 };
+  uiContext.snapshot = display; vm.runInNewContext('render(snapshot)', uiContext);
+  check('production UI live badge stays active for valid fresh data', () => assert(!elements.get('liveBadge').classList.contains('stale')));
+  uiContext.snapshot = { ...display, dataValid: false }; vm.runInNewContext('render(snapshot)', uiContext);
+  check('production UI live badge degrades for invalid data', () => assert(elements.get('liveBadge').classList.contains('stale')));
+  uiContext.snapshot = { ...display, updatedAt: new Date(Date.now() - 21 * 60000).toISOString() }; vm.runInNewContext('render(snapshot)', uiContext);
+  check('production UI live badge degrades for an old snapshot', () => assert(elements.get('liveBadge').classList.contains('stale')));
   uiContext.snapshot = display; vm.runInNewContext('render(snapshot)', uiContext);
   check('production UI rounds days and labels history in plain language', () => { assert.match(elements.get('runStats').textContent, /3\.0 天/); assert.match(elements.get('runStats').textContent, /256 条/); const output = elements.get('content').innerHTML; assert.match(output, /历史总盈亏/); assert.match(output, /出入金也会影响此值/); assert(!output.includes('最近 400 点')); assert.match(output, /从高点回落的最大幅度/); assert.match(output, /完成 17 轮/); });
   uiContext.snapshot={...display,stopBudget:{valid:true,pct:125,usedUsd:100,budgetUsd:80,remainingUsd:-20,bufferUsd:15,riskBudgetPct:80,overBudget:true}};
