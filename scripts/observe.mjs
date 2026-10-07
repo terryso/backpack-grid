@@ -148,7 +148,9 @@ const strategyEquity = {
 // 官方活动量（Mystery Box 1011，与官网弹窗同源，每小时更新）；失败为 null，回退账本增量口径
 let officialCampaignVolume = null;
 try {
-  const cv = await page.fetch("https://api.backpack.exchange/wapi/v1/campaigns/1011/volume", { credentials: "include", timeout: 15000 });
+  const hist = JSON.parse(await fs.readFile(path.join(ROOT, "cloudflare/assets/campaign-history.json"), "utf8"));
+  const cid = Number(hist?.current?.campaignId) || 1012;
+  const cv = await page.fetch(`https://api.backpack.exchange/wapi/v1/campaigns/${cid}/volume`, { credentials: "include", timeout: 15000 });
   if (cv.status === 200) {
     const v = JSON.parse(cv.body)?.totalVolume;
     if (finiteNumber(v) && Number(v) >= 0) officialCampaignVolume = Number(v);

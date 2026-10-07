@@ -461,7 +461,18 @@ const writeAtomic = (p, data) => {
   }
 
   // ---------- campaign volume tracking (Mystery Box campaign 1011: 2026-09-30 -> 2026-10-06, tier1 at 50k) ----------
-  const CAMP = { start: "2026-09-30T00:00:00Z", end: "2026-10-06T23:59:59Z", tier1: 50000 };
+  // 活动档期/档位唯一来源：cloudflare/assets/campaign-history.json 的 current（新活动只改该文件）
+  let CAMP = { start: "2026-09-30T00:00:00Z", end: "2026-10-06T23:59:59Z", tier1: 50000 }; // 回退：第 1 期
+  try {
+    const h = JSON.parse(fs.readFileSync(path.join(ROOT, "cloudflare", "assets", "campaign-history.json"), "utf8"));
+    if (h?.current?.endsAt && Array.isArray(h.current.tiers) && h.current.tiers.length) {
+      CAMP = {
+        start: h.current.startsAt || "1970-01-01T00:00:00Z",
+        end: h.current.endsAt,
+        tier1: Number(h.current.tiers[0]) || 50000,
+      };
+    }
+  } catch {}
   let camp = { last: {}, campaignVolume: 0 };
   const campPath = path.join(ROOT, "state", "campaign.json");
   try { camp = JSON.parse(fs.readFileSync(campPath, "utf8")); } catch {}
