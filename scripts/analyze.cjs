@@ -75,7 +75,7 @@ function analyze(symbol, kl) {
       - a.drift24 * 25 - Math.min(2, Math.abs(fundingRate) * 800);
 
     let widthPct = Math.max(0.06, Math.min(0.30, Math.max(a.range7d * 0.85, a.range24 * 2.2, 0.07)));
-    const spacing = Math.max(0.0035, Math.min(0.008, a.pathDay / 8));
+    const spacing = Math.max(0.0025, Math.min(0.008, a.pathDay / 12));
     // exchange constraints
     const tickSize = Number(m.filters?.price?.tickSize || 0) || null;
     const minQuantity = Number(m.filters?.quantity?.minQuantity || 0) || 0;
