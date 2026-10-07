@@ -155,9 +155,12 @@ const strategyEquity = {
 
 // 官方活动量（Mystery Box 1011，与官网弹窗同源，每小时更新）；失败为 null，回退账本增量口径
 let officialCampaignVolume = null;
+let officialCampaignId = null;
 try {
   const hist = JSON.parse(await fs.readFile(path.join(ROOT, "cloudflare/assets/campaign-history.json"), "utf8"));
-  const cid = Number(hist?.current?.campaignId) || 1012;
+  const {parseCampaignConfig}=requireLocal("./campaign_core.cjs");
+  const cid = parseCampaignConfig(hist).campaignId;
+  officialCampaignId = cid;
   const cv = await page.fetch(`https://api.backpack.exchange/wapi/v1/campaigns/${cid}/volume`, { credentials: "include", timeout: 15000 });
   if (cv.status === 200) {
     const v = JSON.parse(cv.body)?.totalVolume;
@@ -174,6 +177,7 @@ const observed = {
     vol: Number(s.pnl?.boughtValue || 0) + Number(s.pnl?.soldValue || 0),
   })),
   officialCampaignVolume,
+  officialCampaignId,
 };
 
 // --- validation --- zero grids is a legal state (all rotated out / deliberately empty)

@@ -27,6 +27,8 @@ function fixture() {
   fs.mkdirSync(path.join(d, 'cloudflare', 'assets'), { recursive: true });
   put(d, 'cloudflare/assets/campaign-history.json', { current: { name: 'Mystery Box 活动 · 第 1 期', startsAt: '2026-09-30T00:00:00Z', endsAt: '2026-10-06T23:59:59Z', tiers: [50000], campaignId: 1011 } });
   put(d, 'config.json', cfg); put(d, 'state/account_identity.json', identity);
+  fs.mkdirSync(path.join(d,'cloudflare/assets'),{recursive:true});
+  put(d,'cloudflare/assets/campaign-history.json',{current:{campaignId:1011,startsAt:'2026-09-30T00:00:00Z',endsAt:'2026-10-06T23:59:59Z',tiers:[50000,100000]}});
   return d;
 }
 async function observe(response) {
@@ -56,9 +58,9 @@ function decide(official) {
   put(d, 'state/observed.json', {
     at: '2026-10-04T12:00:00Z', identity, gridRows: [], positions: [], badges: {},
     margin: { totalEquity: '500', availableEquity: '400', openPnl: '0' },
-    ledger: [{ symbol: 'ETH_USDC_PERP', vol: 1100 }], officialCampaignVolume: official,
+    ledger: [{ symbol: 'ETH_USDC_PERP', vol: 1100 }], officialCampaignVolume: official, officialCampaignId:1011,
   });
-  put(d, 'state/campaign.json', { last: { ETH_USDC_PERP: 1000 }, campaignVolume: 60000, officialAt: '2026-10-04T00:00:00Z' });
+  put(d, 'state/campaign.json', {schemaVersion:2,accountKey:identity.accountKey,activeCampaignId:1011,periods:{'1011':{campaignId:1011,startsAt:'2026-09-30T00:00:00Z',endsAt:'2026-10-06T23:59:59Z',last:{ETH_USDC_PERP:1000},campaignVolume:60000,source:'official',officialAt:'2026-10-04T00:00:00Z',ledgerDeltaSinceBaseline:0}},legacy:[]});
   // Inject a deterministic clock, without modifying any production source.
   const clock = path.join(d, 'clock.cjs');
   fs.writeFileSync(clock, 'const RealDate = Date; const at = RealDate.parse("2026-10-04T12:00:00Z"); global.Date = class extends RealDate { constructor(...args) { super(...(args.length ? args : [at])); } static now() { return at; } };');
@@ -67,7 +69,7 @@ function decide(official) {
     encoding: 'utf8', timeout: 15000,
   });
   assert.equal(r.status, 0, r.stderr); assert(!r.stdout.includes('RISK WRITE FAILED'));
-  return get(d, 'state/campaign.json');
+  return get(d, 'state/campaign.json').periods['1011'];
 }
 function check(name, fn) { fn(); count++; console.log('PASS', name); }
 async function main() {

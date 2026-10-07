@@ -17,6 +17,9 @@ const identityValid=identityOk(identity)&&identityOk(obs?.identity)&&obs.identit
 const risk = read('state/risk.json');
 const pending = read('state/pending_stops.json');
 const campaign = read('state/campaign.json');
+const {parseCampaignConfig,campaignView,unknownView}=require('./campaign_core.cjs');
+let campaignPublic=unknownView(null);
+try{campaignPublic=campaignView(campaign,parseCampaignConfig(read('cloudflare/assets/campaign-history.json')),identityValid?identity.accountKey:null);}catch{}
 const activeResults=read('state/act_results.json');
 const results=Array.isArray(activeResults?.results)&&activeResults.results.length?activeResults:read('state/last_action.json');
 const writeState = read('state/risk_write_status.json');
@@ -102,7 +105,7 @@ const snapshot = {
   fees, runStats: { days: baselineAt && Number.isFinite(Date.parse(baselineAt)) ? +Math.max(0, (Date.now() - Date.parse(baselineAt)) / 86400000).toFixed(1) : null, records: history.count, recordsSince: history.since, rounds: confirmed.successful, failedRounds: confirmed.failed, exits: exits.size, since: confirmed.since },
   change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,
   drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
-  riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: num(campaign?.campaignVolume), tier1: 50000, tier1Secured: num(campaign?.campaignVolume) >= 50000 && num(campaign?.campaignVolume) !== null,
+  riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: campaignPublic.campaignVolume, campaignId:campaignPublic.campaignId, campaignSource:campaignPublic.source, campaignOfficialAt:campaignPublic.officialAt, tier1:campaignPublic.tier1, tier1Secured:campaignPublic.tier1Secured,
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct), gridAgeLabel: formatAgeMin(gridCreatedAt[g.market] != null ? (gridNowMs - gridCreatedAt[g.market]) / 60000 : null) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,

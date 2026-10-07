@@ -166,15 +166,22 @@ function render(s) {
   const g = s.grids || [];
   const pos = s.positions || [];
   const totalPnl = g.reduce((a, x) => a + (Number(x.pnl) || 0), 0);
-  const camp = s.campaignVolume || 0;
+  const campaignDefinitionMatches = s.campaignId != null && Number.isSafeInteger(Number(s.campaignId)) && Number(s.campaignId)>0 && Number(s.campaignId) === Number(HIST?.current?.campaignId);
+  const campaignKnown = s.campaignVolume != null && Number.isFinite(Number(s.campaignVolume)) && Number(s.campaignVolume)>=0
+    && campaignDefinitionMatches && ['official','estimated'].includes(s.campaignSource);
+  const campaignOfficial = campaignKnown && s.campaignSource === 'official';
+  const camp = campaignKnown ? Number(s.campaignVolume) : 0;
+  const campaignCheckedAt = Number.isFinite(Date.parse(s.campaignOfficialAt)) ? ` · 最近官方核对 ${new Date(s.campaignOfficialAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false})}` : '';
+  const campaignNote = (!campaignKnown ? '活动量待核对，尚无本期有效基准' : campaignOfficial
+    ? '活动量为 Backpack 官方接口数据（每小时更新）' : '网格账本估算 · 档位与奖励以官方核对为准') + (campaignKnown ? campaignCheckedAt : '');
   // 档位来自活动历史 JSON 的 current.tiers（缺省回退到第 1 期阶梯）
-  const TIERS = (HIST?.current?.tiers || []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  const TIERS = (campaignDefinitionMatches ? HIST?.current?.tiers || [] : []).map(Number).filter((n) => Number.isFinite(n) && n > 0);
   const boxes = TIERS.filter((t) => camp >= t).length;
   const nextTier = TIERS.find((t) => camp < t) || null;
   const tierPct = nextTier ? Math.min(100, camp / nextTier * 100) : 100;
   const fmtShort = (n) => n >= 1000000 ? (n / 1000000).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1000 ? Math.round(n / 1000) + "k" : fmt(n, 0);
   const ladder = TIERS.map((t) => {
-    const done = camp >= t, isNext = nextTier === t;
+    const done = campaignOfficial && camp >= t, isNext = campaignKnown && nextTier === t;
     return `<span class="chip" style="${done ? "border-color:#14532d;color:#4ade80" : isNext ? "border-color:#1d4ed8;color:#93c5fd" : ""}">${fmtShort(t)}${done ? " ✓" : ""}</span>`;
   }).join("");
   const chips = [];
@@ -238,21 +245,21 @@ function render(s) {
     </div>
     <div class="section">
       ${(() => {
-        const endsAt = HIST?.current?.endsAt ? Date.parse(HIST.current.endsAt) : Infinity;
+        const endsAt = campaignDefinitionMatches && HIST?.current?.endsAt ? Date.parse(HIST.current.endsAt) : Infinity;
         const active = isFinite(endsAt) ? Date.now() < endsAt : true;
         const d = isFinite(endsAt) ? new Date(endsAt) : null;
         const deadlineText = d ? `活动截止 ${d.getUTCMonth() + 1}-${String(d.getUTCDate()).padStart(2, "0")} ${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")} UTC` : "";
         if (active) return `
-      <h2>交易量活动 · 累计 ${fmt(camp, 0)} USD · 已锁定 ${boxes} 盲盒</h2>
+      <h2>交易量活动 · ${campaignKnown?`${campaignOfficial?'累计':'估算累计'} ${fmt(camp, 0)} USD · ${campaignOfficial?'已锁定':'估算达到'} ${boxes} ${campaignOfficial?'盲盒':'档'}`:'待核对'}</h2>
       <div>${ladder}</div>
       <div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>
-      <div class="muted">${nextTier
+      <div class="muted">${[campaignKnown ? (nextTier
         ? `下一档：第 ${boxes + 1} 盒 @ ${fmt(nextTier, 0)} USD · 进度 ${tierPct.toFixed(1)}% · 还差 ${fmt(nextTier - camp, 0)} USD`
-        : TIERS.length ? "已达封顶 🎉" : ""}${deadlineText ? " · " + deadlineText : ""} · 活动量为 Backpack 官方接口数据（每小时更新）</div>`;
+        : TIERS.length ? (campaignOfficial?"已达封顶 🎉":"估算达到最高档") : "") : '',deadlineText,campaignNote].filter(Boolean).join(' · ')}</div>`;
         return `
-      <h2>交易量活动（已结束）· 最终累计 ${fmt(camp, 0)} USD · 获得 ${boxes} 盲盒</h2>
+      <h2>交易量活动（已结束）· ${campaignKnown?`${campaignOfficial?'官方累计':'估算累计'} ${fmt(camp,0)} USD`:'待核对'}</h2>
       <div>${ladder}</div>
-      <div class="muted">${escape(HIST?.current?.name || "活动")}已结束 · 开盒结果更新在下方活动历史</div>`;
+      <div class="muted">${escape(HIST?.current?.name || "活动")}已结束 · ${campaignNote} · 开盒结果更新在下方活动历史</div>`;
       })()}
     </div>
     ${HIST?.past?.length ? `<div class="section">

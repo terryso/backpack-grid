@@ -477,44 +477,19 @@ const writeAtomic = (p, data) => {
     lines.push(`PLAN hold: new grids blocked (breaker=${breaker || "off"}, riskCorrupt=${riskCorrupt}, tickersOk=${tickersOk}, pendingStops=${Object.keys(pending).length}) — freed slots stay empty this round`);
   }
 
-  // ---------- campaign volume tracking (Mystery Box campaign 1011: 2026-09-30 -> 2026-10-06, tier1 at 50k) ----------
-  // 活动档期/档位唯一来源：cloudflare/assets/campaign-history.json 的 current（新活动只改该文件）
-  let CAMP = { start: "2026-09-30T00:00:00Z", end: "2026-10-06T23:59:59Z", tier1: 50000 }; // 回退：第 1 期
+  // ---------- campaign volume tracking: bind period and official response ----------
+  const {parseCampaignConfig,updateCampaign,unknownView}=require('./campaign_core.cjs');
+  let camp=unknownView(null);
   try {
-    const h = JSON.parse(fs.readFileSync(path.join(ROOT, "cloudflare", "assets", "campaign-history.json"), "utf8"));
-    if (h?.current?.endsAt && Array.isArray(h.current.tiers) && h.current.tiers.length) {
-      CAMP = {
-        start: h.current.startsAt || "1970-01-01T00:00:00Z",
-        end: h.current.endsAt,
-        tier1: Number(h.current.tiers[0]) || 50000,
-      };
-    }
-  } catch {}
-  let camp = { last: {}, campaignVolume: 0 };
-  const campPath = path.join(ROOT, "state", "campaign.json");
-  try { camp = JSON.parse(fs.readFileSync(campPath, "utf8")); } catch {}
-  if (new Date(obs.at) >= new Date(CAMP.start) && new Date(obs.at) <= new Date(CAMP.end)) {
-    let delta = 0;
-    for (const l of obs.ledger || []) {
-      const prev = camp.last[l.symbol];
-      if (prev === undefined) { camp.last[l.symbol] = l.vol; continue; }
-      if (l.vol >= prev) delta += l.vol - prev; // ledger reset (grid rebuild) -> re-baseline, count future growth
-      camp.last[l.symbol] = l.vol;
-    }
-    camp.campaignVolume += delta;
-    // 官方口径优先（Backpack 服务端计数，每小时更新；含手动交易/全部子账户，
-    // 排除 API 交易与 USDT 对）——账本增量仅在官方值缺失时兜底
-    const official = obs.officialCampaignVolume;
-    if (finiteNumber(official) && Number(official) >= 0) {
-      camp.campaignVolume = Number(official);
-      camp.officialAt = obs.at;
-    }
-    writeAtomic(campPath, JSON.stringify(camp, null, 2));
-    const pct = (camp.campaignVolume / CAMP.tier1 * 100).toFixed(1);
-    lines.push(`CAMPAIGN volume ${camp.campaignVolume.toFixed(0)} / ${CAMP.tier1} USD (${pct}%) ${camp.campaignVolume >= CAMP.tier1 ? "TIER1 SECURED" : "to tier1"}`);
-  } else {
-    lines.push(`CAMPAIGN inactive (window ${CAMP.start} ~ ${CAMP.end})`);
-  }
+    const current=parseCampaignConfig(read('cloudflare/assets/campaign-history.json'));
+    camp=unknownView(current);
+    const campPath=path.join(ROOT,'state/campaign.json');let previous=null;
+    try{previous=JSON.parse(fs.readFileSync(campPath,'utf8'));if(!plainObject(previous))throw Error('invalid campaign state');}catch(e){if(e.code!=='ENOENT')throw Error('CAMPAIGN STATE UNREADABLE — original kept');}
+    const next=updateCampaign(previous,current,obs,identity.accountKey);
+    if(next.active)writeAtomic(campPath,JSON.stringify(next.state,null,2));
+    camp=next.view;
+    lines.push(!next.active?'CAMPAIGN inactive':camp.campaignVolume===null?'CAMPAIGN '+camp.campaignId+' pending verification — no cross-period fallback':'CAMPAIGN '+camp.campaignId+' volume '+camp.campaignVolume.toFixed(0)+' / '+camp.tier1+' USD ('+camp.source+') '+(camp.tier1Secured?'TIER1 SECURED':'to tier1'));
+  }catch(e){lines.push('CAMPAIGN UNKNOWN: '+String(e.message).slice(0,140)+' — risk actions preserved');}
 
   // ---------- equity curve: one JSONL line per round ----------
   try {
@@ -525,7 +500,8 @@ const writeAtomic = (p, data) => {
       ledgerPnl: +grids.reduce((s, g) => s + (Number(g.pnlRaw) || 0), 0).toFixed(2),
       floatingPnl: num(obs.margin.openPnl),
       funding: +(obs.positions || []).reduce((s, p) => s + (Number(p.fundingRaw) || 0), 0).toFixed(2),
-      campaignVolume: Math.round(camp.campaignVolume || 0),
+      campaignVolume: camp.campaignVolume===null?null:Math.round(camp.campaignVolume),
+      campaignId: camp.campaignId, campaignSource: camp.source,
       drawdownPct: +ddPct.toFixed(2),
     };
     fs.appendFileSync(path.join(ROOT, "state", "equity_curve.jsonl"), JSON.stringify(rec) + "\n");
