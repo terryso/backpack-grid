@@ -23,9 +23,17 @@ await page.goto("https://backpack.exchange/portfolio/balances/assets"); // 资�
 await page.waitForTimeout(4000);
 
 async function jget(pathname) {
-  const r = await page.fetch(API + pathname, { credentials: "include", timeout: 15000 });
-  if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status} ${String(r.body).slice(0, 120)}`);
-  return JSON.parse(r.body);
+  // 瞬时网络抖动（超时/连接重置）重试一次，磨掉单次失败导致的整轮 observe 失败
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r = await page.fetch(API + pathname, { credentials: "include", timeout: attempt === 1 ? 15000 : 25000 });
+      if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status} ${String(r.body).slice(0, 120)}`);
+      return JSON.parse(r.body);
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await page.waitForTimeout(4000);
+    }
+  }
 }
 
 const auto = await jget(`/wapi/v1/subaccount/${SUB}/automation`);
