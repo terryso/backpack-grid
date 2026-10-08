@@ -19,7 +19,7 @@ const task = await taskSpace(cfg.watch.spaceId);
 const page = task.page(cfg.watch.page);
 // any backpack.exchange page provides the session origin; trade page also lets us
 // cross-check the DOM when needed
-await page.goto(cfg.tradeUrlBase + "portfolio/balances/assets"); // 资产总览页：有会话 origin，比交易页轻得多
+await page.goto("https://backpack.exchange/portfolio/balances/assets"); // 资产总览页：有会话 origin，比交易页轻得多
 await page.waitForTimeout(4000);
 
 async function jget(pathname) {

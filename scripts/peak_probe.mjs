@@ -26,7 +26,7 @@ const pkNum = Number(risk.peakEquity);
 const task = await taskSpace(cfg.watch?.spaceId || 8);
 const page = task.page(cfg.watch?.page || "p1");
 // 确保会话 origin（页面可能被其它流程导航走）
-await page.goto(cfg.tradeUrlBase + "portfolio/balances/assets"); // 资产总览页：有会话 origin，比交易页轻
+await page.goto("https://backpack.exchange/portfolio/balances/assets"); // 资产总览页：有会话 origin，比交易页轻
 await page.waitForTimeout(2500);
 const r = await page.fetch(`https://api.backpack.exchange/wapi/v1/portfolio/collateral`, { credentials: "include", timeout: 15000 });
 const col = JSON.parse(r.body);
