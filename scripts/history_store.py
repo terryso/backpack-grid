@@ -56,14 +56,17 @@ elif command=='fills':
 elif command=='status':
     # Coverage snapshot for the operations-history page (read-only): audit flags from the
     # last save plus the ground truth from the fills table itself (count + newest ts).
-    # coverageFrom = earliest per-symbol window start — an account-bound attribution
-    # anchor (meta acquiredAt is refreshed every save and cannot serve this role).
+    # coverageFrom/To = per-symbol window bounds — account-bound facts from the cursors
+    # (meta acquiredAt refreshes every save; coverageTo advances to asOf on every
+    # successful collection regardless of trade activity, so it is the collection
+    # freshness signal, not the last-fill time).
     meta={k:db.execute("SELECT value FROM meta WHERE key=?",(k,)).fetchone() for k in ('incomplete','asOf')}
     n,maxts=db.execute('SELECT COUNT(*),MAX(ts) FROM fills').fetchone()
-    froms=[json.loads(b).get('from') for (b,) in db.execute('SELECT body FROM cursors')]
-    coverage=min((f for f in froms if isinstance(f,(int,float))),default=None)
+    bounds=[(json.loads(b).get('from'),json.loads(b).get('lastTo')) for (b,) in db.execute('SELECT body FROM cursors')]
+    coverage=min((f for f,_ in bounds if isinstance(f,(int,float))),default=None)
+    covered=max((t for _,t in bounds if isinstance(t,(int,float))),default=None)
     print(json.dumps({'incomplete':json.loads(meta['incomplete'][0]) if meta['incomplete'] else True,
                       'asOf':json.loads(meta['asOf'][0]) if meta['asOf'] else None,
-                      'fillCount':n,'fillsMaxTs':maxts,'coverageFrom':coverage}))
+                      'fillCount':n,'fillsMaxTs':maxts,'coverageFrom':coverage,'coverageTo':covered}))
 else:raise ValueError('unknown history store command')
 db.close()

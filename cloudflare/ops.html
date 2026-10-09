@@ -65,7 +65,7 @@
 <body>
 <div class="wrap">
   <h1>操作历史 <span class="chip" id="modeChip">加载中…</span></h1>
-  <div class="sub">建格 / 停格决策与全部成交，每 15 分钟随巡检更新 · 数据截至 <span id="ago">-</span> · 成交覆盖至 <span id="fillsAgo">-</span> · 生成于 <span id="builtAt">-</span> <span id="staleChips"></span></div>
+  <div class="sub">建格 / 停格决策与全部成交，每 15 分钟随巡检更新 · 数据截至 <span id="ago">-</span> · 采集覆盖至 <span id="covAgo">-</span> · 最近成交 <span id="fillsAgo">-</span> · 生成于 <span id="builtAt">-</span> <span id="staleChips"></span></div>
   <div class="toolbar">
     <a href="/">← 返回实盘首页</a>
     <button id="refreshBtn">↻ 刷新</button>
@@ -89,17 +89,21 @@ function render() {
   const c = document.getElementById("content");
   c.classList.remove("err");
   if (!DATA || !DATA.updatedAt) { c.textContent = "暂无数据"; return; }
-  // 数据截至 = newest record across sources；成交覆盖至 = fill ledger's own coverage
-  // （新鲜轮次摘要掩盖不了陈旧流水）；生成于 = build time
+  // 数据截至 = newest record across sources；采集覆盖至 = collection watermark（推进与
+  // 成交无关，安静期不误报）；最近成交 = last fill（纯信息，不做滞后告警）；生成于 = build time
   const asOf = DATA.dataAsOf || DATA.updatedAt;
+  const ledAsOf = DATA.ledgerAsOf || null;
   const fillsAsOf = DATA.fillsAsOf || null;
   document.getElementById("ago").textContent = when(asOf);
+  document.getElementById("covAgo").textContent = ledAsOf ? when(ledAsOf) : "未知";
   document.getElementById("fillsAgo").textContent = fillsAsOf ? when(fillsAsOf) : "未知";
   document.getElementById("builtAt").textContent = when(DATA.updatedAt);
   const flags = [];
-  if (DATA.collection && DATA.collection.ok === false) flags.push('<span class="chip bad">成交采集失败</span>');
-  if (DATA.collection && DATA.collection.incomplete) flags.push('<span class="chip bad">成交流水采集不完整</span>');
-  if (fillsAsOf && Date.now() - Date.parse(fillsAsOf) > 30 * 60 * 1000) flags.push('<span class="chip bad">成交滞后</span>');
+  const col = DATA.collection || {};
+  if (col.ok === false) flags.push('<span class="chip bad">成交采集失败</span>');
+  else if (col.ok == null) flags.push('<span class="chip bad">采集状态未知</span>');
+  if (col.incomplete) flags.push('<span class="chip bad">成交流水采集不完整</span>');
+  if (ledAsOf && Date.now() - Date.parse(ledAsOf) > 30 * 60 * 1000) flags.push('<span class="chip bad">采集滞后</span>');
   if (Date.now() - Date.parse(asOf) > 2 * 3600 * 1000) flags.push('<span class="chip bad">数据滞后</span>');
   document.getElementById("staleChips").innerHTML = flags.join("");
   const ops = DATA.ops || [], fills = DATA.fills || [], rounds = DATA.rounds || [];
