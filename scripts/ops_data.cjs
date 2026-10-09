@@ -4,12 +4,15 @@
 // and round summaries (log.md). Public payload is sanitized — no order/account IDs.
 // Any source read failure aborts the write so the last good file stays live.
 //
-// Freshness is three separate numbers (10-09 review F4): updatedAt is the BUILD time,
-// dataAsOf is the newest record across all sources (a stale ledger can never masquerade
-// as fresh), collection carries the fill-ledger audit flags. The page renders them
-// apart. ops_content_hash covers the data only — never updatedAt — so the uploader can
-// skip unchanged payloads across quiet rounds (F6). Known limit: log.md rounds carry no
-// account identity and cannot be filtered (F5 covers only run_events).
+// Freshness is per-source and honest (10-09 reviews F4/R2): updatedAt is the BUILD
+// time, dataAsOf is the newest record across all sources, fillsAsOf is the fill
+// ledger's own coverage (a fresh round summary can never mask a stale ledger), and
+// collection mirrors the collector's live state from state/history_status.json (same
+// semantics dashboard_data uses) plus the ledger's saved audit flags. The page renders
+// them apart. ops_content_hash covers the data only — never updatedAt — so the
+// uploader can skip unchanged payloads across quiet rounds (F6). log.md carries no
+// account identity: rounds are published only inside the account-bound ledger's
+// coverage window (10-09 re-audit R1); older/unattributable lines stay local.
 const fs = require('node:fs'), path = require('node:path'), { spawnSync } = require('node:child_process');
 const { atomic, hash } = require('./contracts.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..'), p = (s) => path.join(ROOT, 'state', s);
@@ -49,29 +52,46 @@ function ops(acct) {
   } catch (e) { if (e.code !== 'ENOENT') throw e; }
   return rows.slice(-CAPS.ops).reverse();
 }
-function rounds() {
+function rounds(coverageMs) {
   const rows = [];
+  if (!Number.isFinite(coverageMs) || coverageMs <= 0) return rows; // no ledger anchor → nothing attributable
   try {
     for (const line of fs.readFileSync(p('log.md'), 'utf8').split('\n')) {
       const m = line.match(/^\[(.+?)\] (.+)$/);
-      if (m) rows.push({ at: m[1], line: m[2] });
+      const ts = m ? Date.parse(m[1]) : NaN;
+      if (Number.isFinite(ts) && ts >= coverageMs) rows.push({ at: m[1], line: m[2] });
     }
   } catch (e) { if (e.code !== 'ENOENT') throw e; }
   return rows.slice(-CAPS.rounds).reverse();
 }
+function collectorStatus() {
+  // Live collector report written by history_status.cjs after every collection run;
+  // same signal dashboard_data consumes. Missing/unreadable = unknown → treated as ok.
+  try {
+    const v = JSON.parse(fs.readFileSync(p('history_status.json'), 'utf8'));
+    if (v && typeof v === 'object' && typeof v.ok === 'boolean') return v;
+  } catch {}
+  return null;
+}
 
 const acct = accountKey(); // identity read failure aborts before any write
-const opsRows = ops(acct), fillRows = fills(), roundRows = rounds();
+const fillRows = fills();
 const store = py('status');
+const opsRows = ops(acct), roundRows = rounds(Number(store.coverageFrom));
+const hist = collectorStatus();
+const fillsMax = Number(store.fillsMaxTs) > 0 ? Number(store.fillsMaxTs) : 0;
+const fillsAsOf = fillsMax > 0 ? new Date(fillsMax).toISOString() : null;
 const newest = Math.max(0,
+  fillsMax,
   ...fillRows.map((f) => Date.parse(f.t) || 0),
   ...opsRows.map((o) => Date.parse(o.at) || 0),
-  ...roundRows.map((r) => Date.parse(r.at) || 0),
-  Number(store.fillsMaxTs) || 0);
+  ...roundRows.map((r) => Date.parse(r.at) || 0));
 const dataAsOf = newest > 0 ? new Date(newest).toISOString() : null;
-const data = { ops: opsRows, fills: fillRows, rounds: roundRows, dataAsOf,
-  collection: { incomplete: store.incomplete === true, fillCount: store.fillCount } };
+const data = { ops: opsRows, fills: fillRows, rounds: roundRows, dataAsOf, fillsAsOf,
+  collection: { ok: hist ? hist.ok !== false : true, checkedAt: hist ? hist.at : null,
+                incomplete: store.incomplete === true, fillCount: store.fillCount } };
 atomic(p('ops.json'), JSON.stringify({ ...data, updatedAt: new Date().toISOString() }));
 // written after ops.json on purpose: a failed data write must never poison the hash
 atomic(p('ops_content_hash'), hash(data));
-console.log('ops history built:', fillRows.length, 'fills; data as of', dataAsOf || 'n/a');
+console.log('ops history built:', fillRows.length, 'fills; data as of', dataAsOf || 'n/a',
+  '; fills as of', fillsAsOf || 'n/a', '; rounds', roundRows.length);

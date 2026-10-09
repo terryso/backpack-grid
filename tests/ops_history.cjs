@@ -34,7 +34,7 @@ async function main() {
     ev('2026-10-08T23:48:04Z', 'actions', { resultStatus: 'complete', results: [{ act: 'stop', market: 'NEAR-PERP', reason: 'AUTO_TP: position pnl 168.1% >= 150%', done: true }] }),
     ev('2026-10-08T23:49:00Z', 'actions', { resultStatus: 'unconfirmed', results: [{ act: 'stop', market: 'X-PERP', reason: 'r' }], dryrun: true }),
   ].join('\n') + '\n');
-  fs.writeFileSync(path.join(d, 'state/log.md'), ['noise line', '[2026-10-08T20:00:00Z] grids=1 pnl=X actions=none', '[2026-10-08T23:47:47Z] grids=4 actions=stop:NEAR-PERP'].join('\n') + '\n');
+  fs.writeFileSync(path.join(d, 'state/log.md'), ['noise line', '[2026-10-08T00:00:00Z] grids=0 pre-ledger line', '[2026-10-08T20:00:00Z] grids=1 pnl=X actions=none', '[2026-10-08T23:47:47Z] grids=4 actions=stop:NEAR-PERP'].join('\n') + '\n');
   seedFills(d, { 'f1': mkFill('f1', '2026-10-08T20:00:00.000', '0.42'), 'f2': mkFill('f2', '2026-10-09T04:17:01.331', '0.43') });
   const r = run(d, 'ops_data.cjs');
   assert.equal(r.status, 0, r.stderr);
@@ -59,11 +59,20 @@ async function main() {
   test('rounds from other accounts are never published', () => {
     assert.equal(ops.ops.some((o) => o.market === 'FOREIGN-PERP'), false);
   });
+  test('round summaries before the ledger coverage stay local (unattributable)', () => {
+    assert.equal(ops.rounds.length, 2); // pre-ledger line at 00:00 excluded, both in-coverage lines kept
+    const cov = Date.parse('2026-10-08T05:00:00Z'); // seedFills symbols.from = now-1d
+    for (const r of ops.rounds) assert.ok(Date.parse(r.at) >= cov, r.at);
+    assert.equal(ops.rounds.some((r) => /pre-ledger/.test(r.line)), false);
+  });
   test('dataAsOf is the newest record, kept separate from the build time', () => {
     assert.equal(ops.dataAsOf, '2026-10-09T04:17:01.331Z'); // newest fill, not the build moment
+    assert.equal(ops.fillsAsOf, '2026-10-09T04:17:01.331Z'); // per-source ledger coverage
     assert.ok(new Date(ops.updatedAt) >= new Date(ops.dataAsOf));
     assert.equal(ops.collection.fillCount, 2);
     assert.equal(ops.collection.incomplete, false);
+    assert.equal(ops.collection.ok, true); // no collector report in fixture → unknown treated as ok
+    assert.equal(ops.collection.checkedAt, null);
   });
   test('history_store status exposes coverage and audit flags', () => {
     const r = spawnSync(PY, [path.join(ROOT, 'scripts/history_store.py'), 'status'], { env: { ...process.env, BG_ROOT: d }, encoding: 'utf8', timeout: 15000 });
@@ -72,6 +81,21 @@ async function main() {
     assert.equal(s.incomplete, false);
     assert.equal(s.fillCount, 2);
     assert.equal(typeof s.fillsMaxTs, 'number');
+    assert.equal(s.coverageFrom, Date.parse('2026-10-08T05:00:00Z'));
+  });
+  test('collector status file drives collection.ok/checkedAt', () => {
+    fs.writeFileSync(path.join(d, 'state/history_status.json'), JSON.stringify({ at: '2026-10-09T05:10:00Z', ok: false }));
+    const r = run(d, 'ops_data.cjs');
+    assert.equal(r.status, 0, r.stderr);
+    const o = read(d, 'state/ops.json');
+    assert.equal(o.collection.ok, false);
+    assert.equal(o.collection.checkedAt, '2026-10-09T05:10:00Z');
+    fs.rmSync(path.join(d, 'state/history_status.json'));
+    const r2 = run(d, 'ops_data.cjs');
+    assert.equal(r2.status, 0, r2.stderr);
+    const o2 = read(d, 'state/ops.json');
+    assert.equal(o2.collection.ok, true);
+    assert.equal(o2.collection.checkedAt, null);
   });
   test('content hash is stable across rebuilds and moves when data moves', () => {
     const h1 = fs.readFileSync(path.join(d, 'state/ops_content_hash'), 'utf8').trim();

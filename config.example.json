@@ -82,5 +82,5 @@
   "breachBufferPct": 0.5,
   "positionStopLossPct": 150,
   "positionTakeProfitPct": 150,
-  "accountFloorUsd": 500
+  "accountFloorUsd": 0
 }
