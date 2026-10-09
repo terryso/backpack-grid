@@ -148,7 +148,8 @@ function autoExitRow(p, s) {
   const near = tpOn ? Math.min(toTp, toSl) : toSl;
   const cls = near <= 0 ? "neg" : near <= 30 ? "" : "muted";
   const style = near <= 0 ? ' style="color:#f87171"' : near <= 30 ? ' style="color:#fbbf24"' : "";
-  return `<div class="grow"><span class="k">自动退出</span><span class="${cls}"${style}>${tpOn ? `止盈${fmtLeft(toTp)} · ` : "止盈已关 · "}止损${fmtLeft(toSl)}（仓位 ${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）</span></div>`;
+  // 仓位百分比已在上一行「浮动盈亏」展示，这里只保留阈值余量，避免重复
+  return `<div class="grow"><span class="k">自动退出</span><span class="${cls}"${style}>${tpOn ? `止盈${fmtLeft(toTp)} · ` : "止盈已关 · "}止损${fmtLeft(toSl)}</span></div>`;
 }
 function render(s) {
   const escape = (v) => typeof v === "string" ? v.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))

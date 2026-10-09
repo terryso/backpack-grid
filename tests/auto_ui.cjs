@@ -58,6 +58,11 @@ check('真实案例：止盈越线（243.1%）红字告警', () => {
   assert.match(text(h), /止盈已越线 · 止损余 393.1%/);
   assert.match(h, /color:#f87171/);
 });
+check('余量行不重复仓位百分比（上一行浮动盈亏已展示）', () => {
+  const h = autoExitRow({ market: 'BTC-PERP', pnlPct: 243.1 }, base);
+  assert.doesNotMatch(text(h), /仓位/);
+  assert.doesNotMatch(text(h), /243\.1/);
+});
 check('临近阈值（30% 内）黄色提示', () => {
   const h = autoExitRow({ market: 'BTC-PERP', pnlPct: 130 }, base);
   assert.match(text(h), /止盈余 20%/);
