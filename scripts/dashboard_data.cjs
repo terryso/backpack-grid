@@ -102,7 +102,14 @@ const snapshot = {
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
-  autoExits: { enabled: cfg.autoExitsEnabled === true, posSl: num(cfg.positionStopLossPct), posTp: num(cfg.positionTakeProfitPct), dwellMin: num(cfg.breachDwellMin), bufferPct: num(cfg.breachBufferPct) },
+  autoExits: { enabled: cfg.autoExitsEnabled === true,
+    // effective values: mirror auto_exits.cjs defaultsFor so the UI shows what the
+    // executor will actually do when a key is omitted (posTp omitted = 150 ENABLED,
+    // only an explicit 0 disables take-profit)
+    posSl: cfg.positionStopLossPct === undefined ? 150 : num(cfg.positionStopLossPct),
+    posTp: cfg.positionTakeProfitPct === undefined ? 150 : num(cfg.positionTakeProfitPct),
+    dwellMin: cfg.breachDwellMin === undefined ? 10 : num(cfg.breachDwellMin),
+    bufferPct: cfg.breachBufferPct === undefined ? 0.5 : num(cfg.breachBufferPct) },
   pending: pendingValid ? Object.keys(pending || {}) : null,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
   lastAction, lastActionNote, curve,

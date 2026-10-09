@@ -120,23 +120,25 @@ function healthRow(x, s) {
     <span style="margin-left:auto;color:#8b94a7">距${nearest.name} ${nearest.left}%</span></div>`;
 }
 // 自动退出行：仅当模块开启且该仓会被 auto_exits 实际处理时才显示保护余量。
-// 与决策同口径：无网格（孤儿）、网格停格、手动 hold、待清理的持仓如实显示状态——
-// auto_exits 对这些不会生成动作，显示"受保护"即是误导。止盈可单独关闭（posTp=0），
-// 止损在配置校验下恒 ≥1 不可关，两阈值分开展示。
+// 状态优先级与 decide/auto_exits 同序：pending 优先于一切（清理仍在进行，Disabled+pending
+// = 机器清理中而非手动暂停）；手动暂停注册表损坏 = 全局自动处理受阻（此刻所有自动规则
+// 都被跳过，不得显示保护）；其余按 手动 hold > 网格停格 归类；未知收益率（null）不参与
+// 任何计算。止盈可单独关闭（posTp 显式 0），止损配置校验下恒 ≥1，两阈值分开展示。
 function autoExitRow(p, s) {
   const ae = s.autoExits || {};
   if (ae.enabled !== true) return "";
-  const ret = Number(p.pnlPct);
   const posSl = ae.posSl != null ? Number(ae.posSl) : 150;
   const posTp = ae.posTp != null ? Number(ae.posTp) : 150;
-  if (!Number.isFinite(ret) || posSl <= 0) return "";
+  const raw = p.pnlPct, ret = Number(raw);
   const grid = (s.grids || []).find((x) => x.market === p.market);
   const held = (s.manualPauses || []).includes("*") || (s.manualPauses || []).includes(p.market);
   let state = "";
   if (!grid) state = "未覆盖 · 该持仓无对应网格";
-  else if (grid.status !== "Triggered") state = "已暂停 · 网格手动停格";
-  else if (held) state = "已暂停 · 手动 hold";
   else if ((s.pending || []).includes(p.market)) state = "待清理 · 停格已在重试";
+  else if (s.manualPauseValid === false) state = "状态未知 · 手动暂停记录损坏，自动处理受阻";
+  else if (held) state = "已暂停 · 手动 hold";
+  else if (grid.status !== "Triggered") state = "已暂停 · 网格手动停格";
+  else if (raw == null || !Number.isFinite(ret)) state = "收益未知 · 无法评估";
   if (state) return `<div class="grow"><span class="k">自动退出</span><span class="muted">${state}</span></div>`;
   const fmtLeft = (n) => n <= 0 ? "已越线" : "余 " + n + "%";
   const toSl = +(ret + posSl).toFixed(1);
@@ -282,10 +284,11 @@ function render(s) {
           const liqNum = Number(p.liq);
           const liqDist = isFinite(liqNum) && liqNum > 0 ? Math.abs(p.mark - liqNum) / p.mark * 100 : null;
           const ret = Number(p.pnlPct);
+          const retKnown = p.pnlPct != null && Number.isFinite(ret);
           return `<div class="gcard">
             <div class="ghead"><span class="gmkt">${p.market}</span><span class="gdir">${p.side === "long" ? "多单" : "空单"} · ${p.size}</span></div>
             <div class="grow"><span class="k">标记价</span><span>${p.mark}</span></div>
-            <div class="grow"><span class="k">浮动盈亏</span><span class="${pnlCls(pnlNum)}">${p.pnl} USD${isFinite(ret) ? `（${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）` : ""}</span></div>
+            <div class="grow"><span class="k">浮动盈亏</span><span class="${pnlCls(pnlNum)}">${p.pnl} USD${retKnown ? `（${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）` : ""}</span></div>
             ${autoExitRow(p, s)}
             ${liqDist !== null ? `<div class="grow"><span class="k">距强平</span><span>${liqDist.toFixed(0)}%</span></div>` : ""}
           </div>`;
