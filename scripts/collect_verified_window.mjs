@@ -10,7 +10,8 @@ const checkpoint=chooseCheckpoint(curve,window);
 const task=await taskSpace(cfg.watch.spaceId),browserFile=path.join(ROOT,'state/accounting_browser.json');let browser;
 try{browser=JSON.parse(await fs.readFile(browserFile,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
 let page;if(browser&&browser.spaceId===task.spaceId)page=task.page(browser.page);else{page=await task.newPage();atomic(browserFile,{spaceId:task.spaceId,page:page.label});}
-await page.goto(cfg.tradeUrlBase+'SOL_USD_PERP');
+// 落点放宽（同 observe 9b3f8e6 / collect_history 3d8bfd1）：domcontentloaded + 25s + 超时重试一次——15s load 超时会杀死整个核算轮
+await page.goto(cfg.tradeUrlBase+'SOL_USD_PERP', { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto(cfg.tradeUrlBase+'SOL_USD_PERP', { waitUntil: "domcontentloaded", timeout: 25000 })));
 async function get(url){const r=await page.fetch('https://api.backpack.exchange'+url,{credentials:'include',timeout:15000});if(r.status!==200)throw Error('accounting source HTTP '+r.status);return JSON.parse(r.body);}
 async function accountCheck(){collateralFor(await get('/wapi/v1/portfolio/collateral'),identity);}
 await accountCheck();
