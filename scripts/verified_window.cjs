@@ -109,11 +109,18 @@ function reconcile(window,capture,manual,previous) {
   if(manual){
     validateLedger(manual);
     if(manual.accountKey!==identity.accountKey||manual.subaccountId!==identity.subaccountId)throw Error('manual ledger account mismatch');
+    const adopted=new Set();
     for(const kind of ['cashflow','reward']){
       const c=manual.coverage[kind];
       if(c&&Date.parse(c.from)<=Date.parse(from)&&Date.parse(c.through)>=Date.parse(through)){
-        coverage[kind]=c;events.push(...manual.events.filter(e=>e.type===kind&&Date.parse(e.at)>Date.parse(from)&&Date.parse(e.at)<=Date.parse(through)));
+        coverage[kind]=c;adopted.add(kind);events.push(...manual.events.filter(e=>e.type===kind&&Date.parse(e.at)>Date.parse(from)&&Date.parse(e.at)<=Date.parse(through)));
       }
+    }
+    // manual ledger resolved the pending classification — don't leave a stale issue
+    // in the report while cashflow/reward are both certified
+    if(adopted.has('cashflow')&&adopted.has('reward')){
+      const idx=issues.indexOf('capital/platform events need scoped classification');
+      if(idx>=0)issues.splice(idx,1);
     }
   }
   const latest={accountKey:identity.accountKey,subaccountId:identity.subaccountId,events,coverage};
