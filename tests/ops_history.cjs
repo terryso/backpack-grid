@@ -17,7 +17,11 @@ const read = (d, p) => JSON.parse(fs.readFileSync(path.join(d, p), 'utf8'));
 const store = (d, command, v) => spawnSync(PY, [path.join(ROOT, 'scripts/history_store.py'), command], { env: { ...process.env, BG_ROOT: d }, input: v ? JSON.stringify(v) : undefined, encoding: 'utf8', timeout: 15000 });
 function seedFills(d, fills) {
   const now = Date.parse('2026-10-09T05:00:00Z');
-  const h = { accountKey: identity.accountKey, symbols: { MET_USDC_PERP: { from: now - 86400000, lastTo: now, fills, auditedThrough: now, incomplete: false } }, acquiredAt: new Date(now).toISOString(), asOf: new Date(now).toISOString(), incomplete: false };
+  const lag = Date.parse('2026-10-06T05:00:00Z'); // laggard symbol — aggregate coverage ends here
+  const h = { accountKey: identity.accountKey, symbols: {
+    MET_USDC_PERP: { from: now - 86400000, lastTo: now, fills, auditedThrough: now, incomplete: false },
+    ZEC_USDC_PERP: { from: lag - 86400000, lastTo: lag, fills: {}, auditedThrough: lag, incomplete: false } },
+    acquiredAt: new Date(now).toISOString(), asOf: new Date(now).toISOString(), incomplete: false };
   const r = store(d, 'save', h);
   assert.equal(r.status, 0, r.stderr);
 }
@@ -30,13 +34,13 @@ async function main() {
     ev('2026-10-08T20:01:00Z', 'heartbeat', {}),
     ev('2026-10-08T20:02:00Z', 'actions', { resultStatus: 'complete', results: [{ act: 'create', market: 'MET-PERP', why: 'score=<script>alert(1)</script>', done: true }] }),
     ev('2026-10-08T20:03:00Z', 'end', { status: 'ok' }),
-    ev('2026-10-08T21:00:00Z', 'start', { identity: { userId: 'other', subaccountId: 3, accountKey: 'other-3' } }),
+    ev('2026-10-08T20:05:00Z', 'start', { identity: { userId: 'other', subaccountId: 3, accountKey: 'other-3' } }),
     ev('2026-10-08T21:00:00Z', 'actions', { identity: { userId: 'other', subaccountId: 3, accountKey: 'other-3' }, resultStatus: 'complete', results: [{ act: 'stop', market: 'FOREIGN-PERP', reason: 'other account round', done: true }] }),
     ev('2026-10-08T23:47:00Z', 'start', {}),
     ev('2026-10-08T23:48:04Z', 'actions', { resultStatus: 'complete', results: [{ act: 'stop', market: 'NEAR-PERP', reason: 'AUTO_TP: position pnl 168.1% >= 150%', done: true }] }),
     ev('2026-10-08T23:49:00Z', 'actions', { resultStatus: 'unconfirmed', results: [{ act: 'stop', market: 'X-PERP', reason: 'r' }], dryrun: true }),
   ].join('\n') + '\n');
-  fs.writeFileSync(path.join(d, 'state/log.md'), ['noise line', '[2026-10-08T00:00:00Z] grids=0 pre-ledger line', '[2026-10-08T10:00:00Z] grids=2 pre-witness era line', '[2026-10-08T20:00:00Z] grids=1 pnl=X actions=none', '[2026-10-08T21:00:30Z] grids=9 foreign-round line', '[2026-10-08T23:47:47Z] grids=4 actions=stop:NEAR-PERP'].join('\n') + '\n');
+  fs.writeFileSync(path.join(d, 'state/log.md'), ['noise line', '[2026-10-08T00:00:00Z] grids=0 pre-ledger line', '[2026-10-08T10:00:00Z] grids=2 pre-witness era line', '[2026-10-08T20:00:00Z] grids=1 pnl=X actions=none', '[2026-10-08T20:06:00Z] grids=9 foreign-round line', '[2026-10-08T23:47:47Z] grids=4 actions=stop:NEAR-PERP'].join('\n') + '\n');
   seedFills(d, { 'f1': mkFill('f1', '2026-10-08T20:00:00.000', '0.42'), 'f2': mkFill('f2', '2026-10-09T04:17:01.331', '0.43') });
   const r = run(d, 'ops_data.cjs');
   assert.equal(r.status, 0, r.stderr);
@@ -48,10 +52,9 @@ async function main() {
     assert.equal(ops.ops[2].act, 'create'); assert.equal(ops.ops[2].status, 'complete');
   });
   test('round summaries parse newest-first and ignore noise', () => {
-    assert.equal(ops.rounds.length, 3);
+    assert.equal(ops.rounds.length, 2);
     assert.match(ops.rounds[0].line, /stop:NEAR-PERP/);
     assert.match(ops.rounds[1].line, /actions=none/);
-    assert.match(ops.rounds[2].line, /pre-witness era/);
   });
   test('fills export newest-first, sanitized, UTC-normalized', () => {
     assert.equal(ops.fills.length, 2);
@@ -62,19 +65,19 @@ async function main() {
   test('rounds from other accounts are never published', () => {
     assert.equal(ops.ops.some((o) => o.market === 'FOREIGN-PERP'), false);
   });
-  test('log lines: witnessed era strict, foreign excluded, pre-witness era grandfathered', () => {
-    assert.equal(ops.rounds.length, 3); // pre-witness-era + two witnessed lines
-    const cov = Date.parse('2026-10-08T05:00:00Z'); // seedFills symbols.from = now-1d
-    for (const r of ops.rounds) assert.ok(Date.parse(r.at) >= cov, r.at);
-    assert.equal(ops.rounds.some((r) => /pre-ledger/.test(r.line)), false); // before coverage → local
-    assert.equal(ops.rounds.some((r) => /foreign-round/.test(r.line)), false); // witnessed era: 21:00:30 is the foreign account's round
-    assert.equal(ops.rounds.some((r) => /pre-witness era/.test(r.line)), true); // 10:00 predates our first start → ledger-era grandfather
-    assert.equal(ops.rounds.some((r) => /stop:NEAR-PERP/.test(r.line)), true); // inside [23:47:00, next start)
-    assert.equal(ops.rounds.some((r) => r.at === '2026-10-08T20:00:00Z'), true); // exact round-start boundary counts
+  test('log lines are owned by their round window: foreign rounds excluded, no legacy fallback', () => {
+    // foreign start 20:05 carves the timeline: line 20:06 belongs to the foreign account
+    // even though it sits within 30 min of OUR 20:00 start (the R1'' window-collapse case)
+    assert.equal(ops.rounds.some((r) => /foreign-round/.test(r.line)), false);
+    assert.equal(ops.rounds.some((r) => /pre-witness era/.test(r.line)), false); // before the first recorded round → unattributable
+    assert.equal(ops.rounds.some((r) => /pre-ledger/.test(r.line)), false);
+    assert.equal(ops.rounds.length, 2); // 20:00:00 (own window [20:00,20:05)) + 23:47:47 (own window from 23:47)
+    assert.equal(ops.rounds.some((r) => r.at === '2026-10-08T20:00:00Z'), true);
+    assert.equal(ops.rounds.some((r) => /stop:NEAR-PERP/.test(r.line)), true);
   });
   test('dataAsOf is the newest record, kept separate from per-source times', () => {
-    assert.equal(ops.dataAsOf, '2026-10-09T05:00:00.000Z'); // collection watermark is newest here
-    assert.equal(ops.ledgerAsOf, '2026-10-09T05:00:00.000Z'); // coverage cursor, not last trade
+    assert.equal(ops.dataAsOf, '2026-10-09T04:17:01.331Z'); // newest fill overall
+    assert.equal(ops.ledgerAsOf, '2026-10-06T05:00:00.000Z'); // laggard symbol ends here — aggregate coverage ends with it
     assert.equal(ops.fillsAsOf, '2026-10-09T04:17:01.331Z'); // last actual trade — informational only
     assert.ok(new Date(ops.updatedAt) >= new Date(ops.dataAsOf));
     assert.equal(ops.collection.fillCount, 2);
@@ -87,8 +90,8 @@ async function main() {
     assert.equal(s.incomplete, false);
     assert.equal(s.fillCount, 2);
     assert.equal(typeof s.fillsMaxTs, 'number');
-    assert.equal(s.coverageFrom, Date.parse('2026-10-08T05:00:00Z'));
-    assert.equal(s.coverageTo, Date.parse('2026-10-09T05:00:00Z'));
+    assert.equal(s.coverageFrom, Date.parse('2026-10-05T05:00:00Z')); // min across symbols
+    assert.equal(s.coverageTo, Date.parse('2026-10-06T05:00:00Z')); // laggard, not the fast symbol
   });
   test('collector status is tri-state: success, failure and unknown stay distinct', () => {
     const build = () => { const r = run(d, 'ops_data.cjs'); assert.equal(r.status, 0, r.stderr); return read(d, 'state/ops.json').collection; };

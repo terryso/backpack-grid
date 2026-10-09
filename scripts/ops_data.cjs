@@ -12,8 +12,11 @@
 // (null = no/unreadable report, shown as unknown, never as success), plus the ledger's
 // saved audit flags. ops_content_hash covers the data only — never updatedAt — so the
 // uploader can skip unchanged payloads across quiet rounds (F6). log.md carries no
-// account identity: a line is published only inside an identity-bound round window
-// witnessed by run_events (10-09 reviews R1/R1'); unattributable lines stay local.
+// account identity: a line is published only inside a round window OWNED by this
+// account, with every account's round starts carving the timeline (10-09 reviews
+// R1/R1'/R1''); unattributable lines — pre-identity era, gaps, foreign rounds — stay
+// local. ledgerAsOf is the laggard symbol's cursor: aggregate coverage ends where the
+// slowest symbol ends (10-09 review R2'').
 const fs = require('node:fs'), path = require('node:path'), { spawnSync } = require('node:child_process');
 const { atomic, hash } = require('./contracts.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..'), p = (s) => path.join(ROOT, 'state', s);
@@ -38,17 +41,19 @@ function fills() {
 }
 function runEvents(acct) {
   // Single pass over run_events.jsonl: identity-bound action rows for the page, plus
-  // the timestamps of identity-bound round starts — those windows are the only witness
-  // that a log.md line belongs to this account (log.md itself carries no identity).
+  // EVERY round start with its owning account — foreign rounds must carve their own
+  // windows out of the timeline, otherwise lines from interleaved foreign rounds get
+  // absorbed into this account's windows (10-09 review R1).
   const rows = [], starts = [];
   try {
     for (const line of fs.readFileSync(p('run_events.jsonl'), 'utf8').split('\n')) {
       if (!line.trim()) continue;
       let e; try { e = JSON.parse(line); } catch { continue; }
-      if (!e.identity || e.identity.accountKey !== acct) continue; // foreign/legacy rounds stay private
       const ts = Date.parse(e.at);
-      if (e.type === 'start' && Number.isFinite(ts)) starts.push(ts);
+      if (!Number.isFinite(ts)) continue;
+      if (e.type === 'start') starts.push({ ts, acct: e.identity && typeof e.identity.accountKey === 'string' ? e.identity.accountKey : null });
       if (e.type !== 'actions' || !Array.isArray(e.results)) continue;
+      if (!e.identity || e.identity.accountKey !== acct) continue; // foreign/legacy rounds stay private
       for (const x of e.results) rows.push({
         at: e.at, act: x.act, market: x.market || '',
         reason: x.reason || x.why || '', done: x.done === true,
@@ -56,33 +61,29 @@ function runEvents(acct) {
       });
     }
   } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  return { rows: rows.slice(-CAPS.ops).reverse(), starts: starts.sort((a, b) => a - b) };
+  return { rows: rows.slice(-CAPS.ops).reverse(), starts: starts.sort((a, b) => a.ts - b.ts) };
 }
-// A log.md line is publishable only inside an identity-bound round window
-// [start_i, min(start_{i+1}, start_i + 30min)) — time-window filtering alone cannot
-// bind authorship (10-09 re-reviews R1/R1'); unattributable lines stay local.
-function witnessed(starts, ts) {
+// The window containing ts is [start_i, min(start_{i+1}, start_i + 30min)); its OWNER
+// decides attribution. Lines before the first recorded round, beyond a capped window,
+// or inside another account's round have no owner → stay local. No time-based fallback:
+// equal time ≠ equal account, and the pre-identity era has no attribution evidence.
+function roundOwner(starts, ts) {
   let lo = 0, hi = starts.length - 1, ans = -1;
-  while (lo <= hi) { const mid = (lo + hi) >> 1; if (starts[mid] <= ts) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
-  if (ans < 0) return false;
-  const cap = starts[ans] + 30 * 60 * 1000;
-  const next = ans + 1 < starts.length ? starts[ans + 1] : cap;
-  return ts < Math.min(next, cap);
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (starts[mid].ts <= ts) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+  if (ans < 0) return null;
+  const cap = starts[ans].ts + 30 * 60 * 1000;
+  const next = ans + 1 < starts.length ? starts[ans + 1].ts : cap;
+  return ts < Math.min(next, cap) ? starts[ans].acct : null;
 }
-function rounds(coverageMs, starts) {
+function rounds(acct, starts) {
   const rows = [];
-  if (!starts || !starts.length) return rows; // no identity-bound witness → nothing attributable
-  const epoch = starts[0]; // first identity-bound round start: run_events began 10-02 with identity-less events
+  if (!starts || !starts.length) return rows; // no round boundaries at all → nothing attributable
   try {
     for (const line of fs.readFileSync(p('log.md'), 'utf8').split('\n')) {
       const m = line.match(/^\[(.+?)\] (.+)$/);
       const ts = m ? Date.parse(m[1]) : NaN;
       if (!Number.isFinite(ts)) continue;
-      if (Number.isFinite(coverageMs) && coverageMs > 0 && ts < coverageMs) continue;
-      // Witnessed era: strict per-round windows. Pre-witness era (before the first
-      // identity event ever recorded): grandfathered via the account-bound ledger's
-      // coverage window — the only attribution evidence that era's schema produced.
-      if (ts >= epoch && !witnessed(starts, ts)) continue;
+      if (roundOwner(starts, ts) !== acct) continue;
       rows.push({ at: m[1], line: m[2] });
     }
   } catch (e) { if (e.code !== 'ENOENT') throw e; }
@@ -102,7 +103,7 @@ const acct = accountKey(); // identity read failure aborts before any write
 const fillRows = fills();
 const store = py('status');
 const { rows: opsRows, starts } = runEvents(acct);
-const roundRows = rounds(Number(store.coverageFrom), starts);
+const roundRows = rounds(acct, starts);
 const hist = collectorStatus();
 const fillsMax = Number(store.fillsMaxTs) > 0 ? Number(store.fillsMaxTs) : 0;
 const fillsAsOf = fillsMax > 0 ? new Date(fillsMax).toISOString() : null;
