@@ -105,11 +105,18 @@ const writeAtomic = (p, data) => {
   }
   let effPeak = risk ? Number(risk.peakEquity) : 0;
   let ddPct = effPeak ? ((effPeak - eq) / effPeak) * 100 : 0;
+  // account floor (gated): equity at/below the floor trips the breaker — stops ALL grids
+  // and latches paused until manual reset. Off when autoExitsEnabled is falsy.
+  const floorBreached = cfg.autoExitsEnabled === true
+    && finiteNumber(cfg.accountFloorUsd) && Number(cfg.accountFloorUsd) > 0
+    && isFinite(eq) && eq <= Number(cfg.accountFloorUsd);
   let breaker = null; // null | "warn" | "trip" | "paused"
   let justTripped = false;
   if (risk && risk.paused) breaker = "paused";
-  else if (risk && (obs.liquidating === true || (isFinite(ddPct) && ddPct >= cfg.riskBudgetPct))) {
-    risk.paused = { at: obs.at, reason: obs.liquidating ? "account liquidating" : `drawdown ${ddPct.toFixed(1)}% >= budget ${cfg.riskBudgetPct}%`, peakEquity: risk.peakEquity, equity: eq };
+  else if (risk && (obs.liquidating === true || floorBreached || (isFinite(ddPct) && ddPct >= cfg.riskBudgetPct))) {
+    risk.paused = { at: obs.at, reason: obs.liquidating ? "account liquidating"
+      : floorBreached ? `account floor ${eq} <= ${cfg.accountFloorUsd}`
+      : `drawdown ${ddPct.toFixed(1)}% >= budget ${cfg.riskBudgetPct}%`, peakEquity: risk.peakEquity, equity: eq };
     justTripped = true;
     breaker = "trip";
   } else if (risk && isFinite(ddPct) && ddPct >= cfg.warnDrawdownPct) breaker = "warn";
@@ -272,6 +279,16 @@ const writeAtomic = (p, data) => {
         actions.push({ act: "stop", market: g.market, range: g.range, reason });
       }
     }
+  }
+
+  // ---------- auto exits (gated by cfg.autoExitsEnabled) ----------
+  // Ticker-independent by design: reads gridRows[].price / positions[].mark straight
+  // from the snapshot, so breach detection survives getTickers() outages (10-08 lesson).
+  // Plans dwell-tracked range exits + position-level SL/TP; never duplicates an
+  // already-planned stop. Does nothing when the gate is off.
+  if (cfg.autoExitsEnabled) {
+    const { planAutoExits } = require("./auto_exits.cjs");
+    planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, manualCorrupt, actions, lines });
   }
 
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------

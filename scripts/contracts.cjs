@@ -12,6 +12,11 @@ function validateConfig(c) {
   for(const [k,[lo,hi]] of Object.entries(ranges)) if(typeof c[k] !== 'number' || !finiteNumber(c[k]) || c[k]<lo || c[k]>hi) throw Error('invalid config: '+k);
   if(c.warnDrawdownPct>=c.riskBudgetPct || !Number.isInteger(c.maxGrids) || !Number.isInteger(c.maxPerEcosystem)) throw Error('invalid risk/cap configuration');
   const sub=c.subaccountId??3;if(!Number.isSafeInteger(sub)||sub<0)throw Error('invalid subaccountId');
+  // optional auto-exits keys (feature gate autoExitsEnabled): validated only when present
+  if(c.autoExitsEnabled!==undefined && typeof c.autoExitsEnabled!=='boolean') throw Error('invalid config: autoExitsEnabled');
+  const autoRanges={breachDwellMin:[1,1440],breachBufferPct:[0,100],positionStopLossPct:[1,10000],positionTakeProfitPct:[0,10000],accountFloorUsd:[0,1e9]};
+  for(const [k,[lo,hi]] of Object.entries(autoRanges))
+    if(c[k]!==undefined && (typeof c[k]!=='number' || !finiteNumber(c[k]) || c[k]<lo || c[k]>hi)) throw Error('invalid config: '+k);
   return c;
 }
 function identityOk(i) { return plainObject(i) && typeof i.userId==='string' && i.userId.trim()!=='' && Number.isSafeInteger(i.subaccountId) && i.subaccountId>=0 && i.accountKey===(i.subaccountId===0?i.userId:`${i.userId}-${i.subaccountId}`); }

@@ -76,5 +76,11 @@
   "exitCostBufferUsd": 15,
   "strategyStartAt": "2026-09-30",
   "strategyBaselineUsd": 0,
-  "deadGridHours": 48
+  "deadGridHours": 48,
+  "autoExitsEnabled": false,
+  "breachDwellMin": 10,
+  "breachBufferPct": 0.5,
+  "positionStopLossPct": 150,
+  "positionTakeProfitPct": 150,
+  "accountFloorUsd": 500
 }

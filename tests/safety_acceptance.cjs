@@ -7,6 +7,11 @@ const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const ROOT = path.resolve(__dirname, '..');
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json')));
+
+// Pin the knobs these mechanics-tests were written against — the live values are
+// user-tunable (10-08: TP 5, warn 90, budget 100) and must not shift assertions.
+Object.assign(cfg, { takeProfitPct: 10, stopLossPct: 6, riskBudgetPct: 80, warnDrawdownPct: 40 });
+
 const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-reaudit-'));
 const rows = [];
 const fixture = () => { const dir = fs.mkdtempSync(path.join(parent, 'fixture-')); fs.mkdirSync(path.join(dir, 'state')); put(dir, 'config.json', cfg); put(dir,'state/account_identity.json',{userId:'fixture',subaccountId:3,accountKey:'fixture-3'}); fs.cpSync(path.join(ROOT, 'scripts'), path.join(dir, 'scripts'), { recursive: true }); return dir; };

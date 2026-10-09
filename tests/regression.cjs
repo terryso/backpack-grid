@@ -15,6 +15,11 @@ const { PY } = require("./env.cjs");
 const sleepSync = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 const ROOT = path.join(__dirname, "..");
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
+
+// Pin the knobs these mechanics-tests were written against — the live values are
+// user-tunable (10-08: TP 5, warn 90, budget 100) and must not shift assertions.
+Object.assign(cfg, { takeProfitPct: 10, stopLossPct: 6, riskBudgetPct: 80, warnDrawdownPct: 40 });
+
 const actSrc = fs.readFileSync(path.join(ROOT, "scripts", "act.mjs"), "utf8");
 const decideSrc = fs.readFileSync(path.join(ROOT, "scripts", "decide.cjs"), "utf8");
 const observeSrc = fs.readFileSync(path.join(ROOT, "scripts", "observe.mjs"), "utf8");

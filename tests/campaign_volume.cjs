@@ -6,6 +6,11 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
 const { spawnSync } = require('node:child_process');
 const { ROOT, PY } = require('./env.cjs');
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json')));
+
+// Pin the knobs these mechanics-tests were written against — the live values are
+// user-tunable (10-08: TP 5, warn 90, budget 100) and must not shift assertions.
+Object.assign(cfg, { takeProfitPct: 10, stopLossPct: 6, riskBudgetPct: 80, warnDrawdownPct: 40 });
+
 const identity = { userId: 'fixture', subaccountId: 3, accountKey: 'fixture-3' };
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-campaign-'));
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
@@ -16,6 +21,11 @@ function fixture() {
   const d = fs.mkdtempSync(path.join(base, 'case-'));
   fs.mkdirSync(path.join(d, 'state'));
   fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
+  // Hermetic campaign identity: observe.mjs and decide.cjs both read this file for the
+  // campaign id / window — without it the id defaults to the LATEST campaign (1012),
+  // which this suite's mocks (1011) would reject.
+  fs.mkdirSync(path.join(d, 'cloudflare', 'assets'), { recursive: true });
+  put(d, 'cloudflare/assets/campaign-history.json', { current: { name: 'Mystery Box 活动 · 第 1 期', startsAt: '2026-09-30T00:00:00Z', endsAt: '2026-10-06T23:59:59Z', tiers: [50000], campaignId: 1011 } });
   put(d, 'config.json', cfg); put(d, 'state/account_identity.json', identity);
   return d;
 }

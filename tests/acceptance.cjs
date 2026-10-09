@@ -5,6 +5,11 @@ const fs = require('node:fs'), path = require('node:path'), os = require('node:o
 const { spawn, spawnSync } = require('node:child_process');
 const ROOT = path.join(__dirname, '..'), PY = require('./env.cjs').PY;
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+
+// Pin the knobs these mechanics-tests were written against — the live values are
+// user-tunable (10-08: TP 5, warn 90, budget 100) and must not shift assertions.
+Object.assign(cfg, { takeProfitPct: 10, stopLossPct: 6, riskBudgetPct: 80, warnDrawdownPct: 40 });
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-acceptance-'));
 let count = 0;
 function check(name, fn) { fn(); count++; console.log('PASS', name); }
