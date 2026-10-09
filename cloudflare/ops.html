@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>操作历史 · Backpack 网格自动驾驶</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0e14; color: #d7dde8; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 18px; margin: 0 0 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  h1 .chip { margin: 0; }
+  .sub { color: #8b94a7; font-size: 12px; margin-bottom: 16px; }
+  a { color: #93c5fd; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 12px 14px; }
+  .card .k { color: #8b94a7; font-size: 11px; letter-spacing: .05em; }
+  .card .v { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  .pos { color: #4ade80; } .neg { color: #f87171; } .muted { color: #8b94a7; }
+  .section { background: #131824; border: 1px solid #1f2737; border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
+  .section h2 { font-size: 13px; margin: 0 0 10px; color: #aab3c5; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin: 0 6px 6px 0; border: 1px solid #1f2737; color: #8b94a7; }
+  .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
+  .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
+  .chip.act-stop { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
+  .chip.act-create { border-color: #14532d; color: #4ade80; background: #0f1f16; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .toolbar a, .toolbar button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    background: #131824; color: #d7dde8; border: 1px solid #1f2737; border-radius: 99px;
+    padding: 7px 14px; font-size: 13px; cursor: pointer; text-decoration: none;
+    font-family: inherit; line-height: 1.2; min-height: 34px; box-sizing: border-box;
+    transition: border-color .15s, background .15s;
+  }
+  .toolbar a:hover, .toolbar button:hover { border-color: #3b82f6; background: #182031; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .filters select, .filters input {
+    background: #0f1522; color: #d7dde8; border: 1px solid #1f2737; border-radius: 8px;
+    padding: 6px 10px; font-size: 12px;
+  }
+  .filters input { min-width: 180px; flex: 1; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #8b94a7; font-weight: 500; padding: 4px 8px; border-bottom: 1px solid #1f2737; white-space: nowrap; }
+  td { padding: 5px 8px; border-bottom: 1px solid #161d2b; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  td.time { white-space: nowrap; color: #8b94a7; }
+  .buy { color: #4ade80; } .sell { color: #f87171; }
+  .reason { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; word-break: break-all; }
+  .more { margin-top: 8px; text-align: center; }
+  details summary { cursor: pointer; color: #aab3c5; font-size: 13px; }
+  .rounds { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.9; color: #aab3c5; word-break: break-all; max-height: 420px; overflow-y: auto; }
+  .err { color: #f87171; padding: 40px; text-align: center; }
+  @media (max-width: 640px) {
+    .wrap { padding: 10px 8px 24px; }
+    .toolbar { display: grid; grid-template-columns: 1fr 1fr; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .card { padding: 10px; } .card .v { font-size: 17px; }
+    .section { padding: 10px; }
+    th:nth-child(6), td:nth-child(6), th:nth-child(7), td:nth-child(7) { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>操作历史 <span class="chip" id="modeChip">加载中…</span></h1>
+  <div class="sub">建格 / 停格决策与全部成交，每 15 分钟随巡检更新 · 数据截至 <span id="ago">-</span> · 生成于 <span id="builtAt">-</span> <span id="staleChips"></span></div>
+  <div class="toolbar">
+    <a href="/">← 返回实盘首页</a>
+    <button id="refreshBtn">↻ 刷新</button>
+  </div>
+  <div id="content" class="err">加载中…</div>
+  <div class="sub" style="margin-top:16px">数据来自本地执行记录（决策日志 + SQLite 成交流水），经脱敏后上传（不含订单号/账户标识）</div>
+</div>
+<script>
+const fmt = (n, d = 2) => n == null || !Number.isFinite(Number(n)) ? "未知" : Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const mkt = (s) => String(s || "").replace("_USDC_PERP", "-PERP");
+const when = (iso) => new Date(iso).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const PAGE = 300;
+let DATA = null, shown = PAGE;
+function setMode(live) {
+  const c = document.getElementById("modeChip");
+  c.textContent = live ? "实时" : "静态快照";
+  c.className = "chip " + (live ? "ok" : "bad");
+}
+function render() {
+  const c = document.getElementById("content");
+  c.classList.remove("err");
+  if (!DATA || !DATA.updatedAt) { c.textContent = "暂无数据"; return; }
+  // 数据截至 = newest record across sources（陈旧账本冒充不了新数据）；生成于 = build time
+  const asOf = DATA.dataAsOf || DATA.updatedAt;
+  document.getElementById("ago").textContent = when(asOf);
+  document.getElementById("builtAt").textContent = when(DATA.updatedAt);
+  const flags = [];
+  if (DATA.collection && DATA.collection.incomplete) flags.push('<span class="chip bad">成交流水采集不完整</span>');
+  if (Date.now() - Date.parse(asOf) > 2 * 3600 * 1000) flags.push('<span class="chip bad">数据滞后</span>');
+  document.getElementById("staleChips").innerHTML = flags.join("");
+  const ops = DATA.ops || [], fills = DATA.fills || [], rounds = DATA.rounds || [];
+  const syms = [...new Set(fills.map((f) => f.s))].sort();
+  const stopAt = new Date(DATA.updatedAt).getTime();
+  c.innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="k">决策记录（建格/停格）</div><div class="v">${fmt(ops.length, 0)}</div></div>
+      <div class="card"><div class="k">页面内成交笔数</div><div class="v">${fmt(fills.length, 0)}</div></div>
+      <div class="card"><div class="k">巡检轮次摘要</div><div class="v">${fmt(rounds.length, 0)}</div></div>
+    </div>
+    <div class="section">
+      <h2>操作记录（最新在前）</h2>
+      ${ops.length ? `<table><thead><tr><th>时间</th><th>动作</th><th>市场</th><th>理由 / 摘要</th></tr></thead><tbody>
+        ${ops.map((o) => `<tr>
+          <td class="time">${when(o.at)}</td>
+          <td><span class="chip ${o.act === "stop" ? "act-stop" : "act-create"}">${o.act === "stop" ? "停格" : o.act === "create" ? "建格" : esc(o.act)}</span>${o.dry ? ' <span class="chip">演练</span>' : ""}${o.status && o.status !== "complete" ? ` <span class="chip bad">${esc(o.status)}</span>` : ""}</td>
+          <td>${esc(mkt(o.market))}</td>
+          <td class="reason">${esc(o.reason || "-")}</td>
+        </tr>`).join("")}</tbody></table>` : `<div class="muted">暂无决策记录</div>`}
+    </div>
+    <div class="section">
+      <h2>成交流水（最新在前）</h2>
+      <div class="filters">
+        <select id="fSym"><option value="">全部市场</option>${syms.map((s) => `<option value="${esc(s)}">${esc(mkt(s))}</option>`).join("")}</select>
+        <select id="fSide"><option value="">全部方向</option><option value="buy">买入</option><option value="sell">卖出</option></select>
+        <select id="fMk"><option value="">挂单+吃单</option><option value="1">仅挂单 maker</option><option value="0">仅吃单 taker</option></select>
+        <input id="fQ" placeholder="筛选（如 AUTO_TP、OUT_OF_RANGE 市场名）">
+      </div>
+      <div id="fillBox"></div>
+    </div>
+    ${rounds.length ? `<div class="section">
+      <details><summary>巡检轮次摘要（${rounds.length} 轮，点开查看）</summary>
+        <div class="rounds">${rounds.map((r) => `[${when(r.at)}] ${esc(r.line)}`).join("<br>")}</div>
+      </details>
+    </div>` : ""}`;
+  const drawFills = () => {
+    const sym = document.getElementById("fSym").value, side = document.getElementById("fSide").value,
+      mk = document.getElementById("fMk").value, q = document.getElementById("fQ").value.trim().toLowerCase();
+    const rows = fills.filter((f) => (!sym || f.s === sym) && (!side || f.side === side) && (mk === "" || String(f.mk ? 1 : 0) === mk)
+      && (!q || mkt(f.s).toLowerCase().includes(q) || String(f.p).includes(q)));
+    const part = rows.slice(0, shown);
+    document.getElementById("fillBox").innerHTML = rows.length ? `
+      <table><thead><tr><th>时间</th><th>市场</th><th>方向</th><th style="text-align:right">价格</th><th style="text-align:right">数量</th><th style="text-align:right">费用 USD</th><th>类型</th></tr></thead><tbody>
+      ${part.map((f) => `<tr>
+        <td class="time">${when(f.t)}</td><td>${esc(mkt(f.s))}</td>
+        <td class="${f.side}">${f.side === "buy" ? "买入" : "卖出"}</td>
+        <td class="num">${fmt(f.p, Number(f.p) < 1 ? 6 : 2)}</td>
+        <td class="num">${fmt(f.q, Number(f.q) < 1 ? 4 : 0)}</td>
+        <td class="num">${fmt(f.fee, 4)}</td>
+        <td class="muted">${f.mk ? "挂单" : "吃单"}</td>
+      </tr>`).join("")}</tbody></table>
+      ${rows.length > part.length ? `<div class="more"><button id="moreBtn">显示更多（已显示 ${part.length} / ${rows.length}）</button></div>` : `<div class="muted" style="margin-top:6px">共 ${rows.length} 笔</div>`}`
+      : `<div class="muted">无匹配成交</div>`;
+    const more = document.getElementById("moreBtn");
+    if (more) more.addEventListener("click", () => { shown += PAGE; drawFills(); });
+  };
+  for (const id of ["fSym", "fSide", "fMk"]) document.getElementById(id).addEventListener("change", () => { shown = PAGE; drawFills(); });
+  document.getElementById("fQ").addEventListener("input", () => { shown = PAGE; drawFills(); });
+  drawFills();
+}
+async function load() {
+  try {
+    const r = await fetch(`/api/ops?t=${Date.now()}`);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (!j || !j.updatedAt) throw new Error("empty");
+    DATA = j; setMode(true); render();
+  } catch (e) {
+    if (window.__OPS_FALLBACK__ && window.__OPS_FALLBACK__.updatedAt) { DATA = window.__OPS_FALLBACK__; setMode(false); render(); }
+    else { const c = document.getElementById("content"); c.classList.add("err"); c.textContent = "加载失败：" + e.message; }
+  }
+}
+document.getElementById("refreshBtn").addEventListener("click", load);
+window.addEventListener("pageshow", (e) => { if (e.persisted) load(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+load();
+</script>
+</body>
+</html>

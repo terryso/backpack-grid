@@ -32,15 +32,21 @@ if grep -q "KV_NAMESPACE_ID_PLACEHOLDER" "$TOML"; then
 fi
 
 node scripts/build_dashboard.cjs
+# Resolve a usable wrangler: local install first, then a global binary, then npx.
+WR=""
+if [ -x node_modules/.bin/wrangler ]; then WR="./node_modules/.bin/wrangler";
+elif command -v wrangler >/dev/null 2>&1; then WR="wrangler"; fi
+if [ -z "$WR" ]; then npx --no-install wrangler --version >/dev/null 2>&1 && WR="npx --no-install wrangler"; fi
+[ -n "$WR" ] || { echo "no wrangler available (install with: npm i -D wrangler)"; exit 1; }
 echo "deploying worker…"
-CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" npx --no-install wrangler deploy --config cloudflare/wrangler.toml
+CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" $WR deploy --config cloudflare/wrangler.toml
 
 echo "setting DASH_WRITE_TOKEN secret…"
-printf '%s' "$DASH_WRITE_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" npx --no-install wrangler secret put DASH_WRITE_TOKEN --config cloudflare/wrangler.toml
+printf '%s' "$DASH_WRITE_TOKEN" | CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" $WR secret put DASH_WRITE_TOKEN --config cloudflare/wrangler.toml
 
 # derive the workers.dev URL if not provided
 if [ -z "${DASH_URL:-}" ]; then
-  SUB=$(CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" npx --no-install wrangler subdomain --account-id "$CF_ACCOUNT_ID" 2>/dev/null | grep -o '[a-z0-9-]*\.workers\.dev' | head -1)
+  SUB=$(CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" $WR subdomain --account-id "$CF_ACCOUNT_ID" 2>/dev/null | grep -o '[a-z0-9-]*\.workers\.dev' | head -1)
   DASH_URL="https://backpack-grid-dashboard.${SUB:-unknown}.workers.dev"
   echo "DASH_URL=$DASH_URL" >> state/dashboard.env
 fi

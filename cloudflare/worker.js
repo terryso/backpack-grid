@@ -17,6 +17,14 @@ export default {
       return new Response("ok");
     }
 
+    if (url.pathname === "/api/ops" && request.method === "POST") {
+      if (request.headers.get("x-token") !== writeToken) return new Response("forbidden", { status: 403 });
+      const body = await request.text();
+      try { JSON.parse(body); } catch { return new Response("invalid JSON", { status: 400 }); }
+      await env.DASH.put("ops", body);
+      return new Response("ok");
+    }
+
     if ((url.pathname === "/api/like" && request.method === "POST") || (url.pathname === "/api/likes" && request.method === "GET")) {
       const ip = request.headers.get("cf-connecting-ip");
       if (!ip) return new Response("visitor address unavailable", { status: 400 });
@@ -31,6 +39,13 @@ export default {
     if (url.pathname === "/api/snapshot") {
       const snap = await env.DASH.get("latest");
       return new Response(snap ?? "{}", {
+        headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    if (url.pathname === "/api/ops") {
+      const ops = await env.DASH.get("ops");
+      return new Response(ops ?? "{}", {
         headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
       });
     }

@@ -24,5 +24,22 @@ fs.writeFileSync('state/dashboard_upload.json.tmp', JSON.stringify(status));
 fs.renameSync('state/dashboard_upload.json.tmp', 'state/dashboard_upload.json');
 console.log(status.ok ? 'dashboard updated and read back' : `dashboard upload/readback failed HTTP ${status.httpStatus} (non-fatal, next scheduled round retries)`);
 JS
+# Operations history for /ops.html: build from local records and upload only when
+# the payload actually changed (hash gate), so quiet rounds cost zero requests.
+# ops_data also writes ops_content_hash — the data only, no build timestamp — because
+# ops.json bytes change every build (updatedAt) and would defeat the gate.
+if node scripts/ops_data.cjs >/dev/null 2>&1; then
+  OHASH=$(cat state/ops_content_hash 2>/dev/null || shasum -a 256 state/ops.json | awk '{print $1}')
+  if [ "$OHASH" != "$(cat state/ops_upload.hash 2>/dev/null || true)" ]; then
+    OHTTP=$(curl -sS -m 20 -o state/ops_upload.response.tmp -w '%{http_code}' -X POST "$DASH_URL/api/ops" \
+      -H "x-token: $DASH_WRITE_TOKEN" -H 'content-type: application/json' \
+      --data-binary @state/ops.json) || OHTTP=000
+    [ "$OHTTP" = "200" ] && printf '%s' "$OHASH" > state/ops_upload.hash
+    printf '{"at":"%s","httpStatus":%s}\n' "$(date -u '+%FT%TZ')" "${OHTTP:-000}" > state/ops_upload.json
+    rm -f state/ops_upload.response.tmp
+  fi
+else
+  echo 'ops history build failed (non-fatal)' >&2
+fi
 rm -f state/dashboard_upload.response.tmp state/dashboard_readback.tmp
 exit 0

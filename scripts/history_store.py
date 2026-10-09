@@ -48,5 +48,18 @@ elif command=='save':
         r=json.loads(raw);total=json.loads(db.execute('SELECT body FROM totals WHERE symbol=?',(symbol,)).fetchone()[0]);s={**r,**total}
         symbols[symbol]=s
     print(json.dumps({'accountKey':account,'symbols':symbols,'acquiredAt':state['acquiredAt'],'asOf':state['asOf'],'incomplete':state['incomplete'],'source':'sqlite-raw-fill-ledger','auditIncomplete':state.get('auditIncomplete',False)}))
+elif command=='fills':
+    # Read-only export for the operations-history page; newest first, capped.
+    limit=max(1,min(int(sys.argv[2]) if len(sys.argv)>2 else 5000,20000))
+    rows=db.execute('SELECT body FROM fills ORDER BY ts DESC LIMIT ?',(limit,)).fetchall()
+    print(json.dumps([json.loads(b) for (b,) in rows]))
+elif command=='status':
+    # Coverage snapshot for the operations-history page (read-only): audit flags from the
+    # last save plus the ground truth from the fills table itself (count + newest ts).
+    meta={k:db.execute("SELECT value FROM meta WHERE key=?",(k,)).fetchone() for k in ('incomplete','asOf')}
+    n,maxts=db.execute('SELECT COUNT(*),MAX(ts) FROM fills').fetchone()
+    print(json.dumps({'incomplete':json.loads(meta['incomplete'][0]) if meta['incomplete'] else True,
+                      'asOf':json.loads(meta['asOf'][0]) if meta['asOf'] else None,
+                      'fillCount':n,'fillsMaxTs':maxts}))
 else:raise ValueError('unknown history store command')
 db.close()
