@@ -33,7 +33,8 @@ else {
   page = await task.newPage();
   await fs.writeFile(browserFile, JSON.stringify({ spaceId: task.spaceId, page: page.label }));
 }
-await page.goto(cfg.tradeUrlBase + "SOL_USD_PERP");
+// 落点放宽（同 observe 9b3f8e6）：domcontentloaded + 25s + 超时重试一次——交易页重，15s load 超时会间歇杀死整个采集
+await page.goto(cfg.tradeUrlBase + "SOL_USD_PERP", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto(cfg.tradeUrlBase + "SOL_USD_PERP", { waitUntil: "domcontentloaded", timeout: 25000 })));
 await page.waitForTimeout(2500);
 async function checkAccount() { const r=await page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral",{credentials:"include",timeout:15000});if(r.status!==200)throw Error("collateral unavailable");collateralFor(JSON.parse(r.body),identity); }
 await checkAccount();
