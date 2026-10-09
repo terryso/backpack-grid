@@ -7,6 +7,7 @@ if [ -f .env ]; then . ./.env; fi
 export PY_BIN NODE_BIN
 export PATH="${NODE_BIN:+$(dirname "$NODE_BIN"):}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export BG_ROOT="$PWD"
+export BG_PROXY
 if [ "${BG_LOCKED:-}" != "1" ]; then
   exec "${PY_BIN:-python3}" scripts/with_lock.py --wait 45 bash scripts/run_round.sh "$@"
 fi
