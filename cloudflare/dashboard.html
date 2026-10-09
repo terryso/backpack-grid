@@ -119,6 +119,34 @@ function healthRow(x, s) {
   return `<div class="health"><span class="dot ${dot}"></span><span>${label}</span>
     <span style="margin-left:auto;color:#8b94a7">距${nearest.name} ${nearest.left}%</span></div>`;
 }
+// 自动退出行：仅当模块开启且该仓会被 auto_exits 实际处理时才显示保护余量。
+// 与决策同口径：无网格（孤儿）、网格停格、手动 hold、待清理的持仓如实显示状态——
+// auto_exits 对这些不会生成动作，显示"受保护"即是误导。止盈可单独关闭（posTp=0），
+// 止损在配置校验下恒 ≥1 不可关，两阈值分开展示。
+function autoExitRow(p, s) {
+  const ae = s.autoExits || {};
+  if (ae.enabled !== true) return "";
+  const ret = Number(p.pnlPct);
+  const posSl = ae.posSl != null ? Number(ae.posSl) : 150;
+  const posTp = ae.posTp != null ? Number(ae.posTp) : 150;
+  if (!Number.isFinite(ret) || posSl <= 0) return "";
+  const grid = (s.grids || []).find((x) => x.market === p.market);
+  const held = (s.manualPauses || []).includes("*") || (s.manualPauses || []).includes(p.market);
+  let state = "";
+  if (!grid) state = "未覆盖 · 该持仓无对应网格";
+  else if (grid.status !== "Triggered") state = "已暂停 · 网格手动停格";
+  else if (held) state = "已暂停 · 手动 hold";
+  else if ((s.pending || []).includes(p.market)) state = "待清理 · 停格已在重试";
+  if (state) return `<div class="grow"><span class="k">自动退出</span><span class="muted">${state}</span></div>`;
+  const fmtLeft = (n) => n <= 0 ? "已越线" : "余 " + n + "%";
+  const toSl = +(ret + posSl).toFixed(1);
+  const tpOn = posTp > 0;
+  const toTp = tpOn ? +(posTp - ret).toFixed(1) : null;
+  const near = tpOn ? Math.min(toTp, toSl) : toSl;
+  const cls = near <= 0 ? "neg" : near <= 30 ? "" : "muted";
+  const style = near <= 0 ? ' style="color:#f87171"' : near <= 30 ? ' style="color:#fbbf24"' : "";
+  return `<div class="grow"><span class="k">自动退出</span><span class="${cls}"${style}>${tpOn ? `止盈${fmtLeft(toTp)} · ` : "止盈已关 · "}止损${fmtLeft(toSl)}（仓位 ${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）</span></div>`;
+}
 function render(s) {
   const escape = (v) => typeof v === "string" ? v.replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))
     : Array.isArray(v) ? v.map(escape) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, escape(x)])) : v;
@@ -167,7 +195,7 @@ function render(s) {
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
   if (s.autoExits) chips.push(s.autoExits.enabled
-    ? `<span class="chip">自动止损止盈：仓位 ${s.autoExits.posSl == null ? "±150" : (s.autoExits.posTp >= 0 ? "+" + s.autoExits.posTp : s.autoExits.posTp) + "/" + (s.autoExits.posSl <= 0 ? s.autoExits.posSl : "-" + s.autoExits.posSl)}% · 破沿驻留 ${s.autoExits.dwellMin == null ? 10 : s.autoExits.dwellMin} 分钟（±${s.autoExits.bufferPct == null ? 0.5 : s.autoExits.bufferPct}%）</span>`
+    ? `<span class="chip">自动止损止盈：${Number(s.autoExits.posTp) > 0 ? `止盈 +${s.autoExits.posTp}%` : "止盈已关"} · 止损 -${s.autoExits.posSl == null ? 150 : s.autoExits.posSl}% · 破沿驻留 ${s.autoExits.dwellMin == null ? 10 : s.autoExits.dwellMin} 分钟（±${s.autoExits.bufferPct == null ? 0.5 : s.autoExits.bufferPct}%）</span>`
     : `<span class="chip">自动止损止盈：未启用</span>`);
   if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct == null ? "未知" : fmt(s.fees.makerPct, 1) + "%"} · ${s.fees.fills} 笔 · ${s.fees.incomplete ? "历史未收齐" : "已追平"}</span>`);
   // equity sparkline
@@ -253,25 +281,12 @@ function render(s) {
           const pnlNum = Number(String(p.pnl).replace(/[$,]/g, ""));
           const liqNum = Number(p.liq);
           const liqDist = isFinite(liqNum) && liqNum > 0 ? Math.abs(p.mark - liqNum) / p.mark * 100 : null;
-          // 自动止损止盈（仓位级 pnlPct，保证金口径）：正向看止盈阈值、负向看止损阈值
           const ret = Number(p.pnlPct);
-          const ae = s.autoExits || {};
-          const posSl = ae.posSl != null ? Number(ae.posSl) : 150, posTp = ae.posTp != null ? Number(ae.posTp) : 150;
-          const autoOn = ae.enabled !== false;
-          let autoRow = "";
-          if (autoOn && isFinite(ret) && posSl > 0) {
-            const toTp = +(posTp - ret).toFixed(1), toSl = +(ret + posSl).toFixed(1);
-            const near = ret >= 0 ? toTp : toSl;
-            const tag = ret >= 0 ? "距自动止盈" : "距自动止损";
-            const cls = near <= 0 ? "neg" : near <= 30 ? "" : "muted";
-            const style = near <= 0 ? ' style="color:#f87171"' : near <= 30 ? ' style="color:#fbbf24"' : "";
-            autoRow = `<div class="grow"><span class="k">自动退出</span><span class="${cls}"${style}>${tag} ${near <= 0 ? "已越线" : near + "%"}（仓位 ${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%，触发 ±${posSl}%）</span></div>`;
-          }
           return `<div class="gcard">
             <div class="ghead"><span class="gmkt">${p.market}</span><span class="gdir">${p.side === "long" ? "多单" : "空单"} · ${p.size}</span></div>
             <div class="grow"><span class="k">标记价</span><span>${p.mark}</span></div>
             <div class="grow"><span class="k">浮动盈亏</span><span class="${pnlCls(pnlNum)}">${p.pnl} USD${isFinite(ret) ? `（${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）` : ""}</span></div>
-            ${autoRow}
+            ${autoExitRow(p, s)}
             ${liqDist !== null ? `<div class="grow"><span class="k">距强平</span><span>${liqDist.toFixed(0)}%</span></div>` : ""}
           </div>`;
         }).join("")}
