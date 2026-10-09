@@ -40,6 +40,8 @@
     padding: 6px 10px; font-size: 12px;
   }
   .filters input { min-width: 180px; flex: 1; }
+  .fbtn { background: #0f1522; color: #aab3c5; border: 1px solid #1f2737; border-radius: 99px; padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .fbtn.on { border-color: #3b82f6; color: #93c5fd; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th { text-align: left; color: #8b94a7; font-weight: 500; padding: 4px 8px; border-bottom: 1px solid #1f2737; white-space: nowrap; }
   td { padding: 5px 8px; border-bottom: 1px solid #161d2b; vertical-align: top; }
@@ -79,7 +81,20 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":
 const mkt = (s) => String(s || "").replace("_USDC_PERP", "-PERP");
 const when = (iso) => new Date(iso).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 const PAGE = 300;
-let DATA = null, shown = PAGE;
+let DATA = null, shown = PAGE, opsFilter = "";
+const isAuto = (o) => /^(AUTO_|LIQ_DANGER|OUT_OF_RANGE)/.test(o.reason || "");
+function renderOps(ops) {
+  const box = document.getElementById("opsBox");
+  if (!box) return;
+  const rows = ops.filter((o) => opsFilter === "" ? true : opsFilter === "auto" ? isAuto(o) : o.act === opsFilter);
+  box.innerHTML = rows.length ? `<table><thead><tr><th>时间</th><th>动作</th><th>市场</th><th>理由 / 摘要</th></tr></thead><tbody>
+        ${rows.map((o) => `<tr>
+          <td class="time">${when(o.at)}</td>
+          <td><span class="chip ${o.act === "stop" ? "act-stop" : "act-create"}">${o.act === "stop" ? "停格" : o.act === "create" ? "建格" : esc(o.act)}</span>${o.dry ? ' <span class="chip">演练</span>' : ""}${o.status && o.status !== "complete" ? ` <span class="chip bad">${esc(o.status)}</span>` : ""}</td>
+          <td>${esc(mkt(o.market))}</td>
+          <td class="reason">${esc(o.reason || "-")}</td>
+        </tr>`).join("")}</tbody></table>` : `<div class="muted">${opsFilter ? "该筛选下暂无记录" : "暂无决策记录"}</div>`;
+}
 function setMode(live) {
   const c = document.getElementById("modeChip");
   c.textContent = live ? "实时" : "静态快照";
@@ -116,14 +131,11 @@ function render() {
       <div class="card"><div class="k">巡检轮次摘要</div><div class="v">${fmt(rounds.length, 0)}</div></div>
     </div>
     <div class="section">
-      <h2>操作记录（最新在前）</h2>
-      ${ops.length ? `<table><thead><tr><th>时间</th><th>动作</th><th>市场</th><th>理由 / 摘要</th></tr></thead><tbody>
-        ${ops.map((o) => `<tr>
-          <td class="time">${when(o.at)}</td>
-          <td><span class="chip ${o.act === "stop" ? "act-stop" : "act-create"}">${o.act === "stop" ? "停格" : o.act === "create" ? "建格" : esc(o.act)}</span>${o.dry ? ' <span class="chip">演练</span>' : ""}${o.status && o.status !== "complete" ? ` <span class="chip bad">${esc(o.status)}</span>` : ""}</td>
-          <td>${esc(mkt(o.market))}</td>
-          <td class="reason">${esc(o.reason || "-")}</td>
-        </tr>`).join("")}</tbody></table>` : `<div class="muted">暂无决策记录</div>`}
+      <h2>操作记录（最新在前，共 ${ops.length} 条）</h2>
+      <div class="filters" style="margin-bottom:8px">
+        ${[["", "全部"], ["create", "建格"], ["stop", "停格"], ["auto", "自动触发"]].map(([k, label]) => `<button class="fbtn${opsFilter === k ? " on" : ""}" data-opsf="${k}">${label}</button>`).join("")}
+      </div>
+      <div id="opsBox"></div>
     </div>
     <div class="section">
       <h2>成交流水（最新在前）</h2>
@@ -164,6 +176,12 @@ function render() {
   for (const id of ["fSym", "fSide", "fMk"]) document.getElementById(id).addEventListener("change", () => { shown = PAGE; drawFills(); });
   document.getElementById("fQ").addEventListener("input", () => { shown = PAGE; drawFills(); });
   drawFills();
+  renderOps(ops);
+  document.querySelectorAll("[data-opsf]").forEach((b) => b.addEventListener("click", () => {
+    opsFilter = b.dataset.opsf;
+    document.querySelectorAll("[data-opsf]").forEach((x) => x.classList.toggle("on", x.dataset.opsf === opsFilter));
+    renderOps(ops);
+  }));
 }
 async function load() {
   try {

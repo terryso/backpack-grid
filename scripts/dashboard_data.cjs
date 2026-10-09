@@ -102,6 +102,7 @@ const snapshot = {
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
+  autoExits: { enabled: cfg.autoExitsEnabled === true, posSl: num(cfg.positionStopLossPct), posTp: num(cfg.positionTakeProfitPct), dwellMin: num(cfg.breachDwellMin), bufferPct: num(cfg.breachBufferPct) },
   pending: pendingValid ? Object.keys(pending || {}) : null,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
   lastAction, lastActionNote, curve,
