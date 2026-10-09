@@ -29,7 +29,7 @@
 bash scripts/run_round.sh            # 手动跑一轮完整巡检（入口自锁，与定时轮互斥）
 DRYRUN=1 bash scripts/run_round.sh   # 只观察+判定，不动手（同样持锁）
 node scripts/analyze.cjs             # 单独看选币排名 Top10
-node tests/regression.cjs            # 回归测试（106 用例，~10 秒）
+node tests/run.cjs                    # 全量测试（11 套件，430+ 场景，零真实网络）
 bash scripts/upload_dashboard.sh     # 手动刷新线上仪表盘数据
 ```
 
@@ -53,12 +53,16 @@ act       风险退出先行执行（停止网格→等仓位平掉→删除）�
 
 | 参数 | 当前值 | 说明 |
 |---|---|---|
-| `takeProfitPct` | 10 | 网格盈亏（含资金费，相对投入资金）≥ +10% → 止盈换仓 |
+| `takeProfitPct` | 5 | 网格盈亏（含资金费，相对投入资金）≥ +5% → 止盈换仓 |
 | `stopLossPct` | 6 | ≤ -6% → 止损换仓；同时是交易所侧原生止损值 |
 | `exitBufferPct` | 1 | 价格离开网格区间 1% → 轮换 |
 | `liqDangerPct` | 12 | 标记价距强平价 <12% → 紧急换仓 |
 | `maxGrids` / `gridValueUsd` | 4 / 2500 | 最多 4 个中性网格，每格名义 2,500 USD |
-| `riskBudgetPct` / `warnDrawdownPct` | 80 / 40 | 组合止损额度预算；账户回撤熔断线 / 预警线 |
+| `riskBudgetPct` / `warnDrawdownPct` | 100 / 90 | 组合止损额度预算；账户回撤熔断线 / 预警线（刻意放宽，接受全损姿态） |
+| `autoExitsEnabled` | true | 仓位级自动止损止盈总开关（模板缺省 false；以下键均可选） |
+| `positionStopLossPct` / `positionTakeProfitPct` | 150 / 150 | 仓位级退出：持仓收益率（浮盈亏÷保证金，含资金费）≤ -150% 止损、≥ +150% 止盈落袋；止盈显式设 0 关闭 |
+| `breachDwellMin` / `breachBufferPct` | 10 / 0.5 | 破沿驻留：价格越出区间 ±0.5% 持续 10 分钟才停格（跨轮累计计时，抗单针） |
+| `accountFloorUsd` | 0 | 账户保底线（权益 ≤ 值熔断全停并锁死）；0 = 不启用 |
 | `minScore` / `minQvol24h` | 5 / 800,000 | 选币及格线与流动性门槛，不达标宁可空仓 |
 | `maxPerEcosystem` | 2 | 同生态（Solana 系等，见 `ecosystems` 表）最多 2 格 |
 
@@ -68,19 +72,20 @@ act       风险退出先行执行（停止网格→等仓位平掉→删除）�
 
 ## 风控分层
 
-1. **交易所侧兜底**：每个网格都带原生 `TP=10 / SL=6 / closePositionsOnStop`，即使本机休眠也会触发；创建时写入并读回核验，巡检每轮对账、缺失自动回补（protect），自愈失败自动紧急清理该网格
+1. **交易所侧兜底**：每个网格都带原生 `TP=5 / SL=6 / closePositionsOnStop`，即使本机休眠也会触发；创建时写入并读回核验，巡检每轮对账、缺失自动回补（protect），自愈失败自动紧急清理该网格
 2. **账户风险预算**：开新格前检查 `Σ存量(投入×实际SL%) + 新格额度 + 缓冲 ≤ 权益×80%`；回撤 ≥40% 禁止新开仓，≥80% 熔断全停并锁死（需人工清 `state/risk.json` 的 `paused`，保留 `peakEquity`）
 3. **pendingStop 账本**：平仓超时/删除失败/意图未知全部记账，下轮强制重试清理，清理未完成期间禁止新开仓；手动暂停的网格（Disabled 且盈亏未越阈值）不会被触碰
 4. **fail-safe**：数据缺失/畸形按"未知"处理（fail-loud），行情故障只跳过价格类规则，零网格是合法状态
 5. **缩容补位**：风险预算不够标准格时自动降档（2500→1950→…，50 的倍数、下限 500），空位以合规小规模回补而非空置
 6. **峰值细粒度采样**：独立 launchd 任务每 60 秒轻量探测权益，棘轮更新峰值（巡检轮次进行中自动避让）——回撤指标的采样粒度从 15 分钟提升到 1 分钟
+7. **仓位级自动退出（auto_exits）**：锚交易所口径的持仓收益率（浮盈亏÷保证金），防被网格面已实现利润掩盖；破沿驻留跨轮计时、tickers 故障时直接读快照价格照常判定；手动停格/手动 hold/pending 清理中的网格一律不碰
 
 ## 选币逻辑（scripts/analyze.cjs）
 
 拉取全部 USDC 加密永续的 24h/72h/7d K 线，评分 = 震荡度（chop = 价格路径÷净漂移，
 24h+72h 双窗平均、上限 20 截尾）× 流动性 − 趋势惩罚 − 资金费惩罚。
 过滤：24h 成交量 < `minQvol24h`、美股类合约、已持有市场；评分 < `minScore` 宁可空仓。
-网格区间基于近期振幅（6%~30%），格距按震荡路径自适应（0.35%~0.8%），
+网格区间基于近期振幅（6%~30%），格距按震荡路径自适应（0.25%~0.8%），
 按交易所 tickSize/minQuantity 取整。另输出"方向性候选"仅供纸上跟踪（不实盘）。
 
 ## 交易量活动追踪（Mystery Box）
@@ -95,6 +100,9 @@ act       风险退出先行执行（停止网格→等仓位平掉→删除）�
 巡检每轮退出时 best-effort 上传快照（失败不影响巡检）。线上页面展示权益卡片、
 活动进度条、网格卡片、权益曲线、风控/待清理/最近动作状态，60 秒自刷新，移动端适配。
 
+另有公开操作历史页 **`/ops`**：建格/停格决策（含自动触发快筛）、全部成交流水、巡检轮次摘要——
+脱敏后经内容哈希门控上传（安静轮零请求），采集状态与新鲜度多口径分开展示。
+
 - 地址：`DASH_URL`（`state/dashboard.env`）；读取公开，无需密钥
 - 上传凭证：`DASH_WRITE_TOKEN`（同文件，仅本机持有；泄露即重建并重设 Worker secret）
 - 手动刷新数据：`bash scripts/upload_dashboard.sh`
@@ -103,7 +111,7 @@ act       风险退出先行执行（停止网格→等仓位平掉→删除）�
 ## 测试
 
 ```bash
-node tests/regression.cjs   # 107 用例，~10 秒，零真实网络
+node tests/run.cjs   # 全量：11 套件、430+ 场景，零真实网络
 ```
 
 两层：Layer A 纯逻辑复刻 + 源码金丝雀；Layer B **执行生产源码**——decide.cjs 以
@@ -114,10 +122,11 @@ decide 另支持 `BG_TICKERS_FILE`（确定性免网络行情）。改完代码�
 
 ```
 scripts/   run_round.sh（编排+内核flock自锁） with_lock.py（统一锁包装） risk_write.py（risk.json唯一写通道）
-           observe.mjs decide.cjs act.mjs act_core.cjs peak_probe.mjs
+           observe.mjs decide.cjs act.mjs act_core.cjs peak_probe.mjs auto_exits.cjs
            analyze.cjs api.cjs dashboard_data.cjs upload/deploy_dashboard.sh
-cloudflare/ worker.js + dashboard.html + wrangler.toml（仪表盘 Worker）
-tests/     regression.cjs（回归套件）
+           collect_history.mjs collect_verified_window.mjs history_store.py ops_data.cjs
+cloudflare/ worker.js + dashboard.html + ops.html + wrangler.toml（仪表盘/操作历史 Worker）
+tests/     11 个套件（run.cjs 统一入口：regression/acceptance/safety/auto_exits/auto_ui/ops_history 等）
 config.json 个人策略参数（gitignored，模板 config.example.json，新机器 cp 后改）
 state/     运行时数据（gitignored）：observed/actions/act_results/pending_stops/
            risk/campaign/equity_curve.jsonl/log.md/dashboard.env(密钥)/lock
@@ -141,7 +150,7 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 
 - 同币种"删除后立刻重建"会 enabled 但不铺单；act 创建后验证订单数，不足自动停/启踢活
 - 网格限价单也可能 taker 成交（实测 maker 占比 ~97%）；账户费率 4 级 maker 0.016%，
-  格距 0.35%+ 相对最坏往返成本 ~0.07% 仍有充足毛利
+  格距下限 0.25%（第二期活动加密）相对最坏往返成本 ~0.07% 仍有正毛利
 
 ## AI 运维 Skill
 
@@ -161,6 +170,8 @@ DASH_WRITE_TOKEN 等）只存 `state/dashboard.env`，`state/` 整体被 gitigno
 - 机器本地解释器路径（Python／Node）统一放在仓库根 `.env`（不提交，模板见 `.env.example`，新机器 `cp .env.example .env` 后修改）；所有 shell 入口自动 source，测试经 `tests/env.cjs` 读取。仓库源码零绝对路径：ego-browser 派发的脚本用 `__BG_ROOT__`／`__PY_BIN__` 占位符，由 `scripts/ego_dispatch.sh` 注入后派发。开发测试使用 Node 22，运行 `npm ci && npm test`。测试禁止网络、直接执行生产核心和完整 act／runner 的模拟 I/O。
 - `risk_write.py` 是唯一风险状态写入通道；失败禁开仓，未落盘熔断由 risk_write_pending.json 重放，已有 paused 不自动清除。
 - history／research 为独立定时任务；手续费按原始成交 ID 去重并报告覆盖范围，未知资金费不按零打分。
+- 公网 API（tickers/K 线等）由 Node 直连时需显式代理：`.env` 的 `BG_PROXY`（Node 不读系统代理），未配置则直连向后兼容。
+- 首页「核算窗口净收益」为认证口径：窗口内每笔入金/出金/平台奖励都须人工登记 `state/attribution_ledger.json`（归属哪个子账户、金额），否则该指标诚实停在「待核对」。
 - `run_events.jsonl` 记录确认事件，旧计划日志不再作为实盘换仓次数；权益变化不直接称作策略收益。完整归因需精确基线时间及核对过的现金流等导出，导入说明见 docs/project-review-2026-10-02.md。
 - 首页由 Workers Static Assets 提供；API 免费额度耗尽时显示注明时间的部署快照，动态接口需额度重置后恢复。上传成功后会读回确认，运输结果记录 dashboard_upload.json。
 - 可复现的任务配置：`"$PY_BIN" scripts/install_launch_agents.py --install`（PY_BIN 来自 `.env`），仅写 plist，不会启动服务；RunAtLoad=false；launchd PATH 由 `.env` 的 NODE_BIN 推导。

@@ -23,11 +23,11 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
 Backpack provides native grid bots with exchange-side protection. This project adds selection, rotation, account risk rules, and recovery around those bots:
 
 - **Runs its own strategy**: scans every USDC perp, scores markets by mean-reversion suitability (multi-window chop × liquidity − drift − funding), and picks up to 4 neutral grids
-- **Trades with real money**: ~$590 account, 4 grids, automatic rotation when a grid hits +10% take-profit, −6% stop-loss, exits its range, or drifts near liquidation
-- **Protects itself in layers**: exchange-side native backstop on every grid (survives a dead machine) → portfolio-level risk budget → equity-drawdown circuit breaker (40% warn / 80% kill-switch) → write-ahead intent ledger so a crashed process never leaves half-done trades
+- **Trades with real money**: ~$590 account, 4 grids, automatic rotation when a grid hits +5% take-profit, −6% stop-loss, exits its range, or drifts near liquidation — plus position-level auto-exits at ±150% margin-relative PnL and dwell-tracked range-breach stops
+- **Protects itself in layers**: exchange-side native backstop on every grid (survives a dead machine) → portfolio-level risk budget → equity-drawdown circuit breaker (90% warn / 100% kill-switch, deliberately pinned to ride through drawdowns) → write-ahead intent ledger so a crashed process never leaves half-done trades
 - **Reports publicly**: a Cloudflare Worker + KV dashboard updated after every round
 
-It has been running unattended for 3+ days: 190+ inspection rounds, 5 autonomous rotations, roughly +10% account growth (includes market drift — see caveats).
+It has been running unattended since 2026-09-30 — hundreds of autonomous rounds, including riding out a violent market crash (2026-10-08) and its fully automated recovery. Live equity and a certified accounting window are on the dashboard; no performance numbers are frozen in this README.
 
 ## Architecture
 
@@ -43,7 +43,7 @@ act       validate → create (with native TP/SL written at creation) → verify
 verify    re-observe; every number in state files is shape-checked, fail-loud
 ```
 
-Engineering details that survived 8 rounds of adversarial AI code review (~25 real defects found and fixed):
+Engineering details that survived 14 rounds of adversarial AI code review (~45 real defects found and fixed):
 
 - **Two-phase execution**: risk exits execute immediately; replacement creation waits for a re-observation — a stop is never delayed by market analysis
 - **Write-ahead intent ledger**: disable/delete/create intents persist before any exchange write; a lost response can always be recovered
@@ -64,14 +64,14 @@ Filters: volume floor, score floor (an empty slot beats a mediocre grid), max 2 
 
 ## Honest caveats
 
-- **Small sample.** ~3 days live, 5 rotations, a rising market — the +10% includes drift a flat market wouldn't have given
+- **Short track record.** Live since 2026-09-30, through at least one violent crash and its automated recovery. Performance lives on the dashboard (including a certified accounting window) instead of being frozen in this file
 - **No backtest yet.** Fixed-grid vs. rotation comparison, per-strategy attribution and a proper equity benchmark are the next milestone after the current campaign ends
 - **Browser-session auth** means the automation dies if the login session dies — by design (no keys to leak); it fails loud and waits
 
 ## Testing
 
 ```bash
-node tests/regression.cjs   # 110 cases, no network
+npm test                    # full offline suite: 11 suites, 430+ scenarios, no network
 ```
 
 Layer A: pure-logic replicas + source canaries. Layer B: **executes the production code** — decide.cjs runs against sandbox fixtures via `BG_ROOT`, and the grid-stop state machine runs against mocked exchange I/O.
@@ -84,7 +84,7 @@ Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloud
 
 Use Node 22 and `npm ci && npm test`. The offline suites forbid network I/O and execute production decisions, complete mocked act/runner lifecycles, history pagination, and state contracts. Kernel locks are tested with real disposable processes. Historical fills and research refresh independently of risk exits.
 
-Equity change is not labeled strategy PnL without reconciled cashflow coverage and an exact baseline timestamp. Run statistics come from confirmed execution events. Static UI requests bypass Workers; a dated, visibly degraded deployment snapshot is shown if dynamic APIs are unavailable. Upload success requires snapshot readback. See [acceptance and outstanding external gates](docs/project-review-2026-10-02.md).
+Equity change is not labeled strategy PnL without reconciled cashflow coverage and an exact baseline timestamp — the homepage publishes a certified accounting window, and every capital/platform event inside the window must be manually attributed in `state/attribution_ledger.json` or the metric honestly falls back to "pending review". Public-API fetches from Node need an explicit proxy (`BG_PROXY` in `.env`) because Node ignores system proxies. Run statistics come from confirmed execution events. Static UI requests bypass Workers; a dated, visibly degraded deployment snapshot is shown if dynamic APIs are unavailable. Upload success requires snapshot readback. See [acceptance and outstanding external gates](docs/project-review-2026-10-02.md).
 
 ## Support
 
