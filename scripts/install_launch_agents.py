@@ -43,3 +43,20 @@ for label, filename, script, interval in JOBS:
         tmp.write_bytes(plistlib.dumps(item))
         os.replace(tmp, DEST / filename)
     print(json.dumps({"path": str(DEST / filename), **item}, ensure_ascii=False))
+
+# Keep-awake: the trading loop stops whenever the Mac idle-sleeps (the battery idle
+# timer can be as low as 1 minute — multiple multi-hour stalls traced to this).
+# A long-running `caffeinate -i` holds a PreventUserIdleSystemSleep assertion so the
+# system stays awake while this agent lives; the display may still sleep normally.
+# Kill/unload this agent to restore stock sleep behavior.
+keepawake = {"Label": "com.backpack-grid-keepawake",
+             "ProgramArguments": ["/usr/bin/caffeinate", "-i"],
+             "RunAtLoad": False, "KeepAlive": True,
+             "StandardOutPath": str(ROOT / "state" / "com.backpack-grid-keepawake.log"),
+             "StandardErrorPath": str(ROOT / "state" / "com.backpack-grid-keepawake.log")}
+if "--install" in sys.argv:
+    keep_file = DEST / "com.backpack-grid-keepawake.plist"
+    tmp = DEST / (keep_file.name + ".tmp")
+    tmp.write_bytes(plistlib.dumps(keepawake))
+    os.replace(tmp, keep_file)
+    print(json.dumps({"path": str(keep_file), **keepawake}, ensure_ascii=False))

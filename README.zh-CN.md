@@ -33,7 +33,11 @@ node tests/run.cjs                    # 全量测试（11 套件，430+ 场景�
 bash scripts/upload_dashboard.sh     # 手动刷新线上仪表盘数据
 ```
 
-定时执行由本机 launchd 承担（`~/Library/LaunchAgents/com.backpack-grid-monitor.plist`，每 15 分钟）：
+定时执行由本机 launchd 承担（巡检每 15 分钟，另有峰值采样 60 秒、采集/核算/研究等任务，
+`"$PY_BIN" scripts/install_launch_agents.py --install` 一键生成全部 plist）。
+另有 **`com.backpack-grid-keepawake` 常驻防休眠任务**（`caffeinate -i`）：Mac 闲置休眠会停掉整个交易循环
+（电池模式闲置定时可能短至 1 分钟），此任务通过 PreventUserIdleSystemSleep 断言保持系统清醒——
+显示器仍正常熄灭；卸载该任务即恢复系统默认休眠。**长期挂机建议插电源**（电池模式防休眠会持续耗电）。
 `launchctl kickstart gui/$(id -u)/com.backpack.grid-monitor` 可立即触发一轮。
 
 ## 每轮巡检做什么
