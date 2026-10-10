@@ -145,6 +145,23 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 | 熔断恢复 | 修复 `state/risk.json`：保留 `peakEquity`、删除 `paused` 字段 |
 | 手动暂停某网格 | 直接在交易所侧关闭即可——巡检识别"Disabled 且盈亏未越阈值"不会动它；**注意**若盈亏已越过阈值会被视为兜底触发而轮换 |
 | 仪表盘 403 | `state/dashboard.env` 的 DASH_WRITE_TOKEN 与 Worker secret 不一致，重跑 deploy |
+| 重启后网站停更（OBSERVE_FAILED / `space not found: N`） | ego 重启后 task space 会丢，需重建：见下方「ego 空间丢失恢复」 |
+| 重启后巡检全被 `SKIP: round lock held` | 峰值采样进程卡死占锁：`lsof state/round.lock` 找到进程树杀掉（kill python/bash/ego-browser 三个），锁即释放 |
+
+## ego 空间丢失恢复（重启后）
+
+重启或 ego lite 重装后，task space 可能丢失，症状：网站停更、日志报 `OBSERVE_FAILED` + `task space not found: N`。
+恢复流程（可由 AI 全自动执行，仅登录一步需人工）：
+
+1. 探测现存空间：派发探针执行 `ego.listTaskSpaces()`；
+2. 重建：`ego.createTaskSpace({ name: "backpack-bot" })`；
+3. 建页签：`const task = await taskSpace(space.id); await task.newPage();`——新页签自动命名 `p1`，与 `config.json` 的 `watch.page` 对应；
+4. 在脚本里 `page.goto("https://backpack.exchange/login")` 打开登录页；
+5. **人工**：在 ego lite 的 `backpack-bot` 空间用 Bot 子账号登录一次（task space 不共享登录 cookies，这一步无法自动化）；
+6. `config.json` 的 `watch.spaceId` 改为新空间 id，下一轮自愈（或 `launchctl kickstart` 立即验证）。
+
+登录探测口径：`page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral")` 返回 200 即已登录、401 即未登录。
+另注意：重启后 peak_probe 可能卡死并持有 `state/round.lock`（症状：巡检全被 `SKIP: round lock held`），先 `lsof state/round.lock` 找到进程树杀掉再做上述步骤。
 
 ## 已知引擎 quirk
 

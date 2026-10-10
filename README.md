@@ -78,7 +78,7 @@ Layer A: pure-logic replicas + source canaries. Layer B: **executes the producti
 
 ## Operations
 
-Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloudflare OAuth), launchd timers for the 15-minute round and the 1-minute peak sampler, full runbook in-repo. See [README.zh-CN.md](README.zh-CN.md) for the complete Chinese operations manual.
+Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloudflare OAuth), launchd timers for the 15-minute round and the 1-minute peak sampler, full runbook in-repo — including post-reboot recovery (the ego browser task space is lost; recreate it programmatically, then one manual login re-attaches the session — see the Chinese runbook's "ego 空间丢失恢复"). See [README.zh-CN.md](README.zh-CN.md) for the complete Chinese operations manual.
 
 ## Validation and accounting
 
