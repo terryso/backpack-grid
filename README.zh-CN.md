@@ -157,7 +157,7 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 2. 重建：`ego.createTaskSpace({ name: "backpack-bot" })`；
 3. 建页签：`const task = await taskSpace(space.id); await task.newPage();`——新页签自动命名 `p1`，与 `config.json` 的 `watch.page` 对应；
 4. 在脚本里 `page.goto("https://backpack.exchange/login")` 打开登录页；
-5. **人工**：在 ego lite 的 `backpack-bot` 空间用 Bot 子账号登录一次（task space 不共享登录 cookies，这一步无法自动化）；
+5. **人工**：在 ego lite 的 `backpack-bot` 空间用 Bot 子账号登录一次（task space 不共享登录 cookies，这一步无法自动化）。**注意**：人工操作会让空间进入「用户接管」态，agent 命令暂停（报 `user has taken control`）——登录完要收回控制权：派发 `const task = await takeOverTaskSpace(spaceId)`；
 6. `config.json` 的 `watch.spaceId` 改为新空间 id，下一轮自愈（或 `launchctl kickstart` 立即验证）。
 
 登录探测口径：`page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral")` 返回 200 即已登录、401 即未登录。
