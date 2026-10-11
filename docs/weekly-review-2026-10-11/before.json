@@ -1,0 +1,111 @@
+{
+  "fixtureOnly": true,
+  "networkForbidden": true,
+  "results": [
+    {
+      "mode": "healthy",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "foreign",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "foreign-sub",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "absent-foreign",
+      "exit": 0,
+      "error": null,
+      "patchCount": 0,
+      "deleteCount": 0,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "final-foreign",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "owner-fields-absent",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    },
+    {
+      "mode": "other-near-liquidation",
+      "exit": 0,
+      "error": null,
+      "patchCount": 2,
+      "deleteCount": 1,
+      "pendingCount": 0,
+      "resultStatus": "complete",
+      "doneResults": [
+        {
+          "act": "stop",
+          "done": true
+        }
+      ]
+    }
+  ]
+}

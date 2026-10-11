@@ -133,7 +133,15 @@ const io = {
   assertAccount: accountCheck,
   jget: async (pathname) => {
     const real = pathname === "/api/v1/position" ? `/api/v1/position?subaccountId=${SUB}` : pathname;
-    return jget(real);
+    const data = await jget(real);
+    if (pathname === "/api/v1/position") {
+      // A zero quantity from a conflicting account cannot confirm this account is flat.
+      // Reuse the owner/shape checks, without a liquidation-distance veto: stopping must
+      // still proceed when another position is near liquidation.
+      const verified = positionsRisk(data, { liqDangerPct: 0 }, identity);
+      if (verified.blocked) throw new Error("stop position verification refused: " + verified.reason);
+    }
+    return data;
   },
   jpatch: async (pathname, body) => {
     const real = pathname === "/wapi/v1/subaccount/automation" ? `/wapi/v1/subaccount/${SUB}/automation` : pathname;
