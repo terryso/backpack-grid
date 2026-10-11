@@ -75,9 +75,9 @@ const html=fs.readFileSync(path.join(ROOT,'cloudflare/dashboard.html'),'utf8'),s
 const elements=new Map(),document={getElementById:id=>{if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:'',classList:{remove(){},toggle(){}}});return elements.get(id);}};
 const ctx={document,window:{},fetch:async()=>({ok:false,status:404})};vm.runInNewContext(script,ctx);ctx.h={current:c2,history:[]};vm.runInNewContext('HIST=h',ctx);
 function render(id,volume,source){ctx.s={updatedAt:new Date().toISOString(),equity:500,grids:[],positions:[],pending:[],curve:[],campaignId:id,campaignVolume:volume,campaignSource:source};vm.runInNewContext('render(s)',ctx);return elements.get('content').innerHTML;}
-check('unknown campaign displays pending instead of a false official zero',()=>{const h=render(1012,null,'unknown');assert(h.includes('活动量待核对'));assert(!h.includes('已锁定'));assert(!h.includes('累计 0 USD'));});
+check('unknown campaign displays pending instead of a false official zero',()=>{const h=render(1012,null,'unknown');assert(h.includes('活动量待核对'));assert(!h.includes('已锁定'));assert(!h.includes('累计 0 USD'));assert(!h.includes('class="bar"'),'unknown progress must not appear complete');});
 check('estimate does not claim official data or secured rewards',()=>{const h=render(1012,10200,'estimated');assert(h.includes('网格账本估算'));assert(!h.includes('已锁定'));assert(!h.includes(' ✓'));});
-check('official values retain tier display',()=>{const h=render(1012,10200,'official');assert(h.includes('已锁定 1 盲盒'));assert(h.includes('Backpack 官方接口数据'));});
-check('stale frontend period cannot display another campaign total',()=>{const h=render(1011,64000,'official');assert(h.includes('活动量待核对'));assert(!h.includes('64,000'));});
+check('official values retain tier display',()=>{const h=render(1012,10200,'official');assert(h.includes('已锁定 1 盲盒'));assert(h.includes('Backpack 官方接口数据'));assert(h.includes('class="bar"'),'known progress must remain visible');});
+check('stale frontend period cannot display another campaign total',()=>{const h=render(1011,64000,'official');assert(h.includes('活动量待核对'));assert(!h.includes('64,000'));assert(!h.includes('class="bar"'),'mismatched period has no verified progress');});
 check('numeric-string static period id matches the canonical numeric snapshot id',()=>{ctx.h={current:{...c2,campaignId:'1012'},history:[]};vm.runInNewContext('HIST=h',ctx);assert(render(1012,10200,'official').includes('已锁定 1 盲盒'));});
 console.log(n+' campaign period cases passed');

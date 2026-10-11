@@ -252,7 +252,7 @@ function render(s) {
         if (active) return `
       <h2>交易量活动 · ${campaignKnown?`${campaignOfficial?'累计':'估算累计'} ${fmt(camp, 0)} USD · ${campaignOfficial?'已锁定':'估算达到'} ${boxes} ${campaignOfficial?'盲盒':'档'}`:'待核对'}</h2>
       <div>${ladder}</div>
-      <div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>
+      ${campaignKnown ? `<div class="bar" style="margin-top:6px"><i style="width:${tierPct}%"></i></div>` : ''}
       <div class="muted">${[campaignKnown ? (nextTier
         ? `下一档：第 ${boxes + 1} 盒 @ ${fmt(nextTier, 0)} USD · 进度 ${tierPct.toFixed(1)}% · 还差 ${fmt(nextTier - camp, 0)} USD`
         : TIERS.length ? (campaignOfficial?"已达封顶 🎉":"估算达到最高档") : "") : '',deadlineText,campaignNote].filter(Boolean).join(' · ')}</div>`;
