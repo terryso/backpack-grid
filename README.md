@@ -12,7 +12,7 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
   </a>
 </p>
 
-🔗 **[Live dashboard](https://grid.terryso.dev)** — real equity, positions, per-grid health and volume progress, updated every 15 minutes. Public, read-only.
+🔗 **[Live dashboard](https://grid.terryso.dev)** — real equity, positions, per-grid health and volume progress, updated every 15 minutes. Public, read-only. The screenshot above is re-captured daily at 09:00 by a scheduled job and committed automatically when it changed.
 
 > ⚠️ This is a personal live-trading experiment, not financial advice. Perps trading is extremely risky.
 

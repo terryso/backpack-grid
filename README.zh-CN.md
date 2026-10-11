@@ -19,6 +19,9 @@
 
 🔗 **[打开实时仪表盘](https://grid.terryso.dev)**（公开只读，无需登录/密钥；数据上传通道独立密钥保护）
 
+> 📸 上方截图由 `com.backpack-grid-shot` 任务**每天 09:00 自动重拍**线上实况并提交
+> （`scripts/capture_dashboard_shot.sh`：ego 截图 → 缩放 1280 宽 → 有变化才 commit+push）。
+
 > ⚠️ 本项目为个人实盘实验记录，不构成投资建议。加密合约交易风险极高，据此操作后果自负。
 
 🎁 想在 Backpack 上试试同类玩法？欢迎用我的推荐链接注册：<https://backpack.exchange/join/suchuanyi>（推荐链接，对你没有额外成本，能支持这个实验继续跑下去）。
