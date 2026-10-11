@@ -53,6 +53,21 @@ try{
  check('JSON null state is not silently replaced',()=>{const d=fixture('null');entry(d,'decide.cjs');assert.equal(fs.readFileSync(path.join(d,'state/campaign.json'),'utf8'),'null');});
  check('JSON array state is not silently replaced',()=>{const d=fixture('[]');entry(d,'decide.cjs');assert.equal(fs.readFileSync(path.join(d,'state/campaign.json'),'utf8'),'[]');});
  check('bad campaign config cannot block pending verification',()=>{const d=fixture(seed());put(d,'cloudflare/assets/campaign-history.json','{broken');put(d,'state/pending_stops.json',{'FAKE-PERP':{accountKey:owner,at,reason:'fixture cleanup'}});entry(d,'decide.cjs');assert(JSON.parse(fs.readFileSync(path.join(d,'state/actions.json'))).some(a=>a.act==='stop'));});
+ check('rebased dashboard retains campaign projection, grid age and auto-exit settings together',()=>{
+  const d=fixture(seed()),cfg=JSON.parse(fs.readFileSync(path.join(d,'config.json'))),o=JSON.parse(fs.readFileSync(path.join(d,'state/observed.json')));
+  cfg.autoExitsEnabled=true;cfg.positionStopLossPct=175;cfg.positionTakeProfitPct=125;put(d,'config.json',cfg);
+  o.gridRows=[{market:'FAKE-PERP',status:'Triggered',range:[90,110],value:1000,pnl:10,pnlPct:1}];put(d,'state/observed.json',o);
+  put(d,'state/run_events.jsonl',JSON.stringify({at:'2026-10-07T11:50:00Z',type:'actions',identity:o.identity,results:[{act:'create',market:'FAKE-PERP',done:true}]})+'\n');
+  entry(d,'dashboard_data.cjs');const x=JSON.parse(fs.readFileSync(path.join(d,'state/dashboard.json')));
+  assert.equal(x.campaignVolume,60000);assert.equal(x.campaignSource,'official');assert.equal(x.grids[0].gridAgeLabel,'10 分钟');
+  assert.equal(x.autoExits.enabled,true);assert.equal(x.autoExits.posSl,175);assert.equal(x.autoExits.posTp,125);
+ });
+ check('legacy correction metadata survives migration while current official volume establishes a new baseline',()=>{
+  const prior={...legacy,correctedAt:'2026-10-07T09:00:00Z',correctionNote:'fixture manual correction, retained privately'};
+  const d=fixture(prior,obs(1012,2300));entry(d,'decide.cjs');const x=JSON.parse(fs.readFileSync(path.join(d,'state/campaign.json')));
+  assert.deepEqual(x.legacy[0].record,prior);assert.equal(x.periods['1012'].campaignVolume,2300);assert.equal(x.periods['1012'].source,'official');
+  entry(d,'dashboard_data.cjs');const text=fs.readFileSync(path.join(d,'state/dashboard.json'),'utf8');assert(!text.includes('fixture manual correction'));
+ });
 }finally{fs.rmSync(base,{recursive:true,force:true});}
 
 // Execute the production renderer, including source labels and mismatched static assets.
