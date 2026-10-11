@@ -22,6 +22,18 @@ const results=Array.isArray(activeResults?.results)&&activeResults.results.lengt
 const writeState = read('state/risk_write_status.json');
 const grids = Array.isArray(obs?.gridRows) ? obs.gridRows : [];
 const positions = Array.isArray(obs?.positions) ? obs.positions : [];
+// 持仓时长锚点（网格卡「持仓时长」）：本地自建 since，出现/翻向重置、平仓清除
+const { mergePositionAges, formatAgeMin } = require('./position_age.cjs');
+const posNowMs = Date.now();
+const posAges = (() => {
+  try {
+    const merged = mergePositionAges(read('state/position_age.json'), identity?.accountKey, positions, posNowMs);
+    const tmp = file('state/position_age.json.tmp');
+    fs.writeFileSync(tmp, JSON.stringify(merged.next));
+    fs.renameSync(tmp, file('state/position_age.json'));
+    return merged.ages;
+  } catch { return {}; }
+})();
 const equity = num(obs?.margin?.totalEquity);
 const age = obs?.at ? (Date.now() - Date.parse(obs.at)) / 1000 : null;
 const dataValid = identityValid && !!obs && !obs.error && age !== null && Number.isFinite(age) && age >= -60 && age <= 20 * 60
@@ -99,7 +111,7 @@ const snapshot = {
   change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,
   drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
   riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: num(campaign?.campaignVolume), tier1: 50000, tier1Secured: num(campaign?.campaignVolume) >= 50000 && num(campaign?.campaignVolume) !== null,
-  grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct) })),
+  grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct), posAgeLabel: formatAgeMin(posAges[g.market] != null ? (posNowMs - posAges[g.market]) / 60000 : null) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
   autoExits: { enabled: cfg.autoExitsEnabled === true,
