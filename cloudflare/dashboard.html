@@ -274,7 +274,7 @@ function render(s) {
           ${(x.price != null && x.pnlPct != null && s.dataValid) ? healthRow(x, s) : ""}
           <div class="grow"><span class="k">区间</span><span>${x.rangeLow} ~ ${x.rangeHigh}</span></div>
           <div class="grow"><span class="k">盈亏</span><span class="${pnlCls(Number(x.pnl))}">${Number(x.pnl) >= 0 ? "+" : ""}${fmt(x.pnl)} USD（${fmt(x.pnlPct)}%）</span></div>
-          <div class="grow"><span class="k">持仓时长</span><span>${x.posAgeLabel ?? "空仓"}</span></div>
+          <div class="grow"><span class="k">网格时长</span><span>${x.gridAgeLabel ?? "—"}</span></div>
         </div>`).join("")}
         ${g.length === 0 ? `<div class="muted">空仓（全部轮换出去/主动空仓）</div>` : ""}
       </div>
