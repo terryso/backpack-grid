@@ -1,8 +1,8 @@
 'use strict';
 // grid_age.cjs — 网格时长：以最近一次成功的建格动作（run_events 里 act=create 且
-// done=true、账户匹配）为该网格的「开始」时刻。事件流天然按时间升序，后者覆盖前者
-// 即得当前网格的生日；换仓（停旧建新）自然重置。事件流之前的/交易所侧手动建的网格
-// 无记录，如实显示未知。
+// done=true、账户匹配）为该网格的「开始」时刻。按事件流顺序维护锚点：已确认停止
+// 清除旧锚点，只有新的成功建格才重新起算，避免同币种手动重建后沿用已停止网格的时间。
+// 没有可绑定的建格记录时，如实显示未知。
 
 function latestCreates(events, accountKey) {
   const created = {};
@@ -12,8 +12,9 @@ function latestCreates(events, accountKey) {
     const at = Date.parse(e.at);
     if (!Number.isFinite(at)) continue;
     for (const r of Array.isArray(e.results) ? e.results : []) {
-      if (r && r.act === "create" && r.done === true && typeof r.market === "string" && r.market)
-        created[r.market] = at;
+      if (!r || r.done !== true || typeof r.market !== "string" || !r.market) continue;
+      if (r.act === "create") created[r.market] = at;
+      else if (r.act === "stop") delete created[r.market];
     }
   }
   return created;

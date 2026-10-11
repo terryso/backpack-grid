@@ -1,0 +1,9 @@
+{
+  "scenario": "Confirmed stop after old create; same-market manually recreated grid has no new bot-create event",
+  "baseline": "78f06b4",
+  "expectedAnchor": null,
+  "beforeAnchor": 1791417600000,
+  "afterAnchor": null,
+  "realExchangeCalls": 0,
+  "primaryStateWrites": 0
+}
