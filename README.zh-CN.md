@@ -155,20 +155,25 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 | 重启后网站停更（OBSERVE_FAILED / `space not found: N`） | ego 重启后 task space 会丢，需重建：见下方「ego 空间丢失恢复」 |
 | 重启后巡检全被 `SKIP: round lock held` | 峰值采样进程卡死占锁：`lsof state/round.lock` 找到进程树杀掉（kill python/bash/ego-browser 三个），锁即释放 |
 
-## ego 空间丢失恢复（重启后）
+## ego 空间丢失恢复（症状：网站停更 + `task space not found: N`）
 
-重启或 ego lite 重装后，task space 可能丢失，症状：网站停更、日志报 `OBSERVE_FAILED` + `task space not found: N`。
-恢复流程（可由 AI 全自动执行，仅登录一步需人工）：
+**根因**：ego 会自动回收 **agent（脚本）创建的 task space**——重启、休眠唤醒或日常维护都可能触发回收。
+因此：**Bot 空间必须在 ego lite 界面里手动创建（用户创建的空间是持久的，如主空间历经两次重启仍在），
+自动化只引用它，不要用 `createTaskSpace` 重建**（重建的空间同样会被回收，反复踩坑）。
 
-1. 探测现存空间：派发探针执行 `ego.listTaskSpaces()`；
-2. 重建：`ego.createTaskSpace({ name: "backpack-bot" })`；
-3. 建页签：`const task = await taskSpace(space.id); await task.newPage();`——新页签自动命名 `p1`，与 `config.json` 的 `watch.page` 对应；
-4. 在脚本里 `page.goto("https://backpack.exchange/login")` 打开登录页；
-5. **人工**：在 ego lite 的 `backpack-bot` 空间用 Bot 子账号登录一次（task space 不共享登录 cookies，这一步无法自动化）。**注意**：人工操作会让空间进入「用户接管」态，agent 命令暂停（报 `user has taken control`）——登录完要收回控制权：派发 `const task = await takeOverTaskSpace(spaceId)`；
-6. `config.json` 的 `watch.spaceId` 改为新空间 id，下一轮自愈（或 `launchctl kickstart` 立即验证）。
+恢复流程：
 
-登录探测口径：`page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral")` 返回 200 即已登录、401 即未登录。
-另注意：重启后 peak_probe 可能卡死并持有 `state/round.lock`（症状：巡检全被 `SKIP: round lock held`），先 `lsof state/round.lock` 找到进程树杀掉再做上述步骤。
+1. **人工**：在 ego lite 界面新建一个空间（如命名 `backpack-bot`），打开
+   `https://backpack.exchange` 并用 **Bot 子账号**登录（task space 不共享登录 cookies，这步无法自动化）；
+2. 把新空间的 ID 告诉 AI（或 AI 通过 `ego.listTaskSpaces()` 识别新增的用户空间）；
+3. AI 侧：`config.json` 的 `watch.spaceId` 改为新 ID，`launchctl kickstart` 验证一轮即可。
+
+**注意**：人工操作该空间会进入「用户接管」态（agent 命令报 `user has taken control` 暂停），
+处理完要收回：派发 `const task = await takeOverTaskSpace(spaceId)`。
+**日常纪律**：`backpack-bot` 空间留给自动化，不要在里面手动浏览或关闭它的窗口。
+登录探测口径：`page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral")` → 200 已登录 / 401 未登录。
+另：重启后 peak_probe 可能卡死并持有 `state/round.lock`（症状：巡检全被 `SKIP: round lock held`），
+先 `lsof state/round.lock` 找到进程树杀掉再做上述步骤。
 
 ## 已知引擎 quirk
 
