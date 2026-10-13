@@ -287,7 +287,7 @@ function render(s) {
       </div>
     </div>
     <div class="section">
-      <h2>持仓（${pos.length}）</h2>
+      <h2>持仓（${pos.length}）<span class="muted" style="font-weight:400;font-size:11px">· 收益率按占用保证金</span></h2>
       <div class="gridcards">
         ${pos.map((p) => {
           const pnlNum = Number(String(p.pnl).replace(/[$,]/g, ""));

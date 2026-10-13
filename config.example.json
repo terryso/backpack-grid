@@ -80,7 +80,7 @@
   "autoExitsEnabled": false,
   "breachDwellMin": 10,
   "breachBufferPct": 0.5,
-  "positionStopLossPct": 150,
-  "positionTakeProfitPct": 150,
+  "positionStopLossPct": 100,
+  "positionTakeProfitPct": 75,
   "accountFloorUsd": 0
 }

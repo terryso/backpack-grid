@@ -118,6 +118,9 @@ const positions = positionsRaw.map((p) => {
   const mark = Number(p.markPrice);
   const breakeven = Number(p.breakEvenPrice);
   const pnl = (mark - breakeven) * netQty; // matches UI position pnl incl. sign for shorts
+  // 初始保证金/收益率按账户实际杠杆口径（官网持仓页同款）：名义价值 ÷ 杠杆上限。
+  // position API 的 imf 是市场最大杠杆费率（BTC 75x/其余 20x），不是实际锁定的保证金。
+  const marginBase = Number(p.netExposureNotional) / Math.min(Number(cfg.leverageCap) || 10, Number(account.leverageLimit) || Infinity);
   return {
     market: p.symbol.replace("_USDC_PERP", "-PERP"), symbol: p.symbol,
     side: netQty >= 0 ? "long" : "short",
@@ -125,13 +128,11 @@ const positions = positionsRaw.map((p) => {
     value: "$" + (Number(p.netExposureNotional)).toFixed(2),
     breakeven: String(breakeven), mark: String(mark),
     liq: String(Number(p.estLiquidationPrice)),
-    // 初始保证金按账户实际杠杆口径（官网持仓页同款）：名义价值 ÷ 杠杆上限。
-    // position API 的 imf 是市场最大杠杆费率（BTC 75x/其余 20x），不是实际锁定的保证金。
-    initMargin: "$" + (Number(p.netExposureNotional) / Math.min(Number(cfg.leverageCap) || 10, Number(account.leverageLimit) || Infinity)).toFixed(2),
+    initMargin: "$" + marginBase.toFixed(2),
     funding: (Number(p.cumulativeFundingPayment) >= 0 ? "$" : "-$") + Math.abs(Number(p.cumulativeFundingPayment)).toFixed(2),
     fundingRaw: Number(p.cumulativeFundingPayment),
     pnl: (pnl < 0 ? "-$" : "$") + Math.abs(pnl).toFixed(2),
-    pnlPct: +(pnl / (Number(p.netExposureNotional) * Number(p.imf)) * 100).toFixed(2),
+    pnlPct: +(pnl / marginBase * 100).toFixed(2),
   };
 });
 
