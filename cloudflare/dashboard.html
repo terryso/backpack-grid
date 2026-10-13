@@ -298,6 +298,8 @@ function render(s) {
           return `<div class="gcard">
             <div class="ghead"><span class="gmkt">${p.market}</span><span class="gdir">${p.side === "long" ? "多单" : "空单"} · ${p.size}</span></div>
             <div class="grow"><span class="k">标记价</span><span>${p.mark}</span></div>
+            <div class="grow"><span class="k">仓位价值</span><span>${p.value ?? "—"}</span></div>
+            <div class="grow"><span class="k">占用保证金</span><span>${p.initMargin ?? "—"}</span></div>
             <div class="grow"><span class="k">浮动盈亏</span><span class="${pnlCls(pnlNum)}">${p.pnl} USD${retKnown ? `（${ret >= 0 ? "+" : ""}${ret.toFixed(1)}%）` : ""}</span></div>
             ${autoExitRow(p, s)}
             ${liqDist !== null ? `<div class="grow"><span class="k">距强平</span><span>${liqDist.toFixed(0)}%</span></div>` : ""}
