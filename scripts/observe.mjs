@@ -129,7 +129,12 @@ const positions = positionsRaw.map((p) => {
   const pnl = (mark - breakeven) * netQty; // matches UI position pnl incl. sign for shorts
   // 初始保证金/收益率按账户实际杠杆口径（官网持仓页同款）：名义价值 ÷ 杠杆上限。
   // position API 的 imf 是市场最大杠杆费率（BTC 75x/其余 20x），不是实际锁定的保证金。
-  const marginBase = Number(p.netExposureNotional) / Math.min(Number(cfg.leverageCap) || 10, Number(account.leverageLimit) || Infinity);
+  // Unknown account leverage must not become an assumed leverage for risk exits.
+  // Keep independently known position/price data usable for the other risk rules.
+  const leverageKnown = finiteNumber(account.leverageLimit) && Number(account.leverageLimit) > 0;
+  const marginBase = leverageKnown && finiteNumber(p.netExposureNotional) && Number(p.netExposureNotional) > 0
+    ? Number(p.netExposureNotional) / Math.min(cfg.leverageCap, Number(account.leverageLimit)) : null;
+  const marginKnown = marginBase !== null && Number.isFinite(marginBase) && marginBase > 0;
   return {
     market: p.symbol.replace("_USDC_PERP", "-PERP"), symbol: p.symbol,
     side: netQty >= 0 ? "long" : "short",
@@ -137,11 +142,11 @@ const positions = positionsRaw.map((p) => {
     value: "$" + (Number(p.netExposureNotional)).toFixed(2),
     breakeven: String(breakeven), mark: String(mark),
     liq: String(Number(p.estLiquidationPrice)),
-    initMargin: "$" + marginBase.toFixed(2),
+    initMargin: marginKnown ? "$" + marginBase.toFixed(2) : null,
     funding: (Number(p.cumulativeFundingPayment) >= 0 ? "$" : "-$") + Math.abs(Number(p.cumulativeFundingPayment)).toFixed(2),
     fundingRaw: Number(p.cumulativeFundingPayment),
     pnl: (pnl < 0 ? "-$" : "$") + Math.abs(pnl).toFixed(2),
-    pnlPct: +(pnl / marginBase * 100).toFixed(2),
+    pnlPct: marginKnown ? +(pnl / marginBase * 100).toFixed(2) : null,
   };
 });
 
