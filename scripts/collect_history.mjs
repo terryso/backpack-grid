@@ -23,7 +23,8 @@ try {
 } catch {}
 // Include legacy fee symbols to backfill grids which have already been deleted.
 try { const old = JSON.parse(await fs.readFile(path.join(ROOT, "state/fees.json"), "utf8")); Object.keys(old.symbols || {}).forEach((s) => symbols.add(s)); } catch {}
-const task = await taskSpace(cfg.watch.spaceId);
+const { resolveBotSpace } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+const task = await resolveBotSpace(ego, taskSpace, (m) => console.log("EGO SPACE:", m));
 const browserFile = path.join(ROOT, "state/history_browser.json");
 let browser;
 try { browser = JSON.parse(await fs.readFile(browserFile, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }

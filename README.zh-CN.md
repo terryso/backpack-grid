@@ -158,15 +158,17 @@ state/     运行时数据（gitignored）：observed/actions/act_results/pendin
 ## ego 空间丢失恢复（症状：网站停更 + `task space not found: N`）
 
 **根因**：ego 会自动回收 **agent（脚本）创建的 task space**——重启、休眠唤醒或日常维护都可能触发回收。
-因此：**Bot 空间必须在 ego lite 界面里手动创建（用户创建的空间是持久的，如主空间历经两次重启仍在），
-自动化只引用它，不要用 `createTaskSpace` 重建**（重建的空间同样会被回收，反复踩坑）。
+**自愈机制**：三个 ego 使用方（observe / collect_history / collect_verified_window）统一经
+`scripts/ego_space.cjs` 按名字解析 `backpack-bot` 空间，**空间被回收时自动重建**——
+Backpack 登录 cookies 挂在 profile 上、不随空间消失，重建后无需重新登录。即：空间丢失类停更已自愈，
+无需人工处理（首次接入时的唯一一次人工登录除外）。
 
-恢复流程：
+历史处理流程（备查）：
 
 1. **人工**：在 ego lite 界面新建一个空间（如命名 `backpack-bot`），打开
-   `https://backpack.exchange` 并用 **Bot 子账号**登录（task space 不共享登录 cookies，这步无法自动化）；
-2. 把新空间的 ID 告诉 AI（或 AI 通过 `ego.listTaskSpaces()` 识别新增的用户空间）；
-3. AI 侧：`config.json` 的 `watch.spaceId` 改为新 ID，`launchctl kickstart` 验证一轮即可。
+   `https://backpack.exchange` 并用 **Bot 子账号**登录（登录 cookies 挂 profile，此后空间重建免登录）；
+2. AI 侧确认 `config.json` 的 `watch.spaceId` 指向该空间（当前实现已改为按名解析，此键仅存档）；
+3. `launchctl kickstart` 验证一轮。
 
 **注意**：人工操作该空间会进入「用户接管」态（agent 命令报 `user has taken control` 暂停），
 处理完要收回：派发 `const task = await takeOverTaskSpace(spaceId)`。

@@ -7,7 +7,8 @@ const cfg=JSON.parse(await fs.readFile(path.join(ROOT,'config.json'),'utf8')),id
 const window=validateWindow(JSON.parse(await fs.readFile(path.join(ROOT,'state/verified_window.json'),'utf8')),identity);
 const curve=(await fs.readFile(path.join(ROOT,'state/equity_curve.jsonl'),'utf8')).split('\n').filter(Boolean).map(s=>{try{return JSON.parse(s)}catch{return null}}).filter(Boolean);
 const checkpoint=chooseCheckpoint(curve,window);
-const task=await taskSpace(cfg.watch.spaceId),browserFile=path.join(ROOT,'state/accounting_browser.json');let browser;
+const { resolveBotSpace } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+const task=await resolveBotSpace(ego, taskSpace),browserFile=path.join(ROOT,'state/accounting_browser.json');let browser;
 try{browser=JSON.parse(await fs.readFile(browserFile,'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;}
 let page;if(browser&&browser.spaceId===task.spaceId)page=task.page(browser.page);else{page=await task.newPage();atomic(browserFile,{spaceId:task.spaceId,page:page.label});}
 // 落点放宽（同 observe 9b3f8e6 / collect_history 3d8bfd1）：domcontentloaded + 25s + 超时重试一次——15s load 超时会杀死整个核算轮
