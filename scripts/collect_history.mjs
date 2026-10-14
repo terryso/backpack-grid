@@ -23,16 +23,14 @@ try {
 } catch {}
 // Include legacy fee symbols to backfill grids which have already been deleted.
 try { const old = JSON.parse(await fs.readFile(path.join(ROOT, "state/fees.json"), "utf8")); Object.keys(old.symbols || {}).forEach((s) => symbols.add(s)); } catch {}
-let resolveBotSpace = null;
-try { resolveBotSpace = (await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs")).resolveBotSpace; } catch {}
+const { resolveBotSpace, resolveCollectorPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
 const task = await resolveBotSpace(ego, taskSpace, (m) => console.log("EGO SPACE:", m));
 const browserFile = path.join(ROOT, "state/history_browser.json");
 let browser;
 try { browser = JSON.parse(await fs.readFile(browserFile, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
-let page;
-if (browser && browser.spaceId === task.spaceId) page = task.page(browser.page);
-else {
-  page = await task.newPage();
+const resolved = await resolveCollectorPage(task, browser);
+const page = resolved.page;
+if (resolved.replaced) {
   await fs.writeFile(browserFile, JSON.stringify({ spaceId: task.spaceId, page: page.label }));
 }
 // 落点放宽（同 observe 9b3f8e6）：domcontentloaded + 25s + 超时重试一次——交易页重，15s load 超时会间歇杀死整个采集

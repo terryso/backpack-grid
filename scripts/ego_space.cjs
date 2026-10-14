@@ -34,4 +34,15 @@ async function resolveBotPage(ego, taskSpace, pageLabel, log = () => {}) {
   return { task, page };
 }
 
-module.exports = { resolveBotSpace, resolveBotPage, SPACE_NAME };
+// Dedicated collector tabs may be closed while their space remains alive. A
+// cached label is only usable when it is present in the live page inventory.
+async function resolveCollectorPage(task, cached) {
+  const pages = await task.pages();
+  if (cached && cached.spaceId === task.spaceId && typeof cached.page === 'string'
+    && pages.some(page => page.label === cached.page)) {
+    return { page: task.page(cached.page), replaced: false };
+  }
+  return { page: await task.newPage(), replaced: true };
+}
+
+module.exports = { resolveBotSpace, resolveBotPage, resolveCollectorPage, SPACE_NAME };
