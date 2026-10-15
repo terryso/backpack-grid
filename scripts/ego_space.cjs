@@ -20,4 +20,18 @@ async function resolveBotSpace(ego, taskSpace, log = () => {}) {
   return await taskSpace(made.id);
 }
 
-module.exports = { resolveBotSpace, SPACE_NAME };
+// 空间 + 页签一次解析到位：全新空间没有页签，task.page() 的惰性句柄会在 goto 时才炸——
+// 必须显式创建。新空间的第一个页签自动命名 p1（与 config.watch.page 对应）；
+// 已有页签但无目标标签时复用第一个现有页签。
+async function resolveBotPage(ego, taskSpace, pageLabel, log = () => {}) {
+  const task = await resolveBotSpace(ego, taskSpace, log);
+  let labels = [];
+  try { labels = (await task.pages()).map(p => (typeof p === "string" ? p : p.label ?? p.id)).filter(Boolean); } catch {}
+  if (labels.includes(pageLabel)) return { task, page: task.page(pageLabel) };
+  if (labels.length) { log(`page ${pageLabel} missing — using existing ${labels[0]}`); return { task, page: task.page(labels[0]) }; }
+  const page = await task.newPage();
+  log(`page ${pageLabel} missing — created as ${page.label ?? pageLabel}`);
+  return { task, page };
+}
+
+module.exports = { resolveBotSpace, resolveBotPage, SPACE_NAME };

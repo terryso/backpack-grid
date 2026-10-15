@@ -1,7 +1,7 @@
 'use strict';
 // ego_space.cjs 回归：按名附加 / 缺失自动重建 / 重建失败如实抛错。
 const assert = require('node:assert/strict');
-const { resolveBotSpace, SPACE_NAME } = require('../scripts/ego_space.cjs');
+const { resolveBotSpace, resolveBotPage, SPACE_NAME } = require('../scripts/ego_space.cjs');
 let count = 0; const check = (name, fn) => { fn(); count++; console.log('PASS', name); };
 
 function makeEgo(existing) {
@@ -35,5 +35,43 @@ check('重建失败：如实抛错不吞', async () => {
   const broken = { ego: { async listTaskSpaces() { return { taskSpaces: [] }; }, async createTaskSpace() { /* 建了但列表不出现 */ } },
                    taskSpace: async () => { throw Error('x'); } };
   await assert.rejects(() => resolveBotSpace(broken.ego, broken.taskSpace), /recreate failed/);
+});
+check('resolveBotPage：全新空间自动创建页签（首个自动命名 p1）', async () => {
+  const h = makeEgo([]);
+  const pages = [];
+  const taskSpace = async (id) => ({
+    id,
+    pages: async () => pages.map(l => ({ label: l })),
+    newPage: async () => { const label = 'p' + (pages.length + 1); pages.push(label); return { label }; },
+    page: (label) => { if (!pages.includes(label)) throw Error('page label not found: ' + label); return { label }; },
+  });
+  const { page } = await resolveBotPage(h.ego, taskSpace, 'p1');
+  assert.equal(page.label, 'p1');
+});
+check('resolveBotPage：已有目标页签直接复用，不新建', async () => {
+  let created = 0;
+  const h = makeEgo([{ id: 3, name: SPACE_NAME }]);
+  const taskSpace = async (id) => ({
+    id,
+    pages: async () => [{ label: 'p1' }, { label: 'p2' }],
+    newPage: async () => { created++; return { label: 'p3' }; },
+    page: (label) => ({ label }),
+  });
+  const { page } = await resolveBotPage(h.ego, taskSpace, 'p1');
+  assert.equal(page.label, 'p1');
+  assert.equal(created, 0);
+});
+check('resolveBotPage：有页签但无目标标签时复用第一个', async () => {
+  let created = 0;
+  const h = makeEgo([{ id: 4, name: SPACE_NAME }]);
+  const taskSpace = async (id) => ({
+    id,
+    pages: async () => [{ label: 'work' }],
+    newPage: async () => { created++; return { label: 'p1' }; },
+    page: (label) => ({ label }),
+  });
+  const { page } = await resolveBotPage(h.ego, taskSpace, 'p1');
+  assert.equal(page.label, 'work');
+  assert.equal(created, 0);
 });
 console.log(`${count} ego space scenarios passed`);
