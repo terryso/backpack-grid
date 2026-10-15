@@ -2,16 +2,20 @@
 # Best effort; report transport/readback status separately from trading-round status.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 0
+if [ -f .env ]; then . ./.env; fi
 [ -f state/dashboard.env ] || exit 0
 source state/dashboard.env
+# 上传走直连会被间歇性阻断（合盖唤醒后尤其明显）——显式走 BG_PROXY
+PROXY_ARGS=()
+[ -n "${BG_PROXY:-}" ] && PROXY_ARGS=(-x "$BG_PROXY")
 [ -n "${DASH_URL:-}" ] && [ -n "${DASH_WRITE_TOKEN:-}" ] || exit 0
 node scripts/dashboard_data.cjs >/dev/null 2>&1 || { echo 'dashboard build failed (non-fatal)' >&2; exit 0; }
-HTTP=$(curl -sS -m 15 -o state/dashboard_upload.response.tmp -w '%{http_code}' -X POST "$DASH_URL/api/snapshot" \
+HTTP=$(curl -sS -m 15 "${PROXY_ARGS[@]}" -o state/dashboard_upload.response.tmp -w '%{http_code}' -X POST "$DASH_URL/api/snapshot" \
   -H "x-token: $DASH_WRITE_TOKEN" -H 'content-type: application/json' \
   --data-binary @state/dashboard.json) || HTTP=000
 READBACK=0
 if [ "$HTTP" = '200' ]; then
-  if curl -fsS -m 15 "$DASH_URL/api/snapshot" -o state/dashboard_readback.tmp; then
+  if curl -fsS -m 15 "${PROXY_ARGS[@]}" "$DASH_URL/api/snapshot" -o state/dashboard_readback.tmp; then
     if node -e 'const fs=require("fs");const a=JSON.parse(fs.readFileSync("state/dashboard.json"));const b=JSON.parse(fs.readFileSync("state/dashboard_readback.tmp"));process.exit(a.updatedAt===b.updatedAt && b.generatedAt===a.generatedAt ? 0:1)'; then READBACK=1; fi
   fi
 fi
@@ -31,7 +35,7 @@ JS
 if node scripts/ops_data.cjs >/dev/null 2>&1; then
   OHASH=$(cat state/ops_content_hash 2>/dev/null || shasum -a 256 state/ops.json | awk '{print $1}')
   if [ "$OHASH" != "$(cat state/ops_upload.hash 2>/dev/null || true)" ]; then
-    OHTTP=$(curl -sS -m 20 -o state/ops_upload.response.tmp -w '%{http_code}' -X POST "$DASH_URL/api/ops" \
+    OHTTP=$(curl -sS -m 20 "${PROXY_ARGS[@]}" -o state/ops_upload.response.tmp -w '%{http_code}' -X POST "$DASH_URL/api/ops" \
       -H "x-token: $DASH_WRITE_TOKEN" -H 'content-type: application/json' \
       --data-binary @state/ops.json) || OHTTP=000
     [ "$OHTTP" = "200" ] && printf '%s' "$OHASH" > state/ops_upload.hash
