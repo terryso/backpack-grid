@@ -23,8 +23,8 @@ const { riskStructOk, finiteNumber } = createRequire(path.join(ROOT, "scripts/pe
 if (!riskStructOk(risk)) { console.log("risk.json invalid shape — probe skips (manual recovery)"); process.exit(0); }
 const pkNum = Number(risk.peakEquity);
 
-const task = await taskSpace(cfg.watch?.spaceId || 8);
-const page = task.page(cfg.watch?.page || "p1");
+const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+const { task, page } = await resolveBotPage(ego, taskSpace, cfg.watch?.page || "p1");
 // 确保会话 origin（页面可能被其它流程导航走）
 await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }))); // 资产总览页：有会话 origin，比交易页轻
 await page.waitForTimeout(2500);

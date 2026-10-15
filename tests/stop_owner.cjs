@@ -1,4 +1,5 @@
 'use strict';
+const {dispatchSource,mockEgo,fixtureTask}=require('./ego_fixture.cjs');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cp=require('node:child_process');
 const ROOT=path.join(__dirname,'..');
 const assert=require('node:assert/strict');
@@ -28,9 +29,9 @@ async function run(mode){
   return{status:200,body:JSON.stringify(data)};
  }};
  class Clock extends Date{static now(){clock+=1000;return clock;}}
- let exit=0,error=null;const source=fs.readFileSync(path.join(ROOT,'scripts/act.mjs'),'utf8').replace('const ROOT = "__BG_ROOT__";','const ROOT = '+JSON.stringify(d)+';');
+ let exit=0,error=null;const source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/act.mjs'),'utf8'),d);
  const oldLog=console.log;console.log=()=>{};
- try{await new AsyncFunction('taskSpace','process','Date','console',source)(async()=>({page:()=>page}),{exit:code=>{throw Object.assign(Error('mock exit'),{exit:code});}},Clock,{log:()=>{}});}catch(e){if(e.exit!==undefined)exit=e.exit;else error=e.message;}finally{console.log=oldLog;}
+ try{await new AsyncFunction('ego','taskSpace','process','Date','console',source)(mockEgo(d),async()=>fixtureTask(d,page),{exit:code=>{throw Object.assign(Error('mock exit'),{exit:code});}},Clock,{log:()=>{}});}catch(e){if(e.exit!==undefined)exit=e.exit;else error=e.message;}finally{console.log=oldLog;}
  const pending=fs.existsSync(path.join(d,'state/pending_stops.json'))?JSON.parse(fs.readFileSync(path.join(d,'state/pending_stops.json'))):{};const result=JSON.parse(fs.readFileSync(path.join(d,'state/act_results.json')));
  fs.rmSync(d,{recursive:true,force:true});return{mode,exit,error,patchCount,deleteCount,pendingCount:Object.keys(pending).length,resultStatus:result.status,doneResults:result.results.map(r=>({act:r.act,done:r.done,unconfirmed:r.unconfirmed}))};
 }

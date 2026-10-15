@@ -1,4 +1,5 @@
 'use strict';
+const { dispatchSource, mockEgo, fixtureTask } = require('./ego_fixture.cjs');
 // Target-behavior regressions for all eight audited findings, executing production entries.
 // Every external I/O is mocked; all state lives in disposable temporary directories.
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
@@ -63,9 +64,9 @@ async function actualAct(mode) {
     else throw new Error('unexpected mock endpoint ' + u.pathname);
     return { status: 200, body: JSON.stringify(data) };
   } };
-  const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(dir) + ';');
+  const source = dispatchSource(fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8'), dir);
   let exit = 0;let clock=Date.now();class Clock extends Date{static now(){return clock+=1000;}}
-  try { await new AsyncFunction('taskSpace', 'console', 'process', 'Date', source)(async () => ({ page: () => page }), { log() {} }, { exit: (code) => { throw Object.assign(new Error('mock exit'), { exit: code }); } },Clock); }
+  try { await new AsyncFunction('ego', 'taskSpace', 'console', 'process', 'Date', source)(mockEgo(dir), async () => fixtureTask(dir,page), { log() {} }, { exit: (code) => { throw Object.assign(new Error('mock exit'), { exit: code }); } },Clock); }
   catch (e) { if (e.exit === undefined) {if(mode!=='config-after-validate')throw e;assert.match(e.message,/CONFIG_CHANGED/);exit=2;}else exit = e.exit; }
   const result = get(dir, 'state/act_results.json');
   if(mode==='final-liquidating')assert(result.results.some(r=>r.market==='BTC-PERP'&&r.skipped));
@@ -139,14 +140,14 @@ async function main() {
     else throw new Error('unexpected mock endpoint ' + u.pathname);
     return { status: 200, body: JSON.stringify(data) };
   } };
-  const observeSource = fs.readFileSync(path.join(ROOT, 'scripts/observe.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(dir) + ';');
-  await new AsyncFunction('taskSpace','console','process',observeSource)(async()=>({page:()=>page}),{log(){}},{exit:c=>{throw Error('exit '+c)}});
+  const observeSource = dispatchSource(fs.readFileSync(path.join(ROOT, 'scripts/observe.mjs'), 'utf8'), dir);
+  await new AsyncFunction('ego','taskSpace','console','process',observeSource)(mockEgo(dir),async()=>fixtureTask(dir,page),{log(){}},{exit:c=>{throw Error('exit '+c)}});
   const degraded=get(dir,'state/observed.json');assert.equal(degraded.marketDataAvailable,false);assert.equal(degraded.margin.totalEquity,'$100.00');
   const d=spawnSync(process.execPath,[path.join(ROOT,'scripts/decide.cjs')],{env:{...process.env,BG_ROOT:dir,BG_OFFLINE:'1'},encoding:'utf8'});
   assert.equal(d.status,0);assert(get(dir,'state/risk.json').paused);assert(get(dir,'state/actions.json').some(a=>a.act==='stop'));
   record('N07_public_market_failure_preserves_breaker_and_exits',{paused:true,stop:true});
   marksHealthy = true;
-  await new AsyncFunction('taskSpace', 'console', 'process', observeSource)(async () => ({ page: () => page }), { log() {} }, { exit: (c) => { throw Error('mock exit ' + c); } });
+  await new AsyncFunction('ego', 'taskSpace', 'console', 'process', observeSource)(mockEgo(dir), async () => fixtureTask(dir,page), { log() {} }, { exit: (c) => { throw Error('mock exit ' + c); } });
   const healthyDecision = spawnSync(process.execPath, [path.join(ROOT, 'scripts/decide.cjs')], { env: { ...process.env, BG_ROOT: dir, BG_OFFLINE: '1' }, encoding: 'utf8' });
   assert.equal(healthyDecision.status, 0); assert(get(dir, 'state/risk.json').paused); assert(get(dir, 'state/actions.json').some((a) => a.act === 'stop' && a.market === 'OLD-PERP'));
   rows.at(-1).healthyContrast = { pausedPersisted: true, stopDispatched: true, onlyPublicMarksResponseChanged: true };

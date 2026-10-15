@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { spawnSync } = require('node:child_process');
 const { ROOT, PY } = require('./env.cjs');
+const { dispatchSource, mockEgo, fixtureTask } = require('./ego_fixture.cjs');
 const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json')));
 
 // Pin the knobs these mechanics-tests were written against — the live values are
@@ -49,8 +50,8 @@ async function observe(response) {
   } };
   const raw = fs.readFileSync(path.join(ROOT, 'scripts/observe.mjs'), 'utf8');
   assert(raw.includes('const ROOT = "__BG_ROOT__";'), 'fixture root must replace production placeholder');
-  const source = raw.replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(d) + ';');
-  await new AsyncFunction('taskSpace', 'console', 'process', source)(async () => ({ page: () => page }), { log() {} }, { exit(c) { throw Error('unexpected observe exit ' + c); } });
+  const source = dispatchSource(raw, d);
+  await new AsyncFunction('ego', 'taskSpace', 'console', 'process', source)(mockEgo(d), async () => fixtureTask(d, page), { log() {} }, { exit(c) { throw Error('unexpected observe exit ' + c); } });
   return get(d, 'state/observed.json');
 }
 function decide(official) {

@@ -73,7 +73,9 @@ try{
 // Execute the production renderer, including source labels and mismatched static assets.
 const html=fs.readFileSync(path.join(ROOT,'cloudflare/dashboard.html'),'utf8'),script=html.match(/<script>([\s\S]*?)<\/script>/)[1].split('function markLiked()')[0];
 const elements=new Map(),document={getElementById:id=>{if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:'',classList:{remove(){},toggle(){}}});return elements.get(id);}};
-const ctx={document,window:{},fetch:async()=>({ok:false,status:404})};vm.runInNewContext(script,ctx);ctx.h={current:c2,history:[]};vm.runInNewContext('HIST=h',ctx);
+// The active-campaign fixture must not expire when the wall clock passes Oct 13.
+class CampaignClock extends Date{constructor(...args){super(...(args.length?args:[Date.parse(at)]));}static now(){return Date.parse(at);}}
+const ctx={document,window:{},Date:CampaignClock,fetch:async()=>({ok:false,status:404})};vm.runInNewContext(script,ctx);ctx.h={current:c2,history:[]};vm.runInNewContext('HIST=h',ctx);
 function render(id,volume,source){ctx.s={updatedAt:new Date().toISOString(),equity:500,grids:[],positions:[],pending:[],curve:[],campaignId:id,campaignVolume:volume,campaignSource:source};vm.runInNewContext('render(s)',ctx);return elements.get('content').innerHTML;}
 check('unknown campaign displays pending instead of a false official zero',()=>{const h=render(1012,null,'unknown');assert(h.includes('活动量待核对'));assert(!h.includes('已锁定'));assert(!h.includes('累计 0 USD'));assert(!h.includes('class="bar"'),'unknown progress must not appear complete');});
 check('estimate does not claim official data or secured rewards',()=>{const h=render(1012,10200,'estimated');assert(h.includes('网格账本估算'));assert(!h.includes('已锁定'));assert(!h.includes(' ✓'));});

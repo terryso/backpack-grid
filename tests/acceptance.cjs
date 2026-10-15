@@ -1,4 +1,5 @@
 'use strict';
+const {dispatchSource,mockEgo,fixtureTask}=require('./ego_fixture.cjs');
 // Production behavior tests. All exchange/browser/cloud I/O is mocked; no live grid actions.
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os'), vm = require('node:vm');
@@ -189,8 +190,8 @@ async function main() {
       return { status: 200, body: JSON.stringify(data) };
     } };
     let exit = 0;
-    const source = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8').replace('const ROOT = "__BG_ROOT__";', 'const ROOT = ' + JSON.stringify(d) + ';');
-    try { await new AsyncFunction('taskSpace', 'process', 'Date', 'console', source)(async () => ({ page: () => page }), { exit: (c) => { throw Object.assign(new Error('mock exit'), { exit: c }); } }, Clock, { log: () => {} }); }
+    const source = dispatchSource(fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8'), d);
+    try { await new AsyncFunction('ego', 'taskSpace', 'process', 'Date', 'console', source)(mockEgo(d), async () => fixtureTask(d,page), { exit: (c) => { throw Object.assign(new Error('mock exit'), { exit: c }); } }, Clock, { log: () => {} }); }
     catch (e) { if (e.exit !== undefined) exit = e.exit; else if (mode !== 'stale-plan') throw e; else exit = 2; }
     check('production act lifecycle: ' + mode, () => {
       if (mode === 'success') { assert.equal(exit, 0); assert.equal(autos.length, 2); assert.deepEqual(json(d, 'state/pending_stops.json'), {}); }

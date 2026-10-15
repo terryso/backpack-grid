@@ -1,4 +1,5 @@
 'use strict';
+const {dispatchSource,mockEgo}=require('./ego_fixture.cjs');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict'),zlib=require('node:zlib'),{spawnSync}=require('node:child_process');
 const {chooseBaseline,chooseCheckpoint,validateWindow,collectPeriod,reconcile}=require('../scripts/verified_window.cjs');
 const {hash}=require('../scripts/contracts.cjs');
@@ -51,9 +52,9 @@ async function main(){
   else if(u.pathname.endsWith('/deposits')&&!u.searchParams.has('subaccountId'))data=[{id:99,createdAt:start,status:'confirmed'}];
   return {status:200,body:JSON.stringify(data)};
  }};
- const text=fs.readFileSync(path.join(root,'scripts/collect_verified_window.mjs'),'utf8').replace("const ROOT='__BG_ROOT__'","const ROOT="+JSON.stringify(dir));
+ const text=dispatchSource(fs.readFileSync(path.join(root,'scripts/collect_verified_window.mjs'),'utf8'),dir);
  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
- await new AsyncFunction('taskSpace','console',text)(async()=>({spaceId:cfg.watch.spaceId,page:()=>mocked}),{log(){}});
+ await new AsyncFunction('ego','taskSpace','console',text)(mockEgo(dir),async()=>({spaceId:cfg.watch.spaceId,pages:async()=>[{label:'p4'}],page:()=>mocked}),{log(){}});
  const saved=JSON.parse(fs.readFileSync(path.join(dir,'state/window_accounting.json')));
  check('complete production collector commits coherent report/ledger with only reads',()=>{assert(requests>0);assert.equal(saved.report.netPnl,100);assert(saved.report.decompositionComplete);});
  put(dir,'state/observed.json',{identity,at:new Date().toISOString(),gridRows:[],positions:[],margin:{totalEquity:'600',availableEquity:'500'}});
@@ -65,7 +66,7 @@ async function main(){
  put(dir,'state/window_status.json',{at:new Date().toISOString(),ok:false});assert.equal(dashboard().status,0);published=JSON.parse(fs.readFileSync(path.join(dir,'state/dashboard.json')));
  check('collector failure withdraws fresh-profit confirmation',()=>{assert.equal(published.verifiedWindow.netPnl,null);assert.equal(published.verifiedWindow.cashflowComplete,false);});
  put(dir,'state/verified_window.json',{...window,baseline:{...window.baseline,equity:400}});const validSaved=fs.readFileSync(path.join(dir,'state/window_accounting.json'),'utf8');
- await assert.rejects(()=>new AsyncFunction('taskSpace','console',text)(async()=>({spaceId:cfg.watch.spaceId,page:()=>mocked}),{log(){}}),/baseline.*(changed|binding)/);
+ await assert.rejects(()=>new AsyncFunction('ego','taskSpace','console',text)(mockEgo(dir),async()=>({spaceId:cfg.watch.spaceId,pages:async()=>[{label:'p4'}],page:()=>mocked}),{log(){}}),/baseline.*(changed|binding)/);
  check('existing accounting window cannot silently be rebased',()=>assert.equal(fs.readFileSync(path.join(dir,'state/window_accounting.json'),'utf8'),validSaved));
  const {archiveResearch}=require('../scripts/research_archive.cjs'),input={cfg,markets:[{symbol:'ETH_USDC_PERP'}],tickers:[],samples:{ETH:{klines:[{close:100}],funding:[]}},output:{generatedAt:end,configHash:'fixed',excluded:[]}};
  archiveResearch(dir,input);archiveResearch(dir,input);const index=fs.readFileSync(path.join(dir,'state/research_archive/index.jsonl'),'utf8').trim().split('\n');const item=JSON.parse(index[0]);
