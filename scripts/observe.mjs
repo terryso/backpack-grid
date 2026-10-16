@@ -15,8 +15,17 @@ const identity = expectedIdentity(ROOT, cfg);
 const SUB = cfg.subaccountId ?? 3;
 const API = "https://api.backpack.exchange";
 
-const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
-const { task, page } = await resolveBotPage(ego, taskSpace, cfg.watch.page, (m) => console.log("EGO SPACE:", m));
+// 空间自愈：按名解析+自动重建。占位符 import 仅在 ego 派发上下文可解析——
+// 非 ego 上下文（如测试内联执行）自动回退直连路径，行为与自愈上线前一致。
+let resolveBotPage = null;
+try { resolveBotPage = (await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs")).resolveBotPage; } catch {}
+let task, page;
+if (resolveBotPage) {
+  ({ task, page } = await resolveBotPage(ego, taskSpace, cfg.watch.page, (m) => console.log("EGO SPACE:", m)));
+} else {
+  task = await taskSpace(cfg.watch.spaceId);
+  page = task.page(cfg.watch.page);
+}
 // any backpack.exchange page provides the session origin; trade page also lets us
 // cross-check the DOM when needed
 await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }))); // 资产总览页：有会话 origin，比交易页轻得多
