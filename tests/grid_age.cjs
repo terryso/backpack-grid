@@ -46,7 +46,7 @@ check('畸形行不抛错', () => {
 check('时长格式化：分钟/小时/天与未知值', () => {
   assert.equal(formatAgeMin(30), '30 分钟');
   assert.equal(formatAgeMin(90), '1.5 小时');
-  assert.equal(formatAgeMin(60 * 72), '3 天 0 小时');
+  assert.equal(formatAgeMin(60 * 72), '3 天 0 小时'); assert.equal(formatAgeMin(60 * 71.9), '3 天 0 小时');
   assert.equal(formatAgeMin(null), null);
   assert.equal(formatAgeMin(-5), null);
 });

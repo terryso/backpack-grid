@@ -26,7 +26,9 @@ function formatAgeMin(min) {
   if (!Number.isFinite(v) || v < 0) return null;
   if (v < 60) return Math.round(v) + " 分钟";
   if (v < 60 * 48) return (v / 60).toFixed(1) + " 小时";
-  return Math.floor(v / 1440) + " 天 " + Math.round((v / 60) % 24) + " 小时";
+  // 先在小时级取整再拆天，避免「2 天 24 小时」这类进位泄漏
+  const hours = Math.round(v / 60);
+  return Math.floor(hours / 24) + " 天 " + (hours % 24) + " 小时";
 }
 
 module.exports = { latestCreates, formatAgeMin };
