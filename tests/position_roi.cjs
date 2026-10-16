@@ -1,4 +1,5 @@
 'use strict';
+const {dispatchSource,mockEgo,fixtureTask}=require('./ego_fixture.cjs');
 // Whole production observe -> decide, mocked session I/O and disposable state only.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {spawnSync}=require('node:child_process');
@@ -29,8 +30,8 @@ async function run(leverage,pnl=10,notional=100,options={}){
    else throw Error('Unexpected fixture endpoint '+p);
    return{status:200,body:JSON.stringify(body)};
   }};
-  const source=fs.readFileSync(path.join(ROOT,'scripts/observe.mjs'),'utf8').replace('const ROOT = "__BG_ROOT__";','const ROOT = '+JSON.stringify(d)+';');
-  await new AsyncFunction('taskSpace','console','process',source)(async()=>({page:()=>page}),{log(){}},{exit(c){throw Error('Unexpected fixture observe exit '+c);}});
+  const source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/observe.mjs'),'utf8'),d);
+  await new AsyncFunction('ego','taskSpace','console','process',source)(mockEgo(d),async()=>fixtureTask(d,page),{log(){}},{exit(c){throw Error('Unexpected fixture observe exit '+c);}});
   const observed=JSON.parse(fs.readFileSync(path.join(d,'state/observed.json')));
   if(options.matureBreach)put('state/breach_dwell.json',{accountKey:identity.accountKey,markets:{'ETH-PERP':{side:'low',since:new Date(Date.parse(observed.at)-15*60000).toISOString()}}});
   const result=spawnSync(process.execPath,[path.join(ROOT,'scripts/decide.cjs')],{env:{...process.env,PY_BIN:PY,BG_ROOT:d,BG_OFFLINE:'1',BG_PHASE:'',NODE_OPTIONS:'--require '+JSON.stringify(path.join(ROOT,'tests/no_network.cjs'))},encoding:'utf8',timeout:15000});
