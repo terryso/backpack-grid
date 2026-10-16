@@ -54,6 +54,22 @@ keepawake = {"Label": "com.backpack-grid-keepawake",
              "RunAtLoad": False, "KeepAlive": True,
              "StandardOutPath": str(ROOT / "state" / "com.backpack-grid-keepawake.log"),
              "StandardErrorPath": str(ROOT / "state" / "com.backpack-grid-keepawake.log")}
+# Daily README screenshot sync: captures the live dashboard at 09:00 local and
+# commits/pushes docs/dashboard.png when it changed (see capture_dashboard_shot.sh).
+daily_shot = {"Label": "com.backpack-grid-shot",
+              "ProgramArguments": ["/bin/bash", str(ROOT / "scripts" / "capture_dashboard_shot.sh")],
+              "WorkingDirectory": str(ROOT), "StartCalendarInterval": {"Hour": 9, "Minute": 0},
+              "RunAtLoad": False,
+              "StandardOutPath": str(ROOT / "state" / "com.backpack-grid-shot.log"),
+              "StandardErrorPath": str(ROOT / "state" / "com.backpack-grid-shot.log"),
+              "EnvironmentVariables": {"PATH": launchd_path()}}
+if "--install" in sys.argv:
+    shot_file = DEST / "com.backpack-grid-shot.plist"
+    tmp = DEST / (shot_file.name + ".tmp")
+    tmp.write_bytes(plistlib.dumps(daily_shot))
+    os.replace(tmp, shot_file)
+    print(json.dumps({"path": str(shot_file), **daily_shot}, ensure_ascii=False))
+
 if "--install" in sys.argv:
     keep_file = DEST / "com.backpack-grid-keepawake.plist"
     tmp = DEST / (keep_file.name + ".tmp")
