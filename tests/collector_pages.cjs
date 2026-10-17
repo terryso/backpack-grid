@@ -1,6 +1,8 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const {dispatchSource,mockEgo}=require('./ego_fixture.cjs');
+const {PY}=require('./env.cjs');
+process.env.PY_BIN=PY; // 被测源码经 process.env.PY_BIN 解析解释器（占位符守卫依赖它）
 const {chooseBaseline}=require('../scripts/verified_window.cjs');
 const ROOT=path.join(__dirname,'..'),AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 async function run(kind,mode){
