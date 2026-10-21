@@ -97,10 +97,10 @@ act       风险退出先行执行（停止网格→等仓位平掉→删除）�
 
 ## 交易量活动追踪（Mystery Box）
 
-第三期（campaignId 1014）窗口 2026-10-14 ~ 10-20（UTC，7 天）：档位 10k→1 盒、50k→2 盒、
+第四期（campaignId 1015）窗口 2026-10-21 ~ 10-27（UTC，7 天）：档位 10k→1 盒、50k→2 盒、
 150k→3 盒、300k→4 盒、600k→5 盒，之后每 500k 一盒、封顶 5.6M/15 盒。原生网格机器人成交计入
 （官方排除 API 交易/强平等，官方数据每小时更新）。每轮日志与仪表盘输出进度；
-档期/档位/期号单文件维护在 `cloudflare/assets/campaign-history.json`（含历期归档）。
+档期/档位/期号单文件维护在 `cloudflare/assets/campaign-history.json`（含历期归档，最新在前）。
 
 
 ## 状态仪表盘（Cloudflare Worker + KV）
