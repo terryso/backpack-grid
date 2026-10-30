@@ -85,6 +85,7 @@ const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.re
 // import.meta.url is an eval artifact under the ego-browser runner — anchor the require
 // base to the real file location (round-7 #1: MODULE_NOT_FOUND before any action)
 const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
+const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
 
 async function currentMark(symbol) {
   const marks = await jget("/api/v1/markPrices");
@@ -264,9 +265,23 @@ for (const a of actions) {
           takeProfitPercentage: cfg.takeProfitPct, stopLossPercentage: cfg.stopLossPct,
         };
         // validate is side-effect-free: explicit rejections here must NOT leave a
-        // create intent behind (it would make the next round delete an existing grid)
+        // create intent behind (it would make the next round delete an existing grid).
+        // 确定性拒绝分两种，都视为市场不可行并写入降级表（decide 24h 内跳过，期满自动重试）：
+        // 422 不透明拒绝（网格参数被拒）/ 200+errorField 结构化错误——200 不代表通过
+        // （kPEPE minAllocation 墙就是这种形态）。网络/5xx 类失败不降级：偶发故障不是不可行。
         const v = await jpost(`/wapi/v1/subaccount/${SUB}/automation/validate`, { params: { ...base, enabled: true } });
-        if (v.status !== 200) throw new Error(`create ${a.market}: validate rejected ${v.status} ${v.body}`);
+        let vErr = null;
+        if (v.status !== 200) vErr = `validate rejected ${v.status} ${String(v.body).slice(0, 120)}`;
+        else {
+          let vb = null;
+          try { vb = JSON.parse(v.body); } catch {}
+          if (!vb || typeof vb !== "object") throw new Error(`create ${a.market}: validate response unreadable: ${String(v.body).slice(0, 80)}`);
+          if (vb.errorField) vErr = `infeasible: ${vb.errorField}: ${vb.errorMessage}`;
+        }
+        if (vErr) {
+          writeDemotion(ROOT, identity.accountKey, a.market, vErr);
+          throw new Error(`create ${a.market}: ${vErr} — market demoted for 24h`);
+        }
         // WRITE-AHEAD create intent, immediately before the first side-effecting request:
         // from here the grid is in an unconfirmed state; the ledger entry keeps that visible
         // (blocks new risk, drives next-round cleanup) until full confirmation or verified

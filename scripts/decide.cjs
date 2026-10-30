@@ -12,6 +12,7 @@ const { getTickers } = require("./api.cjs");
 const { riskStructOk, pendingStructOk, finiteNumber, money, plainObject } = require("./state_schema.cjs");
 const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
+const { loadInfeasible } = require("./infeasible.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -425,10 +426,15 @@ const writeAtomic = (p, data) => {
     let plannedMargin = 0;
     const ecoCount = {};
     for (const m of remaining) ecoCount[ecoOf(m)] = (ecoCount[ecoOf(m)] || 0) + 1;
+    // 不可行降级表（act 在建格 validate 被确定性拒绝后写入）：降级期内该市场不进候选，
+    // 次优候选顶上；期满自动重新入围（可行则建格，仍不可行则再降）。
+    const infeasible = loadInfeasible(ROOT, identity.accountKey);
     if (ana) for (const cand of ana.top) {
       if (created >= slots) break;
       const mkt = cand.symbol.replace("_USDC_PERP", "-PERP");
       if (grids.some((g) => g.market === mkt) || remaining.includes(mkt) || stops.includes(mkt)) continue;
+      const demoted = infeasible[mkt];
+      if (demoted) { lines.push(`PLAN skip ${mkt}: infeasible until ${demoted.until} (${demoted.reason})`); continue; }
       const latestTicker = tmap?.get(cand.symbol);
       if (!finiteNumber(latestTicker?.quoteVolume) || Number(latestTicker.quoteVolume) < cfg.minQvol24h) { lines.push(`PLAN skip ${mkt}: liquidity below configured minimum or unknown`); continue; }
       if (!Number.isFinite(priceOf(mkt))) { lines.push(`PLAN skip ${mkt}: current price unknown`); continue; }
