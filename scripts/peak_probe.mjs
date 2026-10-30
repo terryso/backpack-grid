@@ -24,10 +24,8 @@ if (!riskStructOk(risk)) { console.log("risk.json invalid shape — probe skips 
 const pkNum = Number(risk.peakEquity);
 
 const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+// resolveBotPage 保证页面停在资产总览页（会话 origin 就绪），稳态零导航零等待
 const { task, page } = await resolveBotPage(ego, taskSpace, cfg.watch?.page || "p1");
-// 确保会话 origin（页面可能被其它流程导航走）
-await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }))); // 资产总览页：有会话 origin，比交易页轻
-await page.waitForTimeout(2500);
 const r = await page.fetch(`https://api.backpack.exchange/wapi/v1/portfolio/collateral`, { credentials: "include", timeout: 15000 });
 const col = JSON.parse(r.body);
 if(r.status!==200)throw Error("collateral unavailable");

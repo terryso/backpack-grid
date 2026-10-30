@@ -26,10 +26,8 @@ if (resolveBotPage) {
   task = await taskSpace(cfg.watch.spaceId);
   page = task.page(cfg.watch.page);
 }
-// any backpack.exchange page provides the session origin; trade page also lets us
-// cross-check the DOM when needed
-await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }))); // 资产总览页：有会话 origin，比交易页轻得多
-await page.waitForTimeout(4000);
+// 单页签纪律：resolveBotPage 已保证页面停在资产总览页（会话 origin 就绪），
+// 稳态零导航零等待——以下全部数据获取都是带 cookie 的 page.fetch。
 
 async function jget(pathname) {
   // 瞬时网络抖动（超时/连接重置）重试一次，磨掉单次失败导致的整轮 observe 失败

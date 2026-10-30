@@ -69,12 +69,13 @@ async function main(){
  test('repeated full page cannot masquerade as progress',()=>{assert(!source.complete);assert.match(source.error,/no progress/);assert.equal(source.rows.length,1000);});
  source=await collectSource(identity,async()=>full,async()=>{},1000);test('source pagination cap is an explicit failure',()=>{assert(!source.complete);assert.match(source.error,/limit/);});
  let checks=0;source=await collectSource(identity,async()=>[],async()=>{if(++checks===2)throw Error('owner switched');});test('session loss at final confirmation invalidates source completion',()=>assert(!source.complete));
- const raw=fixture();put(raw,'state/history_browser.json',{spaceId:51,page:'p2'});const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
- const sourceCode=fs.readFileSync(path.join(ROOT,'scripts/collect_attribution.mjs'),'utf8').replace("const ROOT='__BG_ROOT__';","const ROOT="+JSON.stringify(raw)+";");
- let foreign=false;const page={fetch:async url=>({status:200,body:JSON.stringify(url.includes('/collateral')?{[foreign?'other-3':'fixture-3']:{netEquity:1000}}:[{id:'row',subaccountId:3,userId:'fixture'}])})};
- await new AsyncFunction('taskSpace','console',sourceCode)(async()=>({page:()=>page}),{log(){}});const savedSource=fs.readFileSync(path.join(raw,'state/attribution_sources.json'),'utf8');
+ const raw=fixture();const {dispatchSource,mockEgo}=require('./ego_fixture.cjs');const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+ const sourceCode=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/collect_attribution.mjs'),'utf8'),raw);
+ let foreign=false;const page={url:async()=>'https://backpack.exchange/portfolio/balances/assets',goto:async()=>{},waitForTimeout:async()=>{},fetch:async url=>({status:200,body:JSON.stringify(url.includes('/collateral')?{[foreign?'other-3':'fixture-3']:{netEquity:1000}}:[{id:'row',subaccountId:3,userId:'fixture'}])})};
+ const attribTask={spaceId:7,pages:async()=>[{label:'p1'}],page:()=>page,newPage:async()=>{throw Error('unexpected fixture page creation');}};
+ await new AsyncFunction('ego','taskSpace','console',sourceCode)(mockEgo(raw),async()=>attribTask,{log(){}});const savedSource=fs.readFileSync(path.join(raw,'state/attribution_sources.json'),'utf8');
  test('production raw source entry persists all sources with bound identity',()=>{const s=JSON.parse(savedSource);assert.equal(s.identity.accountKey,identity.accountKey);assert(Object.values(s.sources).every(r=>r.complete));});
- foreign=true;await assert.rejects(()=>new AsyncFunction('taskSpace','console',sourceCode)(async()=>({page:()=>page}),{log(){}}),/IDENTITY/);
+ foreign=true;await assert.rejects(()=>new AsyncFunction('ego','taskSpace','console',sourceCode)(mockEgo(raw),async()=>attribTask,{log(){}}),/IDENTITY/);
  test('production raw source entry preserves previous evidence on owner loss',()=>assert.equal(fs.readFileSync(path.join(raw,'state/attribution_sources.json'),'utf8'),savedSource));
  const riskBefore=fs.readFileSync(path.join(held,'state/risk.json'),'utf8');
  const unboundWriter=spawnSync(PY,[path.join(ROOT,'scripts/risk_write.py'),JSON.stringify({peakEquity:99999})],{env:{...process.env,BG_ROOT:held},encoding:'utf8'});

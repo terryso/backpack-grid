@@ -47,12 +47,10 @@ async function persistResults(status="executing") { await assertExecutionLease()
 await persistResults("executing");
 if (!actions.length) { console.log("no actions"); process.exit(0); }
 
-// 空间按名解析+自动重建（ego 会回收 agent 空间；登录 cookies 挂 profile，重建免登录）
+// 空间按名解析+自动重建（ego 会回收 agent 空间；登录 cookies 挂 profile，重建免登录）。
+// resolveBotPage 保证页面停在资产总览页（会话 origin 就绪），稳态零导航零等待。
 const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
 const { page } = await resolveBotPage(ego, taskSpace, cfg.watch.page, (m) => console.log("EGO SPACE:", m));
-// session origin
-await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 }))); // 资产总览页：有会话 origin，比交易页轻
-await page.waitForTimeout(4000);
 
 async function jget(pathname) {
   const r = await page.fetch(API + pathname, { credentials: "include", timeout: 15000 });

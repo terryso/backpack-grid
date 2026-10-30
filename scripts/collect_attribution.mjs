@@ -4,7 +4,10 @@ const ROOT='__BG_ROOT__';const requireLocal=createRequire(path.join(ROOT,'script
 const {expectedIdentity,collateralFor,atomic}=requireLocal('./contracts.cjs');
 const {collectSource}=requireLocal('./attribution_sources.cjs');
 const cfg=JSON.parse(await fs.readFile(path.join(ROOT,'config.json'),'utf8')),identity=expectedIdentity(ROOT,cfg);
-const browser=JSON.parse(await fs.readFile(path.join(ROOT,'state/history_browser.json'),'utf8'));const task=await taskSpace(browser.spaceId);const page=task.page(browser.page);
+// 单页签纪律：与 observe/act/peak 共用常驻页签（p1，资产总览页），只做带 cookie 的
+// API fetch——不再读浏览器缓存文件、不再按旧 spaceId 硬编码附加。
+const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+const { page } = await resolveBotPage(ego, taskSpace, cfg.watch.page, (m) => console.log("EGO SPACE:", m));
 async function accountCheck(){const r=await page.fetch('https://api.backpack.exchange/wapi/v1/portfolio/collateral',{credentials:'include',timeout:15000});if(r.status!==200)throw Error('account read unavailable');collateralFor(JSON.parse(r.body),identity);}
 const asOf=new Date().toISOString(),sources={};
 for(const [kind,endpoint] of Object.entries({funding:'/wapi/v1/history/funding',interest:'/wapi/v1/history/interest',positions:'/wapi/v1/history/position',deposits:'/wapi/v1/capital/deposits',withdrawals:'/wapi/v1/capital/withdrawals'})) {

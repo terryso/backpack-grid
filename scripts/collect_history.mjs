@@ -23,19 +23,10 @@ try {
 } catch {}
 // Include legacy fee symbols to backfill grids which have already been deleted.
 try { const old = JSON.parse(await fs.readFile(path.join(ROOT, "state/fees.json"), "utf8")); Object.keys(old.symbols || {}).forEach((s) => symbols.add(s)); } catch {}
-const { resolveBotSpace, resolveCollectorPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
-const task = await resolveBotSpace(ego, taskSpace, (m) => console.log("EGO SPACE:", m));
-const browserFile = path.join(ROOT, "state/history_browser.json");
-let browser;
-try { browser = JSON.parse(await fs.readFile(browserFile, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; }
-const resolved = await resolveCollectorPage(task, browser);
-const page = resolved.page;
-if (resolved.replaced) {
-  await fs.writeFile(browserFile, JSON.stringify({ spaceId: task.spaceId, page: page.label }));
-}
-// 落点放宽（同 observe 9b3f8e6）：domcontentloaded + 25s + 超时重试一次——交易页重，15s load 超时会间歇杀死整个采集
-await page.goto(cfg.tradeUrlBase + "SOL_USD_PERP", { waitUntil: "domcontentloaded", timeout: 25000 }).catch(() => page.waitForTimeout(3000).then(() => page.goto(cfg.tradeUrlBase + "SOL_USD_PERP", { waitUntil: "domcontentloaded", timeout: 25000 })));
-await page.waitForTimeout(2500);
+// 单页签纪律：与 observe/act/peak 共用常驻页签（p1，资产总览页），不再维护独立页签
+// 与浏览器缓存文件。历史填充同样来自 fills API（page.fetch），只需要会话 origin。
+const { resolveBotPage } = await import("file://" + "__BG_ROOT__" + "/scripts/ego_space.cjs");
+const { page } = await resolveBotPage(ego, taskSpace, cfg.watch.page, (m) => console.log("EGO SPACE:", m));
 async function checkAccount() { const r=await page.fetch("https://api.backpack.exchange/wapi/v1/portfolio/collateral",{credentials:"include",timeout:15000});if(r.status!==200)throw Error("collateral unavailable");collateralFor(JSON.parse(r.body),identity); }
 await checkAccount();
 const sampledAt=Date.now();

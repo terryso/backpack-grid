@@ -16,7 +16,7 @@ async function run(mode){
   put('state/actions_meta.json',{runId,planId:'plan-'+mode,identity,at,configHash:hash(cfg),actionsHash:hash(actions),riskWriteOk:true,subaccountId:3});
   const sid=mode==='replaced-space'?9:7,labels=mode==='missing-primary'?['p4']:mode==='empty-space'?[]:['p1'];
   let deletes=0,patches=0,created=0,autos=[{symbol:'ETH_USDC_PERP',enabled:true,allocationUsd:100,priceLow:90,priceHigh:110,levels:20,direction:'Neutral',takeProfitPercentage:10,stopLossPercentage:6,closePositionsOnStop:true}];const navigation=[];
-  const pageFor=label=>({label,async goto(){if(!labels.includes(label))throw Error('page label not found: '+label);navigation.push(label);},async waitForTimeout(){},async fetch(url,options={}){
+  const pageFor=label=>({label,async url(){return 'https://backpack.exchange/portfolio/balances/assets';},async goto(){if(!labels.includes(label))throw Error('page label not found: '+label);navigation.push(label);},async waitForTimeout(){},async fetch(url,options={}){
    if(!labels.includes(label))throw Error('page label not found: '+label);
    const u=new URL(url);let body;
    if(options.method==='PATCH'){patches++;const op=JSON.parse(options.body).params.symbols[0];if(op.operation==='Delete'){deletes++;autos=[];}else autos=[op];return{status:200,body:'{}'};}

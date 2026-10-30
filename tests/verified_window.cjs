@@ -44,8 +44,8 @@ async function main(){
  assert.equal(init().status,0);const before=fs.readFileSync(path.join(dir,'state/verified_window.json'),'utf8');assert.equal(init().status,0);
  check('production init is idempotent and preserves original baseline/config/history',()=>{assert.equal(fs.readFileSync(path.join(dir,'state/verified_window.json'),'utf8'),before);assert.equal(fs.readFileSync(path.join(dir,'config.json'),'utf8'),oldConfig);assert.equal(fs.readFileSync(path.join(dir,'state/equity_curve.jsonl'),'utf8'),oldCurve);});
  // Full production collector entry with mock session I/O; every request must be GET.
- put(dir,'state/accounting_browser.json',{spaceId:cfg.watch.spaceId,page:'p4'});let requests=0;
- const mocked={goto:async()=>{},fetch:async(url,options={})=>{assert.equal(options.method??'GET','GET');requests++;const u=new URL(url);let data=[];
+ let requests=0;
+ const mocked={url:async()=>'https://backpack.exchange/portfolio/balances/assets',goto:async()=>{},waitForTimeout:async()=>{},fetch:async(url,options={})=>{assert.equal(options.method??'GET','GET');requests++;const u=new URL(url);let data=[];
   if(u.pathname.endsWith('/collateral'))data={'fixture-3':{netEquity:'1000'}};
   else if(u.pathname.endsWith('/funding'))data=capture().sources.funding.rows;
   else if(u.pathname.endsWith('/interest'))data=u.searchParams.has('subaccountId')?capture().sources.interest.rows:[{...capture().sources.interest.rows[0],positionId:'main'}];
