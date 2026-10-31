@@ -65,7 +65,10 @@ async function jpatch(pathname, body) {
     method: "PATCH", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  return { status: r.status, body: String(r.body).slice(0, 300) };
+  // 响应体不截断：validate 的 errorField 可能排在 gridStep/orders 等 echo 字段之后，
+  // 截断会产生残缺 JSON——UNI 事件：合法建格被误判 unreadable、每轮失败且永不降级。
+  // 限长在各打印点完成。
+  return { status: r.status, body: String(r.body) };
 }
 async function jpost(pathname, body) {
   await assertExecutionLease();
@@ -75,7 +78,10 @@ async function jpost(pathname, body) {
     method: "POST", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   });
-  return { status: r.status, body: String(r.body).slice(0, 300) };
+  // 响应体不截断：validate 的 errorField 可能排在 gridStep/orders 等 echo 字段之后，
+  // 截断会产生残缺 JSON——UNI 事件：合法建格被误判 unreadable、每轮失败且永不降级。
+  // 限长在各打印点完成。
+  return { status: r.status, body: String(r.body) };
 }
 const getAutomation = () => jget(`/wapi/v1/subaccount/${SUB}/automation`);
 const symOf = (market) => market.replace("-PERP", "_USDC_PERP");

@@ -69,6 +69,9 @@ test('act demotion precedes the write-ahead create intent', () => {
   const intent = actSrc.indexOf('WRITE-AHEAD create intent');
   assert(demote !== -1 && intent !== -1 && demote < intent);
 });
+test('exchange responses are never truncated before parsing (UNI incident: legal create misread as unreadable)', () => {
+  assert(!actSrc.includes('slice(0, 300)'));
+});
 test('decide skips demoted markets before any other candidate gate', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts/decide.cjs'), 'utf8');
   assert(src.includes('loadInfeasible(ROOT, identity.accountKey)'));
