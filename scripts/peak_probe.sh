@@ -6,7 +6,9 @@ if [ -f .env ]; then . ./.env; fi
 export PATH="${NODE_BIN:+$(dirname "$NODE_BIN"):}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 mkdir -p state
 # 卡死自愈（10-24 事故：探针 ego 挂起无限等待、占 round.lock 数小时，巡检全 SKIP）：
-# 上一次采样进程树存活超过 180 秒即清理——ego 挂起无内建超时，必须在包装层兜底
+# 上一次采样进程树存活超过 180 秒即清理——ego 挂起无内建超时，必须在包装层兜底。
+# 注意：本任务挂死时 launchd（StartInterval 单实例）不会重启本脚本，此处看门狗不会
+# 执行——真正的兜底是 round_locked.sh 里的跨任务副本（monitor 独立触发，11-04 事故）。
 for pid in $(pgrep -f 'ego_dispatch[.]sh scripts/peak_probe' 2>/dev/null); do
   el=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d ' ')
   if [ -n "$el" ] && [ "$el" -gt 180 ]; then
