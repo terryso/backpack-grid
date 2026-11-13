@@ -13,6 +13,7 @@ const { riskStructOk, pendingStructOk, finiteNumber, money, plainObject } = requ
 const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
 const { loadInfeasible } = require("./infeasible.cjs");
+const { directionFor } = require("./grid_direction.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -467,17 +468,19 @@ const writeAtomic = (p, data) => {
       if (value < 500) { lines.push(`SKIP create ${mkt}: available equity ${(numAvail - plannedMargin).toFixed(0)} too low`); break; }
       const sizedGrid = sizeGrid(cand, value);
       if (!sizedGrid) { lines.push(`SKIP create ${mkt}: final allocation cannot support exchange minimum order size`); continue; }
+      const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
       plannedMargin += marginEstimate(value,marginCfg,cand.imfFunction);
       plannedRisk += value * (wantSL / 100);
       actions.push({
         act: "create", market: mkt, urlSymbol: cand.symbol.replace("_USDC_PERP", "_USD_PERP"),
         lower: sizedGrid.lower, upper: sizedGrid.upper, count: sizedGrid.count, value,
+        direction: dir,
         why: `score=${cand.score} chop=${cand.chop} r24=${cand.range24}% qvol=$${Math.round(cand.qvol24 / 1000)}k`,
       });
       remaining.push(mkt);
       ecoCount[eco] = (ecoCount[eco] || 0) + 1;
       created++;
-      lines.push(`PLAN create ${mkt} ${cand.grid.lower}~${cand.grid.upper} x${cand.grid.count} $${value} (score=${cand.score} chop=${cand.chop} qvol=$${Math.round(cand.qvol24 / 1000)}k; risk ${usedRisk.toFixed(0)}+${(value * wantSL / 100).toFixed(0)}/${budget.toFixed(0)})`);
+      lines.push(`PLAN create ${mkt} ${cand.grid.lower}~${cand.grid.upper} x${cand.grid.count} $${value} dir=${dir} (score=${cand.score} chop=${cand.chop} qvol=$${Math.round(cand.qvol24 / 1000)}k; risk ${usedRisk.toFixed(0)}+${(value * wantSL / 100).toFixed(0)}/${budget.toFixed(0)})`);
     }
   } else if (slots > 0 && stops.length > 0 && !mayCreate) {
     lines.push(`PLAN hold: new grids blocked (breaker=${breaker || "off"}, riskCorrupt=${riskCorrupt}, tickersOk=${tickersOk}, pendingStops=${Object.keys(pending).length}) — freed slots stay empty this round`);

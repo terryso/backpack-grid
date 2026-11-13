@@ -55,7 +55,8 @@ function gridConfigConfirmed(entry,plan) {
   return plainObject(entry) && entry.symbol===plan.market.replace('-PERP','_USDC_PERP')
     && ['allocationUsd','priceLow','priceHigh','levels'].every(k=>finiteNumber(entry[k]))
     && Number(entry.allocationUsd)===Number(plan.value) && Number(entry.priceLow)===Number(plan.lower) && Number(entry.priceHigh)===Number(plan.upper)
-    && Number(entry.levels)===Number(plan.count) && entry.enabled===true && entry.direction==='Neutral';
+    && Number(entry.levels)===Number(plan.count) && entry.enabled===true
+    && entry.direction===(plan.direction||'Neutral'); // 手动方向指令：Long/Short 格按计划方向确认，不硬编码 Neutral
 }
 function gridConfirmed(entry,plan,cfg) { return gridConfigConfirmed(entry,plan)
     && finiteNumber(entry.takeProfitPercentage)&&finiteNumber(entry.stopLossPercentage)

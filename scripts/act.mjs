@@ -92,6 +92,7 @@ const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.re
 // base to the real file location (round-7 #1: MODULE_NOT_FOUND before any action)
 const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
 const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
+const { directionFor } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
 
 async function currentMark(symbol) {
   const marks = await jget("/api/v1/markPrices");
@@ -262,11 +263,15 @@ for (const a of actions) {
         const mark = await currentMark(symbol);
         if (!Number.isFinite(Number(mark)) || Number(mark) <= 0) throw new Error(`create ${a.market}: no mark price`);
         if(Number(mark)<Number(a.lower)||Number(mark)>Number(a.upper))throw Error("current mark outside proposed grid range");
+        // 手动方向指令（state/direction_override.json，grid_direction.cjs set）：
+        // Long=只在下方挂买单 / Short=只在上方挂卖单 / Neutral=双向（默认）。
+        // 写回 action 使确认比对（gridConfigConfirmed）与载荷一致；其余逻辑零改动。
+        a.direction = directionFor(ROOT, identity.accountKey, a.market);
         const base = {
           strategyType: "Grid", symbol,
           priceLow: String(a.lower), priceHigh: String(a.upper),
           levels: Number(a.count), allocationUsd: String(a.value),
-          closePositionsOnStop: true, direction: "Neutral",
+          closePositionsOnStop: true, direction: a.direction,
           // exchange-side backstops must be set AT creation, not patched afterwards
           takeProfitPercentage: cfg.takeProfitPct, stopLossPercentage: cfg.stopLossPct,
         };
