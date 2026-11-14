@@ -15,7 +15,22 @@ async function resolveBotSpace(ego, taskSpace, log = () => {}) {
   const spaces = await ego.listTaskSpaces();
   const hit = spaces.taskSpaces.find(s => s.name === SPACE_NAME);
   if (hit) {
-    try { return await taskSpace(hit.id); } catch (e) { log(`attach ${hit.id} failed: ${String(e.message).slice(0, 60)} — recreating`); }
+    try {
+      // 用户手动操作浏览器（登录/查看）后 ownership 变为 user-held，直接 attach 会在
+      // pages() 处被拒（"Control of this task space is with the user"）→ observe 全瘫。
+      // 按 ego 官方语义接管：agentDelegatedToUser→takeOverTaskSpace（页签 label 保留），
+      // user（agent finish({keep}) 后的用户空间）→claimTaskSpace（页签需重新 adopt）。
+      // 旧运行器无这些全局时回退普通 attach，维持 fail-loud。
+      if (hit.ownership === "agentDelegatedToUser" && typeof takeOverTaskSpace === "function") {
+        log(`space ${hit.id} held by user — takeOverTaskSpace`);
+        return await takeOverTaskSpace(hit.id);
+      }
+      if (hit.ownership === "user" && typeof claimTaskSpace === "function") {
+        log(`space ${hit.id} owned by user — claimTaskSpace`);
+        return await claimTaskSpace(hit.id);
+      }
+      return await taskSpace(hit.id);
+    } catch (e) { log(`attach ${hit.id} failed: ${String(e.message).slice(0, 60)} — recreating`); }
   }
   await ego.createTaskSpace(SPACE_NAME, "Default");
   await new Promise(r => setTimeout(r, 1500)); // ego 后端注册新空间需要一点时间
@@ -39,7 +54,13 @@ async function resolveBotPage(ego, taskSpace, pageLabel, log = () => {}) {
   let page;
   if (labels.includes(pageLabel)) page = task.page(pageLabel);
   else if (labels.length) { log(`page ${pageLabel} missing — using existing ${labels[0]}`); page = task.page(labels[0]); }
-  else { page = await task.newPage(); log(`page ${pageLabel} missing — created as ${page.label ?? pageLabel}`); }
+  else {
+    // claimTaskSpace 之后空间没有 managed page：先收养现有页签（守住单页签纪律），
+    // 空间真空时才新建——盲建会在 kept 页签旁边再造一个，内存问题复发
+    const tabs = await task.tabs().catch(() => []);
+    if (tabs.length) { page = await task.adopt(tabs[0].page); log(`adopted unmanaged tab as ${page.label ?? "?"}`); }
+    else { page = await task.newPage(); log(`page ${pageLabel} missing — created as ${page.label ?? pageLabel}`); }
+  }
   const navigated = await parkBotPage(page, log);
   return { task, page, navigated };
 }

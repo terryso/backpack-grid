@@ -27,6 +27,7 @@ async function run(kind,mode){
     async goto(u){navigations.push(u);},async waitForTimeout(){}});
   const task={spaceId:7,page:label=>{used.push(label);return makePage(label);},
     async pages(){if(mode==='inventory-failure')throw Error('fixture inventory failure');return labels.map(label=>({label}));},
+    async tabs(){return [];},
     async newPage(){if(mode==='create-failure')throw Error('fixture page creation failure');created++;labels.push('p1');return makePage('p1');}};
   const name=kind==='history'?'collect_history.mjs':'collect_verified_window.mjs';
   let source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts',name),'utf8'),d);

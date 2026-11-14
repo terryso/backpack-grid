@@ -48,7 +48,7 @@ async function run(mode){
    else throw Error('Unexpected mock endpoint '+u.pathname);
    return{status:200,body:JSON.stringify(body)};
   }});
-  const task={spaceId:sid,async pages(){return labels.map(label=>({label}));},page:pageFor,async newPage(){created++;labels.push('p1');return pageFor('p1');}};
+  const task={spaceId:sid,async pages(){return labels.map(label=>({label}));},async tabs(){return [];},page:pageFor,async newPage(){created++;labels.push('p1');return pageFor('p1');}};
   const ego={async listTaskSpaces(){return{taskSpaces:[{id:sid,name:'backpack-bot'}]};},async createTaskSpace(){throw Error('Unexpected fixture space creation');}};
   const taskSpace=async id=>{if(id!==sid)throw Error('task space not found: '+id);return task;};
   // Observation uses this exact shared production resolver before generating its plan.
