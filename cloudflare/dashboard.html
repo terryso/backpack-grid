@@ -208,6 +208,11 @@ function render(s) {
   if (s.autoExits) chips.push(s.autoExits.enabled
     ? `<span class="chip">自动止损止盈：${Number(s.autoExits.posTp) > 0 ? `止盈 +${s.autoExits.posTp}%` : "止盈已关"} · 止损 -${s.autoExits.posSl == null ? 150 : s.autoExits.posSl}% · 破沿驻留 ${s.autoExits.dwellMin == null ? 10 : s.autoExits.dwellMin} 分钟（±${s.autoExits.bufferPct == null ? 0.5 : s.autoExits.bufferPct}%）</span>`
     : `<span class="chip">自动止损止盈：未启用</span>`);
+  if (s.direction) chips.push(!s.direction.healthy
+    ? `<span class="chip bad">⚠️ 方向任务记录已 ${s.direction.judgedAgeMin} 分钟未更新——检查 launchd com.backpack-grid-direction</span>`
+    : (s.direction.failed
+      ? `<span class="chip bad">方向任务近 24 轮含失败行（数据链路/切换写入），详情看 direction_watch.log</span>`
+      : `<span class="chip">方向任务：指令 ${s.direction.directive ?? "—"} · 判定 ${s.direction.rec ?? "—"} · streak ${s.direction.streak}/${s.direction.threshold}${s.direction.lastSwitch ? ` · ⚡已自动切至 ${s.direction.lastSwitch.to}` : ""} · ${s.direction.judgedAgeMin} 分钟前判定</span>`));
   if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct == null ? "未知" : fmt(s.fees.makerPct, 1) + "%"} · ${s.fees.fills} 笔 · ${s.fees.incomplete ? "历史未收齐" : "已追平"}</span>`);
   // equity sparkline
   const curve = s.curve || [];
