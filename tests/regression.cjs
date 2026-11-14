@@ -636,6 +636,8 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
     directional: [],
   };
   const dir = makeFixture({
+    // 机制测试锁定 gridValueUsd=2500：累积预留/shrink 的期望值按此演算，不随生产参数漂移
+    "config.json": { ...cfg, gridValueUsd: 2500 },
     "state/analysis.json": analysis,
     "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
       gridRows: [], positions: [],
@@ -664,6 +666,8 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
     pnlRaw: 18, pnl: "$18.00", pnlPct: 1, status: "Triggered", control: "开启",
     nativeTP: 10, nativeSL: 6, nativeCloseOnStop: true };
   const dir = makeFixture({
+    // 机制测试锁定 gridValueUsd=2500（与 INT11 同理）
+    "config.json": { ...cfg, gridValueUsd: 2500 },
     "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
       gridRows: [keepRow], positions: [],
       margin: { totalEquity: "$300.00", availableEquity: "$300.00", openPnl: "$0.00", initMarginPct: "0%" },

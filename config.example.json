@@ -1,6 +1,6 @@
 {
   "maxGrids": 4,
-  "gridValueUsd": 2500,
+  "gridValueUsd": 600,
   "takeProfitPct": 10,
   "stopLossPct": 6,
   "exitBufferPct": 1,
