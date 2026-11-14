@@ -27,7 +27,7 @@ while args and args[0].startswith("--"):
     if option == "--wait":
         wait_secs = float(args[1])
         if not math.isfinite(wait_secs) or wait_secs < 0 or wait_secs > 60: raise ValueError("wait must be 0..60 seconds")
-    elif option == "--name" and args[1] in ("round", "history", "research", "ledger"):
+    elif option == "--name" and args[1] in ("round", "history", "research", "ledger", "direction"):
         lock_name = args[1]
     else:
         raise ValueError("invalid lock option")

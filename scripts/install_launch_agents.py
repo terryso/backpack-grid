@@ -27,6 +27,7 @@ JOBS = [
     ("com.backpack-grid-history", "com.backpack-grid-history.plist", "collect_history.sh", 900),
     ("com.backpack-grid-research", "com.backpack-grid-research.plist", "refresh_research.sh", 900),
     ("com.backpack-grid-accounting", "com.backpack-grid-accounting.plist", "collect_verified_window.sh", 1800),
+    ("com.backpack-grid-direction", "com.backpack-grid-direction.plist", "direction_watch.sh", 3600),
 ]
 for label, filename, script, interval in JOBS:
     item = {"Label": label, "ProgramArguments": ["/bin/bash", str(ROOT / "scripts" / script)],
