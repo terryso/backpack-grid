@@ -10,9 +10,12 @@ export BG_ROOT="$PWD"
 # 2.4h、round.lock 被占、巡检全 SKIP、网站停更。monitor 每 15 分钟独立触发且不受 peak
 # 状态影响，在这里清理存活超过 180 秒的残留探针树（健康采样只占几十秒）。
 for pid in $(pgrep -f 'ego_dispatch[.]sh scripts/peak_probe' 2>/dev/null); do
-  el=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d ' ')
-  if [ -n "$el" ] && [ "$el" -gt 180 ]; then
-    echo "$(date '+%F %T') stale probe tree pid $pid (${el}s) — killing (monitor watchdog)"
+  # macOS ps 无 etimes（秒数）关键字，只有 etime（[[dd-]hh:]mm:ss）；11-14 事故：
+  # etimes 报错吐出关键字清单，条件永假，看门狗杀不掉挂死探针、round.lock 被占 6h+
+  el=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d ' ')
+  secs=$(printf '%s' "$el" | awk -F'[-:]' 'NF>0 && $1 ~ /^[0-9]+$/ {s=0; for(i=1;i<=NF;i++) s=s*60+$i; print s}')
+  if [ -n "$secs" ] && [ "$secs" -gt 180 ]; then
+    echo "$(date '+%F %T') stale probe tree pid $pid (${secs}s) — killing (monitor watchdog)"
     pkill -TERM -P "$pid" 2>/dev/null
     kill "$pid" 2>/dev/null
   fi
