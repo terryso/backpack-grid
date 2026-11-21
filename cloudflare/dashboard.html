@@ -10,7 +10,7 @@
   body { margin: 0; background: #0b0e14; color: #d7dde8; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
   .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 18px; margin: 0 0 4px; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-  .sub { color: #8b94a7; font-size: 12px; margin-bottom: 20px; }
+  .sub { color: #8b94a7; font-size: 12px; margin-bottom: 16px; }
   .livebadge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; letter-spacing: .5px; border: 1px solid #14532d; background: #0f1f16; color: #4ade80; }
   .livebadge .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; animation: livepulse 1.6s ease-out infinite; }
   .livebadge.stale { border-color: #3f3f46; background: #18181b; color: #8b94a7; }
@@ -57,6 +57,13 @@
   .chip { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; margin: 0 6px 6px 0; border: 1px solid #1f2737; color: #8b94a7; }
   .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
   .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
+  .dirbanner { border: 1px solid #1f2737; border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; background: #101623; }
+  .dirbanner .db-title { font-size: 10px; color: #8b94a7; letter-spacing: 2px; white-space: nowrap; }
+  .dirbanner .db-main { font-size: 15px; font-weight: 600; color: #c9d2e3; }
+  .dirbanner .db-sub { font-size: 11px; color: #8b94a7; }
+  .dirbanner.ok { border-color: #14532d; } .dirbanner.ok .db-main { color: #4ade80; }
+  .dirbanner.warn { border-color: #7c4a03; } .dirbanner.warn .db-main { color: #fbbf24; }
+  .dirbanner.bad { border-color: #7f1d1d; } .dirbanner.bad .db-main { color: #f87171; }
   .muted { color: #8b94a7; }
   .curve-svg { width: 100%; height: 120px; }
   .toolbar svg { width: 15px; height: 15px; flex-shrink: 0; }
@@ -80,6 +87,7 @@
 <div class="wrap">
   <h1>Backpack 网格自动驾驶 <span class="livebadge" id="liveBadge"><span class="dot"></span>实盘</span></h1>
   <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
+  <div id="dirBanner" class="dirbanner ok"><span class="db-title">方向哨兵</span><span class="db-main">加载中…</span></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
     <a href="/ops.html" title="建格/停格决策、全部成交与巡检轮次记录">📜 操作历史</a>
@@ -208,11 +216,30 @@ function render(s) {
   if (s.autoExits) chips.push(s.autoExits.enabled
     ? `<span class="chip">自动止损止盈：${Number(s.autoExits.posTp) > 0 ? `止盈 +${s.autoExits.posTp}%` : "止盈已关"} · 止损 -${s.autoExits.posSl == null ? 150 : s.autoExits.posSl}% · 破沿驻留 ${s.autoExits.dwellMin == null ? 10 : s.autoExits.dwellMin} 分钟（±${s.autoExits.bufferPct == null ? 0.5 : s.autoExits.bufferPct}%）</span>`
     : `<span class="chip">自动止损止盈：未启用</span>`);
-  if (s.direction) chips.push(!s.direction.healthy
-    ? `<span class="chip bad">⚠️ 方向任务记录已 ${s.direction.judgedAgeMin} 分钟未更新——检查 launchd com.backpack-grid-direction</span>`
-    : (s.direction.failed
-      ? `<span class="chip bad">方向任务近 24 轮含失败行（数据链路/切换写入），详情看 direction_watch.log</span>`
-      : `<span class="chip">方向任务：指令 ${s.direction.directive ?? "—"} · 判定 ${s.direction.rec ?? "—"} · streak ${s.direction.streak}/${s.direction.threshold}${s.direction.lastSwitch ? ` · ⚡已自动切至 ${s.direction.lastSwitch.to}` : ""} · ${s.direction.judgedAgeMin} 分钟前判定</span>`));
+  // 方向哨兵横幅（页面顶部醒目位）：指令/判定/streak/依据，异常与冲突分级变色
+  const db = document.getElementById("dirBanner");
+  if (db) {
+    const d = s.direction;
+    let cls = "ok", main = "", sub = "";
+    if (!d) { cls = "bad"; main = "方向哨兵：无数据"; sub = "direction_advice.json 缺失或损坏"; }
+    else {
+      if (d.failed) sub = "近 24 轮含失败行（数据链路/切换写入），详情看 direction_advice.json（switchingObserved/DATA_FAIL 标记） · ";
+      if (!d.healthy) { cls = "bad"; main = `⚠️ 方向任务记录已 ${d.judgedAgeMin} 分钟未更新`; sub += "检查云端判定（judge-cloud scheduled）与网络链路"; }
+      else {
+        const st = Number(d.streak) || 0, th = d.threshold || 5;
+        cls = st >= 4 ? "bad" : st >= 1 ? "warn" : "ok";
+        main = `指令 ${d.directive ?? "—"} · 判定 ${d.rec ?? "—"} · streak ${st}/${th}${d.lastSwitch ? ` · ⚡已自动切至 ${d.lastSwitch.to}` : ""}`;
+        const bits = [];
+        if (d.verdict) bits.push(d.verdict);
+        if (d.note) bits.push(d.note);
+        bits.push(`${d.judgedAgeMin} 分钟前判定`);
+        if (st >= 3) bits.push(`再 ${th - st} 次反向判定将自动改写指令`);
+        sub += bits.join(" · ");
+      }
+    }
+    db.className = `dirbanner ${cls}`;
+    db.innerHTML = `<span class="db-title">方向哨兵</span><span class="db-main">${main}</span><span class="db-sub">${sub}</span>`;
+  }
   if (s.fees) chips.push(`<span class="chip">手续费 ${fmt(s.fees.feeUsd)} USD · maker ${s.fees.makerPct == null ? "未知" : fmt(s.fees.makerPct, 1) + "%"} · ${s.fees.fills} 笔 · ${s.fees.incomplete ? "历史未收齐" : "已追平"}</span>`);
   // equity sparkline
   const curve = s.curve || [];

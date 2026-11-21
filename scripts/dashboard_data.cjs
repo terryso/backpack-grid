@@ -39,6 +39,7 @@ if (advice && Number.isFinite(Date.parse(advice.at))) {
     directive: advice.directive || null, rec: advice.rec || null, streak: Number(advice.streak) || 0, threshold: 5,
     verdict: advice.verdict || null, judgedAt: advice.at, judgedAgeMin: Math.round(ageMs / 60000),
     healthy: ageMs <= 2 * 3600000, failed,
+    note: advice.note || null,
     lastSwitch: Array.isArray(advice.switchLog) && advice.switchLog.length ? advice.switchLog[advice.switchLog.length - 1] : null,
   };
 }

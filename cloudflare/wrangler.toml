@@ -9,6 +9,12 @@ routes = [
 # 保持 workers.dev 地址可用（X/V2EX 帖子里发的是旧链接）
 workers_dev = true
 
+# cron：*/5 = 哨兵（KV 快照 + 公开行情 → A/B/C 触发器 → Bark）；
+# 每小时 11 分 = 影子判定（advice_cloud，与本地 direction_watch 比对）。
+# 频率是参数：streak「5 连 = 5 小时」的语义依赖每小时判定一次，不可加密。
+[triggers]
+crons = ["*/5 * * * *", "11 * * * *"]
+
 [[kv_namespaces]]
 binding = "DASH"
 id = "40e078ae20c84612bce7ddfb711f7992"
