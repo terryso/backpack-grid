@@ -442,6 +442,16 @@ const writeAtomic = (p, data) => {
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
+      const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
+      // Short 格费率硬门：空头扎堆的币（深负费率）持仓即持续付费——ADA 11-16 案例
+      // （-0.104%/次 × 八轮）实亏。只拦极端值（fundingShortBanPct=-0.05%，常态
+      // ~±0.004% 距门 12 倍不误伤）；负费率只伤空头，Long/Neutral 不受限。
+      const banPct = Number(cfg.fundingShortBanPct); // 百分数域：-0.05 表示 -0.05%/次
+      const fr = Number(cand.fundingRate);           // 小数域：-0.0006 表示 -0.06%
+      if (dir === "Short" && Number.isFinite(banPct) && banPct < 0 && Number.isFinite(fr) && fr * 100 < banPct) {
+        lines.push(`PLAN skip ${mkt}: funding ${(fr * 100).toFixed(4)}% < Short ban ${(banPct * 100).toFixed(2)}% — short would pay to hold`);
+        continue;
+      }
       // ecosystem concentration cap (counts include kept grids, same canonical names)
       const eco = ecoOf(cand.symbol);
       if ((ecoCount[eco] || 0) >= (cfg.maxPerEcosystem || 2)) { lines.push(`PLAN skip ${mkt}: ecosystem "${eco}" already at cap ${cfg.maxPerEcosystem}`); continue; }
@@ -468,7 +478,6 @@ const writeAtomic = (p, data) => {
       if (value < 500) { lines.push(`SKIP create ${mkt}: available equity ${(numAvail - plannedMargin).toFixed(0)} too low`); break; }
       const sizedGrid = sizeGrid(cand, value);
       if (!sizedGrid) { lines.push(`SKIP create ${mkt}: final allocation cannot support exchange minimum order size`); continue; }
-      const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
       plannedMargin += marginEstimate(value,marginCfg,cand.imfFunction);
       plannedRisk += value * (wantSL / 100);
       actions.push({

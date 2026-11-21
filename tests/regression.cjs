@@ -687,6 +687,45 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
   T("INT12c shrink reported", r.stdout.includes("PLAN shrink"));
 }
 
+// INT13: Short funding ban — deep-negative funding vetoes Short grid only
+{
+  const mk = (fundingRate, directive) => {
+    const mods = {
+      "config.json": { ...cfg, gridValueUsd: 600, fundingShortBanPct: -0.05 },
+      "state/analysis.json": { generatedAt: new Date().toISOString(),
+        top: [{ symbol: "ETH_USDC_PERP", score: 14, chop: 14, range24: 3.4, qvol24: 30000000, fundingRate,
+          grid: { lower: 1400, upper: 1830, count: 32, widthPct: 26, spacingPct: 0.8 } }],
+        directional: [] },
+    };
+    if (directive) mods["state/direction_override.json"] = { schemaVersion: 1, accountKey: "fixture-" + (cfg.subaccountId ?? 3), directions: { "*": directive }, updatedAt: new Date().toISOString() };
+    return makeFixture(mods);
+  };
+  const mkTickers = (dir) => { const t = path.join(dir, "state", "tickers.json"); fs.writeFileSync(t, JSON.stringify([{ symbol: "ETH_USDC_PERP", lastPrice: "1616" }])); return t; };
+
+  // a) Short 指令 + 深负费率（-0.06% < -0.05% 门）→ 一票否决
+  {
+    const dir = mk(-0.0006, "Short");
+    const r = runDecide(dir, false, mkTickers(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    T("INT13a deep-negative funding vetoes Short create", r.status === 0
+      && !actions.some((a) => a.act === "create") && r.stdout.includes("Short ban"));
+  }
+  // b) Short 指令 + 常态浅负费率（-0.004%，距门 12 倍）→ 正常建格
+  {
+    const dir = mk(-0.00004, "Short");
+    const r = runDecide(dir, false, mkTickers(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    T("INT13b normal shallow funding still creates Short grid", r.status === 0 && actions.filter((a) => a.act === "create").length === 1);
+  }
+  // c) Neutral 指令 + 同样深负费率 → 门不适用（只伤空头），仍建格
+  {
+    const dir = mk(-0.0006, null);
+    const r = runDecide(dir, false, mkTickers(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    T("INT13c funding ban applies to Short directive only", r.status === 0 && actions.filter((a) => a.act === "create").length === 1);
+  }
+}
+
 // ---------- T26 (round-9 F01): probe merge preserves paused, ratchet max ----------
 {
   // replica of the corrected probe commit: re-read latest, merge peak=max, preserve paused

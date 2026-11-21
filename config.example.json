@@ -3,6 +3,7 @@
   "gridValueUsd": 600,
   "takeProfitPct": 10,
   "stopLossPct": 6,
+  "fundingShortBanPct": -0.05,
   "exitBufferPct": 1,
   "liqDangerPct": 12,
   "leverageCap": 10,
