@@ -4,7 +4,7 @@ const path = require('node:path');
 const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
-const {identityOk,manualPausesFor}=require('./contracts.cjs');
+const {identityOk,manualPausesFor,validateConfig,expectedIdentity}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
 const file = (p) => path.join(ROOT, p);
@@ -14,6 +14,9 @@ const cfg = read('config.json') || {};
 const obs = read('state/observed.json');
 const identity=read('state/account_identity.json');
 const identityValid=identityOk(identity)&&identityOk(obs?.identity)&&obs.identity.accountKey===identity.accountKey;
+// Use the same validated, account-bound threshold as the decision layer.
+let warnDrawdownPct = null;
+try { validateConfig(cfg); if (identityValid && expectedIdentity(ROOT, cfg).accountKey === identity.accountKey) warnDrawdownPct = cfg.warnDrawdownPct; } catch {}
 const risk = read('state/risk.json');
 const pending = read('state/pending_stops.json');
 const campaign = read('state/campaign.json');
@@ -131,7 +134,7 @@ const snapshot = {
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,
   fees, runStats: { days: baselineAt && Number.isFinite(Date.parse(baselineAt)) ? +Math.max(0, (Date.now() - Date.parse(baselineAt)) / 86400000).toFixed(1) : null, records: history.count, recordsSince: history.since, rounds: confirmed.successful, failedRounds: confirmed.failed, exits: exits.size, since: confirmed.since },
   change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,
-  drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null,
+  drawdownPct: riskStateValid && equity !== null && Number(risk.peakEquity) > 0 ? Math.max(0, (Number(risk.peakEquity) - equity) / Number(risk.peakEquity) * 100) : null, warnDrawdownPct,
   riskPaused: riskStateValid ? !!risk.paused : null, campaignVolume: campaignPublic.campaignVolume, campaignId:campaignPublic.campaignId, campaignSource:campaignPublic.source, campaignOfficialAt:campaignPublic.officialAt, tier1:campaignPublic.tier1, tier1Secured:campaignPublic.tier1Secured,
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct), gridAgeLabel: formatAgeMin(gridCreatedAt[g.market] != null ? (gridNowMs - gridCreatedAt[g.market]) / 60000 : null) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,

@@ -207,9 +207,12 @@ function render(s) {
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
     s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false].filter(Boolean).length;
-  chips.push(s.riskPaused ? `<span class="chip bad">风控熔断已锁</span>`
-    : (s.drawdownPct >= 40 ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%</span>`
-    : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`)));
+  const drawdownKnown = typeof s.drawdownPct === "number" && Number.isFinite(s.drawdownPct) && s.drawdownPct >= 0;
+  const warningKnown = typeof s.warnDrawdownPct === "number" && Number.isFinite(s.warnDrawdownPct) && s.warnDrawdownPct >= 0 && s.warnDrawdownPct <= 100;
+  chips.push(s.riskPaused === true ? `<span class="chip bad">风控熔断已锁</span>`
+    : (!drawdownKnown || !warningKnown || s.riskPaused !== false ? `<span class="chip bad">回撤预警状态待核对</span>`
+    : (s.drawdownPct >= s.warnDrawdownPct ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%（阈值 ${fmt(s.warnDrawdownPct, 1)}%）</span>`
+    : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`))));
   chips.push(s.pendingCorrupt ? `<span class="chip bad">待清理状态未知</span>` : (s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
