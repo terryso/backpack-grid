@@ -39,31 +39,20 @@ const writeAtomic = (p, data) => {
 };
 
 // ---------- 云端判定同步（cutover 11-21：权威源 = Cloudflare Worker 每小时判定） ----------
-// Mac 端职责：拉 advice → switchingObserved=true 时代执行 set（云端永不持交易 key）→
-// 镜像写 state/direction_advice.json（dashboard/巡检汇报/哨兵的数据源）。失败/过期
-// 一律静默保旧值（override 不动 = 沿用最后指令）。指令反向传播：用户手动 set → 下轮
-// dashboard 上传 direction.directive → 云端下轮判定自动跟随（无需专门推送路由）。
+// Mac 端读取待确认事件，在锁内验证版本并提交或拒绝；下次快照携带结果作为确认。
+// 旧版临时切换标记不作为待确认事件使用。请求失败时沿用本地指令。
 {
-  const { dashUrlOf, fetchCloudAdvice, planCloudSync } = require("./cloud_sync.cjs");
+  const { dashUrlOf, fetchCloudMailbox } = require("./cloud_sync.cjs");
   const dashUrl = dashUrlOf(path.join(ROOT, "state/dashboard.env"), fs, path);
   if (dashUrl) {
     try {
-      const cloud = fetchCloudAdvice(dashUrl, require("node:child_process"));
-      const localDirective = directionFor(ROOT, identity.accountKey, "*");
-      const plan = planCloudSync(cloud, localDirective, Date.now());
-      if (plan.action === "apply-switch") {
-        const set = spawnSync(process.execPath, [path.join(__dirname, "grid_direction.cjs"), "set", "*", plan.switchTo], { encoding: "utf8", timeout: 30000 });
-        if (set.status === 0) {
-          console.log(`CLOUD SWITCH: ${localDirective} -> ${plan.switchTo} (cloud streak>=5, applied locally)`);
-          cloud.switchLog = [...(Array.isArray(cloud.switchLog) ? cloud.switchLog : []), { at: cloud.at, from: localDirective, to: plan.switchTo, via: "cloud" }];
-          cloud.switchingObserved = false;
-        } else {
-          console.error(`CLOUD SWITCH FAILED: ${String(set.stderr || set.error || "").slice(0, 120)} — keeping ${localDirective}, will retry`);
-          cloud.switchingObserved = true; // 保留标记供下轮重试（云端 streak 已清零，靠本地标记续跑）
-        }
+      const mailbox = fetchCloudMailbox(dashUrl, require("node:child_process"));
+      if (mailbox?.pending && process.env.DRYRUN !== '1') {
+        const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: mailbox.pending });
+        console.log(`CLOUD SWITCH: event ${outcome.status}`);
       }
-      if (cloud && typeof cloud.at === "string") writeAtomic(path.join(ROOT, "state/direction_advice.json"), JSON.stringify(cloud, null, 1));
-      else console.log(`CLOUD ADVICE: unavailable (${plan.reason}) — keeping local directive`);
+      if (mailbox?.advice && typeof mailbox.advice.at === 'string') writeAtomic(path.join(ROOT, 'state/direction_advice.json'), JSON.stringify(mailbox.advice, null, 1));
+      else console.log('CLOUD ADVICE: mailbox unavailable — keeping local directive');
     } catch (e) { console.error(`CLOUD ADVICE SYNC FAILED: ${String(e && e.message || e).slice(0, 120)} — keeping local directive`); }
   }
 }

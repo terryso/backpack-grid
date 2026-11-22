@@ -52,16 +52,18 @@ check('fetchCloudAdvice：不可达地址 → null（保旧值语义）', () => 
   assert.equal(fetchCloudAdvice('http://127.0.0.1:1', require('node:child_process'), 2000), null);
 });
 
-// 接线形状：decide 集成同步 + 镜像写；Worker 双写权威 key
+// 接线形状：决定从可靠事件通道同步；KV 副本只用于展示。
 const ROOT = path.join(__dirname, '..');
 check('接线：decide 拉云端/代执行切换/镜像写 direction_advice.json', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts/decide.cjs'), 'utf8');
   assert.ok(src.includes('cloud_sync.cjs'));
   assert.ok(src.includes('CLOUD SWITCH'));
   assert.ok(src.includes('state/direction_advice.json'));
-  assert.ok(src.includes('switchingObserved = true')); // 失败保留标记下轮重试
+  assert.ok(src.includes('fetchCloudMailbox'));
+  assert.ok(src.includes("directionTransaction(ROOT, { op: 'cloud'"));
+  assert.ok(src.includes("process.env.DRYRUN !== '1'"));
 });
-check('接线：Worker 影子判定双写 advice（权威）+ advice_cloud（兼容）', () => {
+check('接线：Worker 双写 advice 与 advice_cloud 展示副本', () => {
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/worker.js'), 'utf8');
   assert.ok(src.includes('DASH.put("advice"'));
   assert.ok(src.includes('DASH.put("advice_cloud"'));

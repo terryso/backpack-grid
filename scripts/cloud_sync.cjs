@@ -1,8 +1,7 @@
 'use strict';
 // cloud_sync.cjs — 方向判定云端同步（cutover 11-21：权威源 = Cloudflare Worker 每小时判定）。
-// 纯决策与取数在此（可单测、无副作用）；执行（spawnSync set / 镜像写）留在 decide.cjs。
-// 铁律：云端永不持有交易 key——switchingObserved=true 只代表"云端判定该切换了"，
-// 实际 set 由 Mac 端代为执行；拉取失败一律让调用方保旧值（数据失败不计数精神）。
+// 取数在此；待确认事件的版本校验与本地写入留在 decide.cjs 的事务通道。
+// 云端不持有交易 key；拉取失败时本地保留现有指令。
 
 // 从 dashboard.env 提取 DASH_URL（无 token 需求：/api/direction-advice 是公开只读路由）。
 function dashUrlOf(file, fsMod, pathMod) {
@@ -12,11 +11,24 @@ function dashUrlOf(file, fsMod, pathMod) {
   } catch { return null; }
 }
 
-// GET /api/direction-advice（公开只读）。best effort：任何失败返回 null，调用方保旧值。
+// 旧协议的解析器仅保留兼容与回归；生产同步使用 fetchCloudMailbox。
 function fetchCloudAdvice(base, curlBin, timeoutMs) {
   try {
     const r = curlBin.spawnSync("curl", ["-fsS", "-m", String(Math.max(3, Math.ceil((timeoutMs || 10000) / 1000))), `${base}/api/direction-advice`], { encoding: "utf8" });
     if (r.status === 0 && r.stdout) return JSON.parse(r.stdout);
+  } catch {}
+  return null;
+}
+
+// The new mailbox endpoint is deliberately distinct from the legacy advice
+// endpoint: a new client must never treat an old transient flag as durable.
+function fetchCloudMailbox(base, curlBin, timeoutMs = 10000) {
+  try {
+    const r = curlBin.spawnSync('curl', ['-fsS', '-m', String(Math.max(3, Math.ceil(timeoutMs / 1000))), `${base}/api/direction-event`], { encoding: 'utf8', timeout: timeoutMs + 2000 });
+    if (r.status === 0 && r.stdout) {
+      const state = JSON.parse(r.stdout);
+      if (state && typeof state === 'object' && !Array.isArray(state) && Object.prototype.hasOwnProperty.call(state, 'pending')) return state;
+    }
   } catch {}
   return null;
 }
@@ -33,4 +45,4 @@ function planCloudSync(cloud, localDirective, nowMs, maxAgeMs = 2 * 3600000) {
   return { action: "mirror-only" };
 }
 
-module.exports = { dashUrlOf, fetchCloudAdvice, planCloudSync };
+module.exports = { dashUrlOf, fetchCloudAdvice, fetchCloudMailbox, planCloudSync };

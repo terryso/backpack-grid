@@ -13,6 +13,8 @@
 //   node scripts/grid_direction.cjs show
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 const VALID = new Set(["Long", "Short", "Neutral"]);
 
 function loadDirections(root, accountKey) {
@@ -31,26 +33,34 @@ function directionFor(root, accountKey, market) {
 }
 
 function setDirection(root, accountKey, market, direction, now = Date.now()) {
-  if (!market) throw Error("market or '*' required");
-  const file = path.join(root, "state/direction_override.json");
-  let directions = {};
-  try {
-    const old = JSON.parse(fs.readFileSync(file, "utf8"));
-    if (old && old.schemaVersion === 1 && old.accountKey === accountKey && old.directions && typeof old.directions === "object") directions = old.directions;
-  } catch {} // 损坏/外账户旧表直接放弃继承，本次原子写覆盖
-  if (direction === "Neutral") delete directions[market];
-  else {
-    if (!VALID.has(direction)) throw Error(`invalid direction: ${direction} (Long|Short|Neutral)`);
-    directions[market] = direction;
-  }
-  const tmp = file + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify({ schemaVersion: 1, accountKey, directions, updatedAt: new Date(now).toISOString() }, null, 2));
-  fs.renameSync(tmp, file);
-  console.log(`direction ${market} -> ${direction === "Neutral" ? "Neutral (default)" : direction}`);
-  return directions;
+  if (!market || !VALID.has(direction)) throw Error('invalid direction or market');
+  directionTransaction(root, { op: 'manual', accountKey, market, direction, at: new Date(now).toISOString() });
+  console.log(`direction ${market} -> ${direction === 'Neutral' ? 'Neutral (default)' : direction}`);
+  return loadDirections(root, accountKey);
 }
 
-module.exports = { loadDirections, directionFor, setDirection, VALID };
+function directionTransaction(root, request) {
+  const python = process.env.PY_BIN || '/Users/nick/.browser-use-env/bin/python3';
+  if (!python || !path.isAbsolute(python)) throw Error('absolute PY_BIN required');
+  const r = spawnSync(python, [path.join(__dirname, 'direction_state.py')], {
+    env: { ...process.env, BG_ROOT: root }, input: JSON.stringify(request), encoding: 'utf8', timeout: 5000,
+  });
+  if (r.status !== 0) throw Error('direction transaction failed: ' + String(r.stderr || r.error || '').slice(-300));
+  return JSON.parse(r.stdout);
+}
+
+function directionSnapshot(root, accountKey) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(root, 'state/direction_override.json')); }
+  catch (e) { if (e.code !== 'ENOENT') throw e; raw = null; }
+  let reg = null;
+  if (raw) { reg = JSON.parse(raw); if (!reg || reg.schemaVersion !== 1 || reg.accountKey !== accountKey || !reg.directions || Array.isArray(reg.directions) || typeof reg.directions !== 'object') throw Error('direction state invalid'); }
+  const direction = reg && Object.prototype.hasOwnProperty.call(reg.directions, '*') ? reg.directions['*'] : 'Neutral';
+  if (!VALID.has(direction)) throw Error('invalid global direction');
+  return { directive: direction, version: crypto.createHash('sha256').update(accountKey).update(Buffer.from([0])).update(raw || Buffer.from('<missing>')).digest('hex'), lastCloudEvent: reg?.lastCloudEvent || null };
+}
+
+module.exports = { loadDirections, directionFor, setDirection, directionTransaction, directionSnapshot, VALID };
 
 if (require.main === module) {
   const [cmd, target, dir] = process.argv.slice(2);

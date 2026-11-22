@@ -43,6 +43,14 @@ if (advice && Number.isFinite(Date.parse(advice.at))) {
     lastSwitch: Array.isArray(advice.switchLog) && advice.switchLog.length ? advice.switchLog[advice.switchLog.length - 1] : null,
   };
 }
+// The mailbox compares this exact revision with the file under the local lock.
+// Invalid/foreign direction state must never be advertised as a valid version.
+try {
+  if (identityValid) {
+    const current = require('./grid_direction.cjs').directionSnapshot(ROOT, identity.accountKey);
+    direction = { ...(direction || {}), ...current };
+  }
+} catch { direction = null; }
 const positions = Array.isArray(obs?.positions) ? obs.positions : [];
 // 网格时长（网格卡「网格时长」）：最近一次成功建格动作 = 当前网格的开始时刻
 const { latestCreates, formatAgeMin } = require('./grid_age.cjs');

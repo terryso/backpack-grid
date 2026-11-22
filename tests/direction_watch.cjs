@@ -149,10 +149,11 @@ check('接线：with_lock 白名单含 direction', () => {
   const py = fs.readFileSync(path.join(ROOT, 'scripts/with_lock.py'), 'utf8');
   assert.ok(py.includes('"round", "history", "research", "ledger", "direction"'));
 });
-check('接线：主流程切换唯一写路径走 grid_direction set', () => {
+check('接线：主流程切换经 grid_direction 版本事务', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts/direction_watch.cjs'), 'utf8');
   assert.ok(src.includes('grid_direction.cjs'));
-  assert.ok(src.includes('"set", "*", rec]'));
+  assert.ok(src.includes('applyLocalSwitch(ROOT, key, directionBase, rec, advice.at)'));
+  assert.ok(src.includes("directionTransaction(root, { op: 'local'"));
   assert.ok(src.includes('streak >= SWITCH_THRESHOLD'));
 });
 console.log(`${count} direction watch scenarios passed`);

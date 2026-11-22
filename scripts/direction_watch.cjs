@@ -4,15 +4,15 @@
 // 唯一修正：判定优先级按「强证据优先」实现——原提示词按字面顺序（维持→转Neutral→转Long）
 // 会让转 Long 分支永不可达（t7>+5% 也命中 t7>+3%），这里是还原 agent 实际的判断方式。
 // 硬性约束（与原任务相同）：
-//   - 写指令的唯一合法路径：streak>=5 且 rec!=当前指令 → grid_direction.cjs set '*' <rec>
+//   - streak>=5 且 rec!=当前指令时，经 grid_direction.cjs 的版本化事务写入
 //   - 数据拉取失败：不更新计数器（本次无判断），日志如实记录（失败小时按协议不计数）
 //   - BTC 为主锚，在跑网格市场仅为参考存档
 // 防挂死：整体硬 deadline 120s——launchd StartInterval 单实例语义下实例挂死会吞掉全部
 // 后续触发（11-14 14:06 事故：一个挂死实例占位 6h+、25 轮触发被吞）。
 const fs = require("node:fs");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
-const { loadDirections } = require("./grid_direction.cjs");
+const { randomUUID } = require("node:crypto");
+const { directionSnapshot, directionTransaction } = require("./grid_direction.cjs");
 const { expectedIdentity } = require("./contracts.cjs");
 
 const DEADLINE_MS = 120000;
@@ -79,6 +79,12 @@ function nextAdvice(prev, rec, directive, at) {
   return { advice: { ...p, at, directive, rec, streak: switching ? 0 : streak, lastDirective: directive }, switching };
 }
 
+// Recheck the snapshot inside the same lock used by manual and cloud writes.
+function applyLocalSwitch(root, accountKey, snapshot, to, at) {
+  return directionTransaction(root, { op: 'local', accountKey,
+    event: { id: `local-${randomUUID()}`, at, from: snapshot.directive, to, version: snapshot.version } });
+}
+
 // ---------- IO 壳 ----------
 
 if (require.main === module) {
@@ -98,7 +104,15 @@ if (require.main === module) {
     const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
     const identity = expectedIdentity(ROOT, cfg);
     const key = identity.accountKey;
-    const directive = loadDirections(ROOT, key)["*"] || "Neutral";
+    const directionBase = directionSnapshot(ROOT, key);
+    const directive = directionBase.directive;
+    // Default to observation. Local-only switching requires explicit opt-in
+    // AND no cloud configuration, to avoid two independent authorities.
+    let cloudConfigured = true;
+    try { fs.statSync(path.join(stateDir, 'dashboard.env')); }
+    catch (e) { if (e.code === 'ENOENT') cloudConfigured = false; else throw e; }
+    const shadow = process.env.BG_DIRECTION_AUTHORITY !== 'local' || cloudConfigured;
+    const adviceFile = shadow ? 'direction_shadow_advice.json' : 'direction_advice.json';
 
     const obs = readJson("observed.json");
     const running = Array.isArray(obs?.gridRows) ? [...new Set(obs.gridRows.map((g) => g.symbol).filter(Boolean))] : [];
@@ -131,20 +145,29 @@ if (require.main === module) {
     const refSym = running.find((s) => s !== "BTC_USDC_PERP") || null;
     const refM = refSym ? metrics(series[refSym]) : null;
 
-    const prev = readJson("direction_advice.json");
+    const prev = readJson(adviceFile);
     const rec = judge(btcM, directive);
     const { advice, switching } = nextAdvice(prev, rec, directive, nowISO());
 
     let switchError = null;
-    if (switching) {
-      const set = spawnSync(process.execPath, [path.join(ROOT, "scripts", "grid_direction.cjs"), "set", "*", rec], { encoding: "utf8", timeout: 30000 });
-      if (set.status === 0) {
+    if (shadow) {
+      advice.shadow = true;
+      advice.wouldSwitch = switching;
+    } else if (switching) {
+      let result;
+      try { result = applyLocalSwitch(ROOT, key, directionBase, rec, advice.at); }
+      catch (e) { switchError = String(e.message || e).slice(0, 120); }
+      if (result?.status === 'applied') {
         advice.switchLog = [...(Array.isArray(prev?.switchLog) ? prev.switchLog : []).slice(-49),
           { at: advice.at, from: directive, to: rec, streakObserved: SWITCH_THRESHOLD, evidence: `btc t7=${btcM.t7?.toFixed(1)}% t14=${btcM.t14?.toFixed(1)}% pos=${btcM.rangePos?.toFixed(2)}` }];
+      } else if (result) {
+        // A changed direction or stale observation requires fresh judgments.
+        advice.streak = 0;
+        switchError = result.status;
       } else {
         // 切换指令写入失败：保留 streak 让下一轮重试，本次不清零
         advice.streak = SWITCH_THRESHOLD;
-        switchError = String(set.stderr || set.error || "set failed").slice(0, 120);
+        switchError ||= "set failed";
       }
     }
     advice.verdict = rec === directive ? `维持 ${directive}` : `${rec} (streak ${advice.streak}/${SWITCH_THRESHOLD})`;
@@ -152,11 +175,11 @@ if (require.main === module) {
     if (refM) advice.ref = { symbol: refSym, t7: refM.t7, t14: refM.t14, rangePos: refM.rangePos };
     delete advice.btc; delete advice.eth; // ZCode 时代的参考块（会陈旧误导），参考数据由 ref 承担
 
-    const tmp = path.join(stateDir, "direction_advice.json.tmp");
+    const tmp = path.join(stateDir, `${adviceFile}.tmp.${process.pid}`);
     fs.writeFileSync(tmp, JSON.stringify(advice, null, 1));
-    fs.renameSync(tmp, path.join(stateDir, "direction_advice.json"));
+    fs.renameSync(tmp, path.join(stateDir, adviceFile));
 
-    const line = `${advice.at} ${directive} -> ${rec} streak=${advice.streak}/${SWITCH_THRESHOLD} ${advice.note}${switching && !switchError ? " ⚡SWITCHED" : ""}${switchError ? " SWITCH_SET_FAILED " + switchError : ""}`;
+    const line = `${advice.at} ${directive} -> ${rec} streak=${advice.streak}/${SWITCH_THRESHOLD} ${advice.note}${switching && shadow ? " SHADOW_ONLY" : switching && !switchError ? " ⚡SWITCHED" : ""}${switchError ? " SWITCH_SET_FAILED " + switchError : ""}`;
     log(line);
     console.log(line);
     if (switchError) process.exitCode = 1;
@@ -167,4 +190,4 @@ if (require.main === module) {
   }).finally(() => clearTimeout(deadlineTimer));
 }
 
-module.exports = { metrics, judge, nextAdvice, SWITCH_THRESHOLD };
+module.exports = { metrics, judge, nextAdvice, applyLocalSwitch, SWITCH_THRESHOLD };

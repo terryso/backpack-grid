@@ -5,6 +5,7 @@
 //      写入独立 KV key `advice_cloud`（影子验证期与本地 advice 比对，不碰权威链路）；
 //   2) 哨兵：5 分钟 cron，KV 快照 + 公开实时行情评估 A/B/C 触发器 → Bark 推送。
 export { LikeCounter } from "./likes.js";
+export { DirectionMailbox } from "./direction_mailbox.js";
 import * as patterns from "./patterns.js";
 
 const BACKPACK_API = "https://api.backpack.exchange/api/v1";
@@ -69,8 +70,11 @@ export default {
 
     // 方向指令（影子验证期后将成为权威源；现在 advice key 尚无人写，返回 {}）
     if (url.pathname === "/api/direction-advice") {
-      const a = await env.DASH.get("advice");
-      return json(a ?? "{}");
+      const state = await mailbox(env).fetch('https://direction.internal/state').then(r => r.json());
+      return json(JSON.stringify(state.advice || {}));
+    }
+    if (url.pathname === '/api/direction-event' && request.method === 'GET') {
+      return mailbox(env).fetch('https://direction.internal/state');
     }
     // 影子判定结果（与本地 direction_watch 比对用）
     if (url.pathname === "/api/direction-advice-cloud") {
@@ -108,6 +112,8 @@ function json(body) {
     headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
   });
 }
+
+function mailbox(env) { return env.DIRECTION.get(env.DIRECTION.idFromName('direction-mailbox')); }
 
 // ---------- Bark 推送 ----------
 
@@ -185,6 +191,11 @@ async function runShadowJudge(env) {
   if (!directive) {
     return { skipped: "no directive in latest snapshot — 无指令不判（DATA_FAIL 精神）" };
   }
+  // Acknowledgments must not depend on the market-data endpoint being healthy.
+  const initial = await mailbox(env).fetch('https://direction.internal/advance', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snapshot: latest }),
+  }).then(r => r.json());
+  if (initial.pending || initial.resolved || initial.skipped === 'versioned snapshot unavailable') return initial;
   // 在跑网格市场 → 符号（快照 grids 无 symbol 字段，从 market 映射）
   const markets = [...new Set((Array.isArray(latest.grids) ? latest.grids : []).map((g) => g.market).filter(Boolean))];
   const running = markets.map((m) => String(m).replace("-PERP", "_USDC_PERP")).filter((s) => s.endsWith("_USDC_PERP"));
@@ -197,21 +208,17 @@ async function runShadowJudge(env) {
   }
   const refSym = running.find((s) => s !== "BTC_USDC_PERP") || null;
   const refM = refSym ? patterns.metrics(series[refSym]) : null;
+  const note = `btc t7=${btcM.t7?.toFixed(1)}% t14=${Number.isFinite(btcM.t14) ? btcM.t14.toFixed(1) + "%" : "n/a"} pos=${btcM.rangePos.toFixed(2)} bounce=${btcM.bounce.toFixed(1)}%`;
+  const ref = refM ? { symbol: refSym, t7: refM.t7, t14: refM.t14, rangePos: refM.rangePos } : null;
 
-  const prev = JSON.parse(await env.DASH.get("advice_cloud") || "null");
-  const rec = patterns.judge(btcM, directive);
-  const at = new Date().toISOString();
-  const { advice, switching } = patterns.nextAdvice(prev, rec, directive, at);
-
-  // cutover（11-21）：云端成为权威判定——写 advice（正式）+ advice_cloud（兼容观察者）。
-  // directive 经 dashboard 快照自然跟随本地 override（手动 set → 下轮上传 → 下轮判定跟随）；
-  // switchingObserved=true 时由 Mac 端 decide 代为执行 set（云端永不持有交易 key）。
-  advice.verdict = rec === directive ? `维持 ${directive}` : `${rec} (streak ${advice.streak}/${patterns.SWITCH_THRESHOLD})`;
-  advice.note = `btc t7=${btcM.t7?.toFixed(1)}% t14=${Number.isFinite(btcM.t14) ? btcM.t14.toFixed(1) + "%" : "n/a"} pos=${btcM.rangePos.toFixed(2)} bounce=${btcM.bounce.toFixed(1)}%`;
-  if (refM) advice.ref = { symbol: refSym, t7: refM.t7, t14: refM.t14, rangePos: refM.rangePos };
-  advice.switchingObserved = switching;
-  const authoritative = JSON.stringify({ ...advice, source: "cloud" });
-  await env.DASH.put("advice", authoritative);
-  await env.DASH.put("advice_cloud", JSON.stringify({ ...JSON.parse(authoritative), shadow: true }));
-  return { at, directive, rec, streak: advice.streak, switchingObserved: switching, symbols };
+  const result = await mailbox(env).fetch('https://direction.internal/advance', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ snapshot: latest, metrics: btcM, note, ref }),
+  }).then(r => r.json());
+  // KV copies are display-only; the Durable Object is the authority.
+  if (result.advice) {
+    await env.DASH.put("advice", JSON.stringify({ ...result.advice, source: "cloud" }));
+    await env.DASH.put("advice_cloud", JSON.stringify({ ...result.advice, shadow: true }));
+  }
+  return { ...result, symbols };
 }
