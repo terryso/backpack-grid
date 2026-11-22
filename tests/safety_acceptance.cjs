@@ -96,7 +96,7 @@ async function main() {
   const actionEvent=events.find(e=>e.type==='actions');assert.deepEqual(actionEvent.results,[]);assert.equal(actionEvent.resultStatus,'unconfirmed');assert.equal(events.at(-1).status,'act_failed');
   record('N03_old_results_rejected_by_run_binding', { oldResultAt: oldAt, events });
   const { collectHistory, summarizeHistory, START } = require(path.join(ROOT, 'scripts/history_core.cjs'));
-  const fill = (id, timestamp, fee) => ({ id, timestamp, price: '100', quantity: '1', fee: String(fee), feeSymbol: 'USDC', isMaker: true });
+  const fill = (id, timestamp, fee) => ({ id, symbol: 'X', timestamp, price: '100', quantity: '1', fee: String(fee), feeSymbol: 'USDC', isMaker: true });
   const until = START + 10000;
   let h = await collectHistory({ symbols: {} }, ['X'], until, async () => [fill('one', START + 1, .1), fill('one', START + 1, .2)]);
   assert.equal(h.incomplete,true);assert.equal(Object.keys(h.symbols.X.fills).length,0);assert.match(h.symbols.X.error,/conflicting/);

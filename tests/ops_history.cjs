@@ -146,13 +146,13 @@ async function main() {
   test('collector status is tri-state: success, failure and unknown stay distinct', () => {
     const build = () => { const r = run(d, 'ops_data.cjs'); assert.equal(r.status, 0, r.stderr); return read(d, 'state/ops.json').collection; };
     fs.writeFileSync(path.join(d, 'state/history_status.json'), JSON.stringify({ at: '2026-10-09T05:10:00Z', ok: false }));
-    assert.deepEqual(build(), { ok: false, checkedAt: '2026-10-09T05:10:00Z', incomplete: false, fillCount: 2 });
+    assert.deepEqual(build(), { ok: false, checkedAt: '2026-10-09T05:10:00Z', incomplete: false, forwardIncomplete: null, auditIncomplete: null, fillCount: 2 });
     fs.writeFileSync(path.join(d, 'state/history_status.json'), JSON.stringify({ at: '2026-10-09T05:11:00Z', ok: true }));
     assert.equal(build().ok, true);
     fs.writeFileSync(path.join(d, 'state/history_status.json'), '{corrupt');
-    assert.deepEqual(build(), { ok: null, checkedAt: null, incomplete: false, fillCount: 2 });
+    assert.deepEqual(build(), { ok: null, checkedAt: null, incomplete: false, forwardIncomplete: null, auditIncomplete: null, fillCount: 2 });
     fs.rmSync(path.join(d, 'state/history_status.json'));
-    assert.deepEqual(build(), { ok: null, checkedAt: null, incomplete: false, fillCount: 2 });
+    assert.deepEqual(build(), { ok: null, checkedAt: null, incomplete: false, forwardIncomplete: null, auditIncomplete: null, fillCount: 2 });
   });
   test('content hash is stable across rebuilds and moves when data moves', () => {
     const h1 = fs.readFileSync(path.join(d, 'state/ops_content_hash'), 'utf8').trim();

@@ -99,7 +99,7 @@ async function main() {
     const r = await observedCase(mode);
     check('production observe data contract: ' + mode, () => ['orphan','zero-liquidation'].includes(mode) ? assert.equal(r.error, null) : assert(r.obs.error));
   }
-  const fill = (id, timestamp, feeSymbol = 'USDC') => ({ id, timestamp, price: '100', quantity: '1', fee: '.1', feeSymbol, isMaker: true });
+  const fill = (id, timestamp, feeSymbol = 'USDC') => ({ id, symbol: 'X', timestamp, price: '100', quantity: '1', fee: '.1', feeSymbol, isMaker: true });
   check('WAPI ISO timestamp without timezone parses as UTC', () => assert.equal(fillTimestamp('2026-09-30T04:56:59.848'), Date.parse('2026-09-30T04:56:59.848Z')));
   const end = START + 12 * 3600e3;
   let history = await collectHistory({ symbols: {} }, ['X'], end, async (symbol, lo, hi) => [fill('boundary', START + 6 * 3600e3)].filter((f) => f.timestamp >= lo && f.timestamp <= hi));

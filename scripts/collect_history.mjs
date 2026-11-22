@@ -36,11 +36,11 @@ const fetchPage = async (symbol, from, to) => {
   if (r.status !== 200) throw new Error(`history HTTP ${r.status}`);
   return JSON.parse(r.body);
 };
-state = await collectHistory(state,symbols,sampledAt,fetchPage,30,{overlapMs:3600000,safetyLagMs:60000});
+state = await collectHistory(state,symbols,sampledAt,fetchPage,30,{overlapMs:3600000,safetyLagMs:60000,identity});
 if(!state.incomplete) {
   for(const rec of Object.values(state.symbols)) if(!rec.auditedThrough)rec.auditedThrough=Date.parse(state.asOf);
 }
-state = await auditHistory(state,symbols,Date.parse(state.asOf),fetchPage,10);
+state = await auditHistory(state,symbols,Date.parse(state.asOf),fetchPage,10,{identity});
 await checkAccount();
 async function atomic(p, data) { await fs.writeFile(p + ".tmp", JSON.stringify(data, null, 2)); await fs.rename(p + ".tmp", p); }
 const summary = store("save",state);

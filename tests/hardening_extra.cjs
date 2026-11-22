@@ -21,7 +21,7 @@ async function main(){
  test('actual market margin dominates leverage-only estimate',()=>assert.equal(contract.marginEstimate(500,cfg,{type:'sqrt',base:.2,factor:0}),100));
  test('size-dependent IMF grows conservatively',()=>assert.equal(contract.marginEstimate(10000,cfg,{type:'sqrt',base:.02,factor:.003}),3000));
  const d=fixture(),now=START+2*86400000;
- const fill={id:'old-late',timestamp:START+1000,price:'100',quantity:'1',fee:'.1',feeSymbol:'USDC',isMaker:true};
+ const fill={id:'old-late',symbol:'X',timestamp:START+1000,price:'100',quantity:'1',fee:'.1',feeSymbol:'USDC',isMaker:true};
  let h={accountKey:identity.accountKey,symbols:{X:{from:START,lastTo:now,fills:{},auditedThrough:START,incomplete:false}},acquiredAt:new Date(now).toISOString(),asOf:new Date(now).toISOString(),incomplete:false};
  h=await auditHistory(h,['X'],now,async(s,lo,hi)=>fill.timestamp>=lo&&fill.timestamp<=hi?[fill]:[],10);
  test('deep audit captures fills older than overlap horizon',()=>{assert(h.symbols.X.fills['old-late']);assert.equal(h.auditIncomplete,false);});

@@ -122,7 +122,10 @@ const dataAsOf = newest > 0 ? new Date(newest).toISOString() : null;
 // unreadable — unknown must never be displayed as success (10-09 re-review R3')
 const data = { ops: opsRows, fills: fillRows, rounds: roundRows, dataAsOf, fillsAsOf, ledgerAsOf,
   collection: { ok: hist ? hist.ok === true : null, checkedAt: hist ? hist.at : null,
-                incomplete: store.incomplete === true, fillCount: store.fillCount } };
+                incomplete: store.incomplete === true,
+                forwardIncomplete: typeof store.forwardIncomplete === 'boolean' ? store.forwardIncomplete : null,
+                auditIncomplete: typeof store.auditIncomplete === 'boolean' ? store.auditIncomplete : null,
+                fillCount: store.fillCount } };
 atomic(p('ops.json'), JSON.stringify({ ...data, updatedAt: new Date().toISOString() }));
 // written after ops.json on purpose: a failed data write must never poison the hash
 atomic(p('ops_content_hash'), hash(data));

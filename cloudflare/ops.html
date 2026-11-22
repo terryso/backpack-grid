@@ -117,7 +117,14 @@ function render() {
   const col = DATA.collection || {};
   if (col.ok === false) flags.push('<span class="chip bad">成交采集失败</span>');
   else if (col.ok == null) flags.push('<span class="chip bad">采集状态未知</span>');
-  if (col.incomplete) flags.push('<span class="chip bad">成交流水采集不完整</span>');
+  if (typeof col.forwardIncomplete === 'boolean' && typeof col.auditIncomplete === 'boolean') {
+    if (col.incomplete !== (col.forwardIncomplete || col.auditIncomplete)) flags.push('<span class="chip bad">采集完整性状态异常</span>');
+    else {
+      if (col.forwardIncomplete) flags.push('<span class="chip bad">成交流水前向采集未追平</span>');
+      if (col.auditIncomplete) flags.push('<span class="chip bad">历史深度核对未完成</span>');
+    }
+  } else if (col.incomplete) flags.push('<span class="chip bad">成交流水采集不完整</span>');
+  else flags.push('<span class="chip bad">历史核对状态待更新</span>');
   if (ledAsOf && Date.now() - Date.parse(ledAsOf) > 30 * 60 * 1000) flags.push('<span class="chip bad">采集滞后</span>');
   if (Date.now() - Date.parse(asOf) > 2 * 3600 * 1000) flags.push('<span class="chip bad">数据滞后</span>');
   document.getElementById("staleChips").innerHTML = flags.join("");
