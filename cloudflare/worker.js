@@ -93,7 +93,7 @@ export default {
     }
     if (url.pathname === "/api/sentinel/run" && request.method === "POST") {
       if (request.headers.get("x-token") !== writeToken) return new Response("forbidden", { status: 403 });
-      return json(JSON.stringify(await runSentinel(env)));
+      return json(JSON.stringify(await runSentinel(env, { forcePersist: true })));
     }
 
     return new Response("not found", { status: 404 });
@@ -155,31 +155,113 @@ async function fetchCloses(sym) {
   return null;
 }
 
-// ---------- 哨兵（5 分钟 cron） ----------
+// ---------- 哨兵（5 分钟检查，平稳时 30 分钟持久化心跳） ----------
 
-async function runSentinel(env) {
+const SENTINEL_STATUS_WRITE_INTERVAL_MS = 30 * 60 * 1000;
+
+async function persistSentinelState(env, state) {
+  state.lastPersistedAt = new Date().toISOString();
+  state.statusWriteIntervalSeconds = SENTINEL_STATUS_WRITE_INTERVAL_MS / 1000;
+  await env.DASH.put("sentinel_state", JSON.stringify(state));
+}
+
+async function recordSentinelFailure(env, state, stage) {
+  state.monitoringStatus = "degraded";
+  state.monitoringReasons = [stage];
+  state.lastFailure = { at: new Date().toISOString(), stage };
+  try { await persistSentinelState(env, state); }
+  catch { console.error("sentinel failure state could not be persisted"); }
+}
+
+async function runSentinel(env, { forcePersist = false } = {}) {
   const state = JSON.parse(await env.DASH.get("sentinel_state") || "{}");
-  const latest = JSON.parse(await env.DASH.get("latest") || "null");
+  let latest;
+  try { latest = JSON.parse(await env.DASH.get("latest") || "null"); }
+  catch (error) { await recordSentinelFailure(env, state, "snapshot-read"); throw error; }
   if (!latest || !Array.isArray(latest.positions) || !latest.positions.length || !latest.updatedAt) {
     state.lastSkip = { at: new Date().toISOString(), reason: "no snapshot or no positions" };
-    await env.DASH.put("sentinel_state", JSON.stringify(state));
+    state.monitoringStatus = "skipped";
+    state.monitoringReasons = ["snapshot-unavailable-or-no-positions"];
+    // Missing data can be a failure, so do not suppress this path.
+    await persistSentinelState(env, state);
     return state;
   }
+  const previousStatus = state.monitoringStatus;
+  const previousTriggers = Array.isArray(state.activeTriggers) && state.activeTriggers.every((t) => typeof t === "string")
+    ? [...state.activeTriggers].sort() : null;
+  const previousWriteAt = Date.parse(state.lastPersistedAt || state.lastRunAt || "");
   let liveMarks = null;
-  try { liveMarks = await fetchMarks(); } catch {} // 拉不到就用快照 mark（降级可用）
-  const { triggers, detail } = patterns.evaluate(latest, liveMarks);
+  let marketDataFailed = false;
+  try {
+    liveMarks = await fetchMarks();
+    if (!Object.values(liveMarks).some((mark) => Number.isFinite(mark) && mark > 0)) {
+      liveMarks = null; marketDataFailed = true;
+    } else if (latest.positions.some((position) => position?.side === "short" &&
+      (!position.symbol || !(Number.isFinite(liveMarks[position.symbol]) && liveMarks[position.symbol] > 0)))) {
+      // Keep the valid live prices for other positions, but record the partial
+      // fallback immediately instead of treating it as a healthy quiet check.
+      marketDataFailed = true;
+    }
+  } catch { marketDataFailed = true; } // 拉不到就用快照 mark（降级可用）
+  let evaluation;
+  try {
+    evaluation = patterns.evaluate(latest, liveMarks);
+    if (!evaluation || !Array.isArray(evaluation.triggers) || !evaluation.detail || typeof evaluation.detail !== "object" ||
+      evaluation.triggers.some((t) => !t || typeof t.type !== "string" || !t.type || typeof t.title !== "string" || typeof t.body !== "string")) {
+      throw new Error("invalid sentinel evaluation");
+    }
+  }
+  catch (error) { await recordSentinelFailure(env, state, "risk-evaluation"); throw error; }
+  const { triggers, detail } = evaluation;
+  const shortPositions = latest.positions.filter((position) => position?.side === "short").length;
+  const riskDataIncomplete = shortPositions > 0 && (!Number.isSafeInteger(detail.positionsEvaluated) || detail.positionsEvaluated < shortPositions);
+  const snapshotAt = Date.parse(latest.updatedAt);
+  const snapshotAge = Date.now() - snapshotAt;
+  const snapshotStale = !Number.isFinite(snapshotAt) || snapshotAge < 0 || snapshotAge > patterns.SENTINEL.BLIND_MIN * 60000;
+  const activeTriggers = [...new Set(triggers.map((t) => t.type))].sort();
+  const triggerChanged = !previousTriggers || JSON.stringify(previousTriggers) !== JSON.stringify(activeTriggers);
+  state.activeTriggers = activeTriggers;
   const pushed = [];
+  let notificationFailed = false;
   for (const t of triggers) {
     const last = state[t.type] && state[t.type].lastAt;
     if (last && Date.now() - Date.parse(last) < patterns.SENTINEL.COOLDOWN_MS) continue;
-    const r = await bark(env, t.title, t.body, { group: "grid-" + t.type, level: t.level });
+    let r;
+    try { r = await bark(env, t.title, t.body, { group: "grid-" + t.type, level: t.level }); }
+    catch (error) {
+      // Preserve successful earlier notifications and record the failure, then
+      // rethrow so the scheduled invocation still reports the error.
+      state[`${t.type}_err`] = { at: new Date().toISOString(), result: { status: 0, error: "notification request failed" } };
+      state.lastRunAt = new Date().toISOString();
+      state.lastDetail = detail;
+      state.lastPushed = pushed;
+      await recordSentinelFailure(env, state, "notification");
+      throw error;
+    }
     if (r.status === 200) { state[t.type] = { lastAt: new Date().toISOString() }; pushed.push(t.type); }
-    else state[`${t.type}_err`] = { at: new Date().toISOString(), result: r };
+    else { state[`${t.type}_err`] = { at: new Date().toISOString(), result: r }; notificationFailed = true; }
   }
+  const reasons = [];
+  if (latest.dataValid === false) reasons.push("snapshot-invalid");
+  if (snapshotStale) reasons.push("snapshot-stale");
+  if (marketDataFailed) reasons.push("market-data");
+  if (riskDataIncomplete) reasons.push("risk-data-incomplete");
+  if (notificationFailed) reasons.push("notification");
+  const monitoringStatus = reasons.length ? "degraded" : "healthy";
+  const statusChanged = previousStatus !== monitoringStatus;
+  state.monitoringStatus = monitoringStatus;
+  state.monitoringReasons = reasons;
   state.lastRunAt = new Date().toISOString();
   state.lastDetail = detail;
   state.lastPushed = pushed;
-  await env.DASH.put("sentinel_state", JSON.stringify(state));
+  const elapsed = Date.now() - previousWriteAt;
+  const heartbeatDue = !Number.isFinite(previousWriteAt) || elapsed < 0 || elapsed >= SENTINEL_STATUS_WRITE_INTERVAL_MS;
+  // Never defer active alerts, degraded data, recovery, manual runs or state
+  // transitions. In a quiet state lastRunAt is the most recently persisted
+  // check, not proof of the most recent five-minute invocation.
+  if (forcePersist || triggers.length || reasons.length || triggerChanged || statusChanged || heartbeatDue) {
+    await persistSentinelState(env, state);
+  }
   return state;
 }
 
