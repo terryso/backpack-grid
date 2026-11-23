@@ -82,6 +82,59 @@ async function check(name, fn) { await fn(); checks++; console.log('PASS', name)
     h.setMarkPrice(104.5); h.advance(5 * 60000); await h.run();
     assert.equal(h.writes.length, 1); assert.equal(h.counts().barkRequests, 1); assert.equal(h.read().activeTriggers[0], 'A');
   });
+  await check('a long position near the estimated stop triggers an alert', async () => {
+    const latest = { updatedAt: iso(initial), slPct: 6, positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven: 100, mark: 100 }], direction: { streak: 0 } };
+    const h = harness({ latest, realPatterns: true }); h.advance(5 * 60000); await h.run(); assert.equal(h.writes.length, 0);
+    h.setMarkPrice(95); h.advance(5 * 60000); await h.run();
+    assert.equal(h.read().activeTriggers[0], 'A'); assert.equal(h.counts().barkRequests, 1);
+    assert.equal(h.read().lastDetail.positionsEvaluated, 1); assert(h.read().lastDetail.worst.distPct > 0 && h.read().lastDetail.worst.distPct < 2);
+  });
+  await check('a long position past its estimated stop remains alerting', async () => {
+    const latest = { updatedAt: iso(initial), slPct: 6, positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven: 100, mark: 100 }], direction: { streak: 0 } };
+    const h = harness({ latest, realPatterns: true }); h.setMarkPrice(93); h.advance(5 * 60000); await h.run();
+    assert.equal(h.read().activeTriggers[0], 'A'); assert(h.read().lastDetail.worst.distPct < 0);
+  });
+  await check('the alert states that its reference price is not the exchange stop price', async () => {
+    const risk = require('../cloudflare/patterns.js').evaluate({ updatedAt: iso(initial), slPct: 6,
+      positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven: 100, mark: 95 }] }, { BTC_USDC_PERP: 95 }, initial);
+    const a = risk.triggers.find(t => t.type === 'A');
+    assert(a); assert(a.body.includes('并非交易所止损价'));
+  });
+  await check('a stale snapshot near a long estimated stop raises the blind-window alert', async () => {
+    const latest = { updatedAt: iso(initial - 31 * 60000), slPct: 6, positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven: 100, mark: 95 }], direction: { streak: 0 } };
+    const h = harness({ latest, realPatterns: true }); h.setMarkPrice(95); await h.run();
+    assert(h.read().activeTriggers.includes('A')); assert(h.read().activeTriggers.includes('B'));
+    assert(h.read().monitoringReasons.includes('snapshot-stale'));
+  });
+  await check('a long position with invalid breakeven is not treated as healthy', async () => {
+    for (const breakeven of [0, true, [100], 'Infinity']) {
+      const latest = { updatedAt: iso(initial), slPct: 6, positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven, mark: 100 }], direction: { streak: 0 } };
+      const h = harness({ latest, realPatterns: true }); h.advance(5 * 60000); await h.run();
+      assert.equal(h.read().monitoringStatus, 'degraded'); assert(h.read().monitoringReasons.includes('risk-data-incomplete'));
+    }
+  });
+  await check('a long position without a live mark degrades while preserving the snapshot fallback', async () => {
+    const latest = { updatedAt: iso(initial), slPct: 6, positions: [{ symbol: 'ETH_USDC_PERP', side: 'long', breakeven: 100, mark: 95 }], direction: { streak: 0 } };
+    const h = harness({ latest, realPatterns: true }); h.advance(5 * 60000); await h.run();
+    assert.equal(h.read().monitoringStatus, 'degraded'); assert(h.read().monitoringReasons.includes('market-data'));
+    assert.equal(h.read().lastDetail.positionsEvaluated, 1); assert.equal(h.read().activeTriggers[0], 'A');
+  });
+  await check('mixed long and short positions select the closest stop', async () => {
+    const latest = { updatedAt: iso(initial), slPct: 6, positions: [
+      { symbol: 'BTC_USDC_PERP', side: 'short', breakeven: 100, mark: 104.5 },
+      { symbol: 'ETH_USDC_PERP', side: 'long', breakeven: 100, mark: 94.5 },
+    ], direction: { streak: 0 } };
+    const h = harness({ latest, realPatterns: true }); h.setMarkPrice(104.5); h.advance(5 * 60000); await h.run();
+    assert.equal(h.read().lastDetail.positionsEvaluated, 2); assert.equal(h.read().lastDetail.worst.symbol, 'ETH_USDC_PERP');
+    assert.equal(h.read().activeTriggers[0], 'A'); assert(h.read().monitoringReasons.includes('market-data'));
+  });
+  await check('an invalid long stop percentage does not become a healthy estimate', async () => {
+    for (const slPct of [null, false, [], '', '  ', 0, -1, 100, 150, 'Infinity']) {
+      const latest = { updatedAt: iso(initial), slPct, positions: [{ symbol: 'BTC_USDC_PERP', side: 'long', breakeven: 100, mark: 100 }], direction: { streak: 0 } };
+      const h = harness({ latest, realPatterns: true }); h.advance(5 * 60000); await h.run();
+      assert.equal(h.read().monitoringStatus, 'degraded'); assert(h.read().monitoringReasons.includes('risk-data-incomplete'));
+    }
+  });
   await check('a short position that cannot be evaluated is not treated as a quiet healthy check', async () => {
     const latest = { updatedAt: iso(initial), slPct: 6, positions: [{ symbol: 'BTC_USDC_PERP', side: 'short', breakeven: 0, mark: 100 }], direction: { streak: 0 } };
     const h = harness({ latest, realPatterns: true }); h.advance(5 * 60000); await h.run();

@@ -158,6 +158,7 @@ async function fetchCloses(sym) {
 // ---------- 哨兵（5 分钟检查，平稳时 30 分钟持久化心跳） ----------
 
 const SENTINEL_STATUS_WRITE_INTERVAL_MS = 30 * 60 * 1000;
+const monitoredPosition = position => position?.side === "short" || position?.side === "long";
 
 async function persistSentinelState(env, state) {
   state.lastPersistedAt = new Date().toISOString();
@@ -196,7 +197,7 @@ async function runSentinel(env, { forcePersist = false } = {}) {
     liveMarks = await fetchMarks();
     if (!Object.values(liveMarks).some((mark) => Number.isFinite(mark) && mark > 0)) {
       liveMarks = null; marketDataFailed = true;
-    } else if (latest.positions.some((position) => position?.side === "short" &&
+    } else if (latest.positions.some((position) => monitoredPosition(position) &&
       (!position.symbol || !(Number.isFinite(liveMarks[position.symbol]) && liveMarks[position.symbol] > 0)))) {
       // Keep the valid live prices for other positions, but record the partial
       // fallback immediately instead of treating it as a healthy quiet check.
@@ -213,8 +214,8 @@ async function runSentinel(env, { forcePersist = false } = {}) {
   }
   catch (error) { await recordSentinelFailure(env, state, "risk-evaluation"); throw error; }
   const { triggers, detail } = evaluation;
-  const shortPositions = latest.positions.filter((position) => position?.side === "short").length;
-  const riskDataIncomplete = shortPositions > 0 && (!Number.isSafeInteger(detail.positionsEvaluated) || detail.positionsEvaluated < shortPositions);
+  const monitoredPositions = latest.positions.filter(monitoredPosition).length;
+  const riskDataIncomplete = monitoredPositions > 0 && (!Number.isSafeInteger(detail.positionsEvaluated) || detail.positionsEvaluated < monitoredPositions);
   const snapshotAt = Date.parse(latest.updatedAt);
   const snapshotAge = Date.now() - snapshotAt;
   const snapshotStale = !Number.isFinite(snapshotAt) || snapshotAge < 0 || snapshotAge > patterns.SENTINEL.BLIND_MIN * 60000;

@@ -76,14 +76,20 @@ const SENTINEL = {
   C_MUTE_UTC_FROM: 15,     // C 夜间静音：UTC 15–24 点 = 北京 23:00–08:00
 };
 
-// 单个空单距 nativeSL 的距离（正数=还有距离，负数=已越过止损线）。
-// 仅评空单；Long 指令时代的镜像在方向切换落地时补。
+// 按持仓保本价与配置比例计算风险参考价；这不是交易所的止损触发价。
+// 距离为正表示尚未越过参考价，为负表示已经越过。
 function slDistance(pos, liveMark, slPct) {
-  if (!pos || pos.side !== "short") return null;
-  const be = Number(pos.breakeven), mk = Number(liveMark);
-  if (!(be > 0) || !(mk > 0)) return null;
-  const slPrice = be * (1 + (Number(slPct) > 0 ? Number(slPct) : 6) / 100);
-  return { symbol: pos.symbol || pos.market, slPrice, mark: mk, distPct: (slPrice - mk) / mk * 100 };
+  if (!pos || (pos.side !== "short" && pos.side !== "long")) return null;
+  const numeric = value => typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  const be = numeric(pos.breakeven), mk = numeric(liveMark);
+  if (!Number.isFinite(be) || !(be > 0) || !Number.isFinite(mk) || !(mk > 0)) return null;
+  const parsedPct = numeric(slPct);
+  const pct = pos.side === "short" && !(parsedPct > 0) ? 6 : parsedPct;
+  // A long stop at or below zero cannot be estimated from this percentage.
+  if (!Number.isFinite(pct) || pct <= 0 || (pos.side === "long" && pct >= 100)) return null;
+  const slPrice = be * (1 + (pos.side === "short" ? pct : -pct) / 100);
+  const distPct = (pos.side === "short" ? slPrice - mk : mk - slPrice) / mk * 100;
+  return { symbol: pos.symbol || pos.market, slPrice, mark: mk, distPct };
 }
 
 // 用 KV 快照 + 实时公开行情评估三个触发器。liveMarks 为空时退回快照 mark（降级仍可用）。
@@ -92,7 +98,7 @@ function evaluate(latest, liveMarks, nowMs = Date.now()) {
   const rows = [];
   for (const p of positions) {
     const live = liveMarks && Number(liveMarks[p.symbol]);
-    const r = slDistance(p, Number.isFinite(live) && live > 0 ? live : Number(p.mark), latest?.slPct);
+    const r = slDistance(p, Number.isFinite(live) && live > 0 ? live : p.mark, latest?.slPct);
     if (r) rows.push(r);
   }
   rows.sort((a, b) => a.distPct - b.distPct);
@@ -110,14 +116,14 @@ function evaluate(latest, liveMarks, nowMs = Date.now()) {
   if (worst && worst.distPct < SENTINEL.SL_NEAR_PCT) {
     triggers.push({
       type: "A", level: "timeSensitive",
-      title: `哨兵A ${short(worst.symbol)} 距止损${fmt(worst.distPct)}%`,
-      body: `SL≈${worst.slPrice.toFixed(2)} 现价${worst.mark.toFixed(2)} — 考虑手机减仓该格`,
+      title: `哨兵A ${short(worst.symbol)} 距持仓风险参考价${fmt(worst.distPct)}%`,
+      body: `参考价≈${worst.slPrice.toFixed(2)} 现价${worst.mark.toFixed(2)}；按保本价和配置比例估算，并非交易所止损价`,
     });
   }
   if (worst && blindMin !== null && blindMin > SENTINEL.BLIND_MIN && worst.distPct < SENTINEL.BLIND_SL_PCT) {
     triggers.push({
       type: "B", level: "timeSensitive",
-      title: `哨兵B 盲窗${Math.round(blindMin)}分 距止损${fmt(worst.distPct)}%`,
+      title: `哨兵B 盲窗${Math.round(blindMin)}分 距持仓风险参考价${fmt(worst.distPct)}%`,
       body: `${short(worst.symbol)} Mac无写入 — 建议手机处置`,
     });
   }
