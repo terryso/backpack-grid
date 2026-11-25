@@ -34,7 +34,7 @@ const dwellFile = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'state', 'b
 // ---------- gate & defaults ----------
 check('defaults: documented fallbacks when keys missing', () => {
   const d = defaultsFor({});
-  assert.deepEqual(d, { dwellMin: 10, bufferPct: 0.5, posSl: 150, posTp: 150 });
+  assert.deepEqual(d, { dwellMin: 10, bufferPct: 0.5, posSl: 150, posTp: 150, trailArm: 0, trailGiveback: 0 });
 });
 check('defaults: explicit config wins', () => {
   assert.equal(defaultsFor({ breachDwellMin: 30 }).dwellMin, 30);
@@ -81,6 +81,90 @@ check('AUTO_SL outranks AUTO_TP (SL checked first)', () => {
   const g = [gridZ(1100)];
   const a = run(dir, { ...baseCfg }, obsOf(g, [posZ(-500, 1100)], 0), g);
   assert.match(a[0].reason, /AUTO_SL/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------- AUTO_TRAIL trailing profit lock ----------
+const trailCfg = () => ({ ...baseCfg, trailArmPct: 10, trailGivebackPct: 4 });
+const trailFile = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'state', 'trail_peak.json'), 'utf8'));
+const trailPeak = (dir) => { try { return trailFile(dir).markets['ZEC-PERP']; } catch { return undefined; } };
+
+check('AUTO_TRAIL: arms at >= trailArmPct, records peak, no action', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(11, 1400)], 0), g);
+  assert.equal(a.length, 0);
+  assert.equal(trailFile(dir).markets['ZEC-PERP'].peak, 11);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: below arm threshold → no state, no action', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(9.9, 1400)], 0), g);
+  assert.equal(a.length, 0);
+  assert.equal(trailPeak(dir), undefined);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: peak ratchets up across rounds', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(11, 1400)], 0), g);
+  run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+  assert.equal(trailFile(dir).markets['ZEC-PERP'].peak, 13);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: giveback >= threshold while still >0 → lock in via stop', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g); // peak = 13
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 0), g); // giveback 4.1pp, >0
+  assert.equal(a.length, 1);
+  assert.match(a[0].reason, /AUTO_TRAIL/);
+  assert.match(a[0].reason, /lock in 8\.9%/);
+  assert.equal(trailPeak(dir), undefined); // state cleared after firing
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: giveback below threshold → holds (3pp < 4pp)', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(11, 1400)], 0), g);
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(8, 1400)], 0), g); // giveback 3pp
+  assert.equal(a.length, 0);
+  assert.equal(trailFile(dir).markets['ZEC-PERP'].peak, 11);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: fell below 0 → hold (floor rule), peak kept for recovery', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(-2, 1400)], 0), g); // giveback 15pp but <= 0
+  assert.equal(a.length, 0);
+  assert.equal(trailFile(dir).markets['ZEC-PERP'].peak, 13);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: unreachable pnlPct keeps peak untouched', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+  const a = run(dir, trailCfg(), obsOf(g, [posZ(undefined, 1400)], 0), g);
+  assert.equal(a.length, 0);
+  assert.equal(trailFile(dir).markets['ZEC-PERP'].peak, 13);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: gate off (keys absent) → never arms even at big profit', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  const a = run(dir, { ...baseCfg }, obsOf(g, [posZ(40, 1400)], 0), g); // AUTO_TP 150 未触发、trail 关闭
+  assert.equal(a.length, 0);
+  assert.equal(fs.existsSync(path.join(dir, 'state', 'trail_peak.json')), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: state pruned when grid no longer configured', () => {
+  const { dir } = fixture();
+  const g = [gridZ(1400)];
+  run(dir, trailCfg(), obsOf(g, [posZ(11, 1400)], 0), g);
+  run(dir, trailCfg(), obsOf([], [], 0), []); // grid gone（grids 参数与快照都要空）
+  assert.equal(trailPeak(dir), undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

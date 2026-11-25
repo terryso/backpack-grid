@@ -14,7 +14,7 @@ function validateConfig(c) {
   const sub=c.subaccountId??3;if(!Number.isSafeInteger(sub)||sub<0)throw Error('invalid subaccountId');
   // optional auto-exits keys (feature gate autoExitsEnabled): validated only when present
   if(c.autoExitsEnabled!==undefined && typeof c.autoExitsEnabled!=='boolean') throw Error('invalid config: autoExitsEnabled');
-  const autoRanges={breachDwellMin:[1,1440],breachBufferPct:[0,100],positionStopLossPct:[1,10000],positionTakeProfitPct:[0,10000],accountFloorUsd:[0,1e9]};
+  const autoRanges={breachDwellMin:[1,1440],breachBufferPct:[0,100],positionStopLossPct:[1,10000],positionTakeProfitPct:[0,10000],accountFloorUsd:[0,1e9],trailArmPct:[1,10000],trailGivebackPct:[0.5,10000]};
   for(const [k,[lo,hi]] of Object.entries(autoRanges))
     if(c[k]!==undefined && (typeof c[k]!=='number' || !finiteNumber(c[k]) || c[k]<lo || c[k]>hi)) throw Error('invalid config: '+k);
   return c;

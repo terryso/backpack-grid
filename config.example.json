@@ -83,5 +83,7 @@
   "breachBufferPct": 0.5,
   "positionStopLossPct": 100,
   "positionTakeProfitPct": 75,
+  "trailArmPct": 10,
+  "trailGivebackPct": 4,
   "accountFloorUsd": 0
 }
