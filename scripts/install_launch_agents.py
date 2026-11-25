@@ -22,7 +22,9 @@ def launchd_path() -> str:
     parts = [p for p in (node_dir, str(Path.home() / ".local/bin"), "/usr/local/bin", "/usr/bin", "/bin") if p]
     return ":".join(parts)
 JOBS = [
-    ("com.backpack.grid-monitor", "com.backpack.grid-monitor.plist", "round_locked.sh", 900),
+    # 300s：AUTO_TRAIL 站岗期回撤检测粒度（轮次本体秒级，间隔是唯一约束；
+    # 15min 时代 trail 实锁回吐 7-10pp，5min 粒度显著贴近 4pp 设计值）
+    ("com.backpack.grid-monitor", "com.backpack.grid-monitor.plist", "round_locked.sh", 300),
     ("com.backpack-grid-peak", "com.backpack-grid-peak.plist", "peak_probe.sh", 60),
     ("com.backpack-grid-history", "com.backpack-grid-history.plist", "collect_history.sh", 900),
     ("com.backpack-grid-research", "com.backpack-grid-research.plist", "refresh_research.sh", 900),
