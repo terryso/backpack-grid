@@ -121,8 +121,58 @@ check('AUTO_TRAIL: giveback >= threshold while still >0 → lock in via stop', (
   assert.equal(a.length, 1);
   assert.match(a[0].reason, /AUTO_TRAIL/);
   assert.match(a[0].reason, /lock in 8\.9%/);
-  assert.equal(trailPeak(dir), undefined); // state cleared after firing
+  assert.equal(trailPeak(dir).peak, 13); // planning alone must not consume the peak
   fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: a stop plan that was not executed can be planned again', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+    const first = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15), g);
+    assert.equal(first.length, 1); assert.match(first[0].reason, /AUTO_TRAIL/);
+    // The executor never started: no stop intent or exchange write exists.
+    const retry = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 30), g);
+    assert.equal(retry.length, 1); assert.match(retry[0].reason, /AUTO_TRAIL/);
+    assert.equal(trailPeak(dir).peak, 13);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: missed execution respects zero-profit hold and can retry after recovery', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15), g).length, 1);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(0, 1400)], 30), g).length, 0);
+    assert.equal(trailPeak(dir).peak, 13);
+    const retry = run(dir, trailCfg(), obsOf(g, [posZ(2, 1400)], 45), g);
+    assert.equal(retry.length, 1); assert.match(retry[0].reason, /AUTO_TRAIL/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: pending stop suppresses duplicate planning without losing the peak', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15), g).length, 1);
+    const actions = [], lines = [];
+    planAutoExits({ ROOT: dir, identity, cfg: trailCfg(), obs: obsOf(g, [posZ(8.9, 1400)], 30),
+      grids: g, pending: { 'ZEC-PERP': { at: iso(15) } }, heldByUser: () => false, manualCorrupt: false, actions, lines });
+    assert.equal(actions.length, 0); assert.equal(trailPeak(dir).peak, 13);
+    const retry = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 45), g);
+    assert.equal(retry.length, 1); assert.match(retry[0].reason, /AUTO_TRAIL/);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: observed grid removal clears peak before same-market recreation', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15), g).length, 1);
+    run(dir, trailCfg(), obsOf([], [], 30), []);
+    assert.equal(trailPeak(dir), undefined);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 45), g).length, 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 check('AUTO_TRAIL: giveback below threshold → holds (3pp < 4pp)', () => {
   const { dir } = fixture();

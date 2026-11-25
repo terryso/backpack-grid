@@ -134,8 +134,10 @@ function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, m
             actions.push({ act: 'stop', market: g.market, range: g.range,
               reason: `AUTO_TRAIL: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% (>0)` });
             lines.push(`AUTO TRAIL ${g.market}: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% via stop`);
-            delete stateTrail.markets[g.market];
-            dirtyTrail = true;
+            // Planning is not execution: if the actor never starts, the same
+            // still-valid drawdown must remain eligible for the next round.
+            // The existing prune below clears the peak once a fresh observation
+            // confirms that this grid is no longer configured.
             continue;
           }
         }
