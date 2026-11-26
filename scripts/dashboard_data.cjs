@@ -102,10 +102,16 @@ const baseline = num(obs?.strategyEquity?.baseline ?? cfg.strategyBaselineUsd);
 const baselineAt = obs?.strategyEquity?.baselineAt || cfg.strategyStartAt || null;
 const equityChange = equity !== null && baseline !== null ? equity - baseline : null;
 let accounting = { complete: false, strategyPnl: null };
+let netDeclaredCashflow = null;
 try {
   const ledger = read('state/attribution_ledger.json');
   if (ledger && (ledger.subaccountId !== (cfg.subaccountId ?? 3) || ledger.accountKey !== read('state/account_identity.json')?.accountKey)) throw new Error('ledger account mismatch');
   accounting = attribution(ledger, baselineAt, obs?.at, equityChange);
+  // 已声明的净出入金（用户核对后导入的 cashflow 事件）：入金不算赚、出金不算亏
+  netDeclaredCashflow = (Array.isArray(ledger?.events) ? ledger.events : [])
+    .filter((e) => e.type === 'cashflow' && Number.isFinite(Number(e.amountUsd)))
+    .reduce((s, e) => s + Number(e.amountUsd), 0);
+  if (!netDeclaredCashflow) netDeclaredCashflow = null;
 } catch (e) { accounting.error = String(e.message); }
 const f = read('state/fees.json');
 let verifiedWindow=null;
@@ -138,7 +144,11 @@ const snapshot = {
   equity, available: num(obs?.margin?.availableEquity), dataValid, identityValid, manualPauses, manualPauseValid, riskStateValid, pendingCorrupt, lastRoundStatus,
   stopBudget:dataValid?stopBudgetUsage(grids,equity,cfg):{valid:false,pct:null,reason:'账户快照待核对'},
   riskWriteValid: writeState?.ok === true && Number.isFinite(Date.parse(writeState.at)) && Date.parse(writeState.at) <= Date.parse(obs?.at) && Date.parse(writeState.at) >= Date.parse(obs?.at) - 10 * 60000,
-  strategyTotalPnl: accounting.strategyPnl, equityChange, accounting, verifiedWindow,
+  // 历史总盈亏：优先完整会计口径（strategyPnl）；无完整口径但有已声明出入金时，
+  // 用「权益变化 − 净出入金」修正——2026-11-26 入金 180 后用户纠偏：裸 equityChange
+  // 把新本金吞成"亏损"。两者皆无 → null（页面层回退显示，语义=未知而非零）。
+  strategyTotalPnl: accounting.strategyPnl ?? (equityChange != null && netDeclaredCashflow != null ? equityChange - netDeclaredCashflow : null),
+  netDeclaredCashflow, equityChange, accounting, verifiedWindow,
   strategyBaseline: baseline, strategyBaselineAt: baselineAt,
   fees, runStats: { days: baselineAt && Number.isFinite(Date.parse(baselineAt)) ? +Math.max(0, (Date.now() - Date.parse(baselineAt)) / 86400000).toFixed(1) : null, records: history.count, recordsSince: history.since, rounds: confirmed.successful, failedRounds: confirmed.failed, exits: exits.size, since: confirmed.since },
   change24h, change24hPct, maxDrawdown: maxDD, maxDrawdownScope: 'all-recorded-observation-samples', historySince: history.since,
