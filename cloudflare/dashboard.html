@@ -205,8 +205,17 @@ function render(s) {
   if (ageMin > 20 || !Number.isFinite(ageMin)) chips.push(`<span class="chip bad">快照已过期</span>`);
   if (s.riskWriteValid !== true) chips.push(`<span class="chip bad">风控写入未确认</span>`);
   if (s.pendingCorrupt) chips.push(`<span class="chip bad">pending 账本损坏</span>`);
+  const trailUnknown = s.autoExits?.trailEnabled === true && s.autoExits?.trailReady !== true;
+  if (trailUnknown) {
+    const reason = s.autoExits?.trailReason;
+    const label = reason === 'legacy_peak' ? '追踪止盈旧峰值待核对'
+      : reason === 'position_identity' ? '追踪止盈仓位身份待核对'
+      : reason === 'peak_state' ? '追踪止盈峰值状态异常'
+      : '追踪止盈状态待核对';
+    chips.push(`<span class="chip bad">${label}</span>`);
+  }
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
-    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false].filter(Boolean).length;
+    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false, trailUnknown].filter(Boolean).length;
   const drawdownKnown = typeof s.drawdownPct === "number" && Number.isFinite(s.drawdownPct) && s.drawdownPct >= 0;
   const warningKnown = typeof s.warnDrawdownPct === "number" && Number.isFinite(s.warnDrawdownPct) && s.warnDrawdownPct >= 0 && s.warnDrawdownPct <= 100;
   chips.push(s.riskPaused === true ? `<span class="chip bad">风控熔断已锁</span>`

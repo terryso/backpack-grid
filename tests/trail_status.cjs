@@ -1,0 +1,22 @@
+'use strict';
+const assert = require('node:assert/strict');
+const { trailStatus } = require('../scripts/trail_status.cjs');
+const ref = 'a'.repeat(64), other = 'b'.repeat(64), market = 'TEST-PERP';
+const cfg = { autoExitsEnabled: true, trailArmPct: 10, trailGivebackPct: 4 };
+const identity = { accountKey: 'fixture' };
+const obs = { gridRows: [{ market, status: 'Triggered' }], positions: [{ market, size: '1' }], positionRefs: { [market]: ref } };
+const base = { cfg, obs, identity, snapshotValid: true, manualHolds: [], manualValid: true, pending: {}, pendingValid: true, state: null, stateExists: false };
+function check(name, input, expected) { assert.deepEqual(trailStatus({ ...base, ...input }), expected); console.log('PASS ' + name); }
+const good = { enabled: true, ready: true, reason: null }, bad = reason => ({ enabled: true, ready: false, reason });
+check('valid active position is ready', {}, good);
+check('missing position identity is not ready', { obs: { ...obs, positionRefs: {} } }, bad('position_identity'));
+check('invalid or foreign peak state is not ready', { stateExists: true, state: { accountKey: 'other', markets: {} } }, bad('peak_state'));
+check('unbound legacy peak is not ready', { stateExists: true, state: { accountKey: 'fixture', markets: { [market]: { peak: 13, since: '2026-11-26T00:00:00Z' } } } }, bad('legacy_peak'));
+check('quarantined legacy peak is not ready', { stateExists: true, state: { accountKey: 'fixture', markets: { [market]: { positionRef: ref, unboundLegacyPeak: { peak: 13, since: null } } } } }, bad('legacy_peak'));
+check('a changed position reference is not ready', { stateExists: true, state: { accountKey: 'fixture', markets: { [market]: { positionRef: other, peak: 13, since: '2026-11-26T00:00:00Z' } } } }, bad('position_changed'));
+check('matching position reference is ready', { stateExists: true, state: { accountKey: 'fixture', markets: { [market]: { positionRef: ref, peak: 13, since: '2026-11-26T00:00:00Z' } } } }, good);
+check('manual hold does not demand an unused position reference', { manualHolds: [market], obs: { ...obs, positionRefs: {} } }, good);
+check('pending cleanup does not demand an unused position reference', { pending: { [market]: {} }, obs: { ...obs, positionRefs: {} } }, good);
+check('unknown control state is not ready', { manualValid: false }, bad('control_state'));
+check('invalid snapshot is not ready', { snapshotValid: false }, bad('snapshot'));
+check('disabled trailing does not claim readiness', { cfg: { ...cfg, trailArmPct: 0 } }, { enabled: false, ready: null, reason: null });

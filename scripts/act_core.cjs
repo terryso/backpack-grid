@@ -4,6 +4,7 @@
 "use strict";
 
 const { pendingStructOk, finiteNumber, plainObject, positionListOk } = require("./state_schema.cjs");
+const { isPositionRef } = require("./position_ref.cjs");
 
 // io: {
 //   jget(pathname), jpatch(pathname, body),      — session-authenticated exchange access
@@ -12,17 +13,54 @@ const { pendingStructOk, finiteNumber, plainObject, positionListOk } = require("
 //   loadPending(), savePending(pending),         — pending ledger (corrupt handling in wrapper)
 // }
 function makeStopGrid(io) {
-  return async function stopGrid(market, range, reason, results) {
+  return async function stopGrid(market, range, reason, results, options = {}) {
     if(io.assertAccount) await io.assertAccount();
     const symbol = String(market).replace("-PERP", "_USDC_PERP");
     const loaded = await io.loadPending();
     const pending = loaded.pending;
+    const existing = pending[market];
+    const isTrail = Object.prototype.hasOwnProperty.call(options, 'trailPositionRef') || /AUTO_TRAIL/.test(String(reason || ''));
+    let trailRef = null;
+    if (isTrail) {
+      const requested = options.trailPositionRef;
+      const stored = existing?.trailPositionRef;
+      if ((requested != null && !isPositionRef(requested)) || (stored != null && !isPositionRef(stored))
+          || (requested && stored && requested !== stored)) throw new Error('trail position identity invalid');
+      trailRef = requested || stored;
+      if (!isPositionRef(trailRef) || typeof io.getTrailPositionRef !== 'function') throw new Error('trail position identity unavailable');
+      if (existing?.trailPhase != null && !['prepared', 'issued'].includes(existing.trailPhase)) throw new Error('trail position phase invalid');
+    }
+    const trailState = async () => {
+      const current = await io.getTrailPositionRef(symbol);
+      if (current?.state === 'flat') return 'flat';
+      if (current?.state === 'known' && isPositionRef(current.ref)) return current.ref === trailRef ? 'known' : 'changed';
+      return 'unknown';
+    };
+    const skipPrepared = async message => {
+      if (pending[market]) { delete pending[market]; await io.savePending(pending); }
+      results.push({ act: 'stop', market, done: false, skipped: true, error: message });
+      return { done: false, skipped: true };
+    };
+    if (isTrail) {
+      const current = await trailState();
+      if (current === 'unknown') throw new Error('trail position identity unavailable');
+      if ((current === 'flat' || current === 'changed') && existing?.trailPhase === 'prepared')
+        return await skipPrepared('trailing position changed before any exchange request');
+      if (current === 'flat' && !existing) return await skipPrepared('trailing position already flat');
+      if (current === 'changed') throw new Error('trail position identity changed');
+    }
     // WRITE-AHEAD: persist the stop intent BEFORE any exchange write, so a lost response
     // can never leave the grid stopped on-exchange with an empty pending ledger
     if (!pending[market]) {
-      pending[market] = { at: new Date().toISOString(), reason };
+      pending[market] = { at: new Date().toISOString(), reason,
+        ...(isTrail ? { trailPositionRef: trailRef, trailPhase: 'prepared' } : {}) };
       await io.savePending(pending);
     }
+    const updatePending = nextReason => {
+      const prior = pending[market] || {};
+      pending[market] = { at: new Date().toISOString(), reason: nextReason,
+        ...(isPositionRef(prior.trailPositionRef) ? { trailPositionRef: prior.trailPositionRef, trailPhase: prior.trailPhase || 'issued' } : {}) };
+    };
     const auto1 = await io.getAutomation();
     if (!Array.isArray(auto1.params?.symbols)) throw new Error("automation response malformed; intent retained");
     const entry = auto1.params.symbols.find((s) => s.symbol === symbol);
@@ -36,7 +74,7 @@ function makeStopGrid(io) {
       // A malformed position response is UNKNOWN, not flat: keep the intent, retry later.
       const pos = await io.jget(`/api/v1/position`);
       if (!positionListOk(pos)) {
-        pending[market] = { at: new Date().toISOString(), reason: reason + " (position response malformed)" };
+        updatePending(reason + " (position response malformed)");
         await io.savePending(pending);
         results.push({ act: "stop", market, done: false, unconfirmed: true });
         console.log(`STOP ${market}: position response malformed — cannot confirm flat; intent kept, retry next round`);
@@ -49,7 +87,7 @@ function makeStopGrid(io) {
         const nqKnown = finiteNumber(raw);
         const nq = nqKnown ? Number(raw) : NaN;
         if (!nqKnown) {
-          pending[market] = { at: new Date().toISOString(), reason: reason + " (netQuantity unreadable)" };
+          updatePending(reason + " (netQuantity unreadable)");
           await io.savePending(pending);
           results.push({ act: "stop", market, done: false, unconfirmed: true });
           console.log(`STOP ${market}: netQuantity unreadable — treated as unknown, intent kept, retry next round`);
@@ -63,10 +101,24 @@ function makeStopGrid(io) {
       return { done: true };
     }
     // 1) ensure disabled with close-positions-on-stop
+    const beforeDisable = isTrail ? async () => {
+      const wasPrepared = pending[market]?.trailPhase === 'prepared';
+      if (wasPrepared) { pending[market].trailPhase = 'issued'; await io.savePending(pending); }
+      try {
+        const current = await trailState();
+        if (current === 'unknown' || current === 'changed' || (current === 'flat' && wasPrepared))
+          throw new Error('trail position changed or unavailable before disable');
+      } catch (e) {
+        // This callback has not returned to jpatch, so no exchange request was
+        // sent by this attempt; keep a prepared intent if that state can be saved.
+        if (wasPrepared) { pending[market].trailPhase = 'prepared'; await io.savePending(pending); }
+        throw e;
+      }
+    } : undefined;
     const r1 = await io.jpatch(`/wapi/v1/subaccount/automation`, {
       active: true,
       params: { strategyType: "Grid", symbols: [{ ...entry, enabled: false, closePositionsOnStop: true, operation: "Upsert" }] },
-    });
+    }, beforeDisable);
     if (r1.status !== 200) throw new Error(`stop ${market}: disable failed ${r1.status} ${r1.body}`);
     // 2) wait for the bot position to close — HARD GATE. Polling errors count as
     //    "unconfirmed" (pending intent is already persisted; retry happens next round)
@@ -85,24 +137,27 @@ function makeStopGrid(io) {
       }, 20000);
     } catch { posGone = false; }
     if (!posGone) {
-      pending[market] = { at: new Date().toISOString(), reason };
+      updatePending(reason);
       await io.savePending(pending);
       results.push({ act: "stop", market, done: false, timedOut: true });
       console.log(`STOP ${market}: position still open after timeout — persisted to pending_stops.json, will retry next round (no delete/create this round)`);
       return { done: false };
     }
     // 3) flat -> delete the grid entry, retry once if the PATCH itself fails
+    const beforeDelete = isTrail ? async () => {
+      if (await trailState() !== 'flat') throw new Error('trail position is not flat before delete');
+    } : undefined;
     let r2 = await io.jpatch(`/wapi/v1/subaccount/automation`, {
       params: { strategyType: "Grid", symbols: [{ operation: "Delete", symbol }] },
-    });
+    }, beforeDelete);
     if (r2.status !== 200) {
       await io.sleep(2000);
       r2 = await io.jpatch(`/wapi/v1/subaccount/automation`, {
         params: { strategyType: "Grid", symbols: [{ operation: "Delete", symbol }] },
-      });
+      }, beforeDelete);
     }
     if (r2.status !== 200) {
-      pending[market] = { at: new Date().toISOString(), reason: reason + " (delete failed)" };
+      updatePending(reason + " (delete failed)");
       await io.savePending(pending);
       results.push({ act: "stop", market, done: false, deleteFailed: true });
       console.log(`STOP ${market}: position flat but delete failed ${r2.status} — persisted, retry next round`);
@@ -113,7 +168,7 @@ function makeStopGrid(io) {
       return Array.isArray(auto2.params?.symbols) && !auto2.params.symbols.some((s) => s.symbol === symbol);
     }, 10000);
     if (!gone) {
-      pending[market] = { at: new Date().toISOString(), reason: reason + " (delete unconfirmed)" };
+      updatePending(reason + " (delete unconfirmed)");
       await io.savePending(pending);
       results.push({ act: "stop", market, done: false, deleteUnconfirmed: true });
       console.log(`STOP ${market}: delete accepted but not confirmed — persisted, retry next round`);

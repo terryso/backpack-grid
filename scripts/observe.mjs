@@ -9,6 +9,7 @@ const { createRequire } = await import("node:module");
 const requireLocal = createRequire(path.join(ROOT, "scripts/observe.mjs"));
 const { expectedIdentity, collateralFor, validateConfig } = requireLocal("./contracts.cjs");
 const { finiteNumber, positionListOk } = createRequire(path.join(ROOT, "scripts/observe.mjs"))("./state_schema.cjs");
+const { positionRef } = requireLocal("./position_ref.cjs");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
 validateConfig(cfg);
 const identity = expectedIdentity(ROOT, cfg);
@@ -186,6 +187,9 @@ try {
 const observed = {
   at: new Date().toISOString(), source: "api", identity, marketDataAvailable,
   url: API, ...{ gridRows, margin, badges, positions }, strategyEquity, accountLeverageLimit: finiteNumber(account.leverageLimit) ? Number(account.leverageLimit) : null,
+  // Account-bound opaque references stay in the local observation. Dashboard
+  // construction does not forward this map or any raw exchange position ID.
+  positionRefs: Object.fromEntries(positionsRaw.map(p => [p.symbol.replace("_USDC_PERP", "-PERP"), positionRef(identity, p)])),
   // per-symbol strategy ledger volumes (bought+sold) for campaign volume tracking
   ledger: snapshot.map((s) => ({
     symbol: s.symbol,

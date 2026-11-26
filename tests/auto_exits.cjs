@@ -23,7 +23,10 @@ const baseCfg = {
 };
 const gridZ = (price) => ({ market: 'ZEC-PERP', symbol: 'ZEC_USDC_PERP', price, range: ['1228.81225', '1417.02775'], status: 'Triggered', allocationRaw: 2250, pnlPct: 0 });
 const posZ = (pnlPct, mark) => ({ market: 'ZEC-PERP', pnl: '-1.00', pnlPct, mark: String(mark) });
-const obsOf = (grids, positions, atMin) => ({ at: iso(atMin), identity, gridRows: grids, positions, margin: { totalEquity: '500', availableEquity: '200' } });
+const refA = 'a'.repeat(64), refB = 'b'.repeat(64);
+const obsOf = (grids, positions, atMin, refs = undefined) => ({ at: iso(atMin), identity, gridRows: grids, positions,
+  positionRefs: refs === undefined ? Object.fromEntries(positions.map(p => [p.market, refA])) : refs,
+  margin: { totalEquity: '500', availableEquity: '200' } });
 
 function run(dir, cfg, obs, grids, actions = [], lines = [], heldByUser = () => false) {
   planAutoExits({ ROOT: dir, identity, cfg, obs, grids, pending: {}, heldByUser, manualCorrupt: false, actions, lines });
@@ -130,12 +133,89 @@ check('AUTO_TRAIL: a stop plan that was not executed can be planned again', () =
     const g = [gridZ(1400)];
     run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
     const first = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15), g);
-    assert.equal(first.length, 1); assert.match(first[0].reason, /AUTO_TRAIL/);
+    assert.equal(first.length, 1); assert.match(first[0].reason, /AUTO_TRAIL/); assert.equal(first[0].trailPositionRef, refA);
     // The executor never started: no stop intent or exchange write exists.
     const retry = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 30), g);
     assert.equal(retry.length, 1); assert.match(retry[0].reason, /AUTO_TRAIL/);
     assert.equal(trailPeak(dir).peak, 13);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: a new position on the same market never inherits the old peak', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0, { 'ZEC-PERP': refA }), g);
+    const rebuilt = [{ ...g[0], range: ['1200', '1450'] }];
+    const result = run(dir, trailCfg(), obsOf(rebuilt, [posZ(8.9, 1400)], 15, { 'ZEC-PERP': refB }), rebuilt);
+    assert.equal(result.length, 0); assert.equal(trailPeak(dir), undefined);
+    run(dir, trailCfg(), obsOf(rebuilt, [posZ(11, 1400)], 30, { 'ZEC-PERP': refB }), rebuilt);
+    assert.equal(trailPeak(dir).peak, 11); assert.equal(trailPeak(dir).positionRef, refB);
+    const later = run(dir, trailCfg(), obsOf(rebuilt, [posZ(6.9, 1400)], 45, { 'ZEC-PERP': refB }), rebuilt);
+    assert.equal(later.length, 1); assert.equal(later[0].trailPositionRef, refB);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: the same position keeps its peak across an observed grid rebuild', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)], pos = [posZ(13, 1400)];
+    run(dir, trailCfg(), obsOf(g, pos, 0, { 'ZEC-PERP': refA }), g);
+    run(dir, trailCfg(), obsOf([], pos, 15, { 'ZEC-PERP': refA }), []);
+    assert.equal(trailPeak(dir).peak, 13);
+    const rebuilt = [{ ...g[0], range: ['1200', '1450'] }];
+    const result = run(dir, trailCfg(), obsOf(rebuilt, [posZ(8.9, 1400)], 30, { 'ZEC-PERP': refA }), rebuilt);
+    assert.equal(result.length, 1); assert.equal(result[0].trailPositionRef, refA);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: missing position identity never triggers or discards a known peak', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0, { 'ZEC-PERP': refA }), g);
+    for (const refs of [null, {}, { 'ZEC-PERP': null }, { 'ZEC-PERP': 'invalid' }]) {
+      assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15, refs), g).length, 0);
+      assert.equal(trailPeak(dir).peak, 13); assert.equal(trailPeak(dir).positionRef, refA);
+    }
+    const retry = run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 30, { 'ZEC-PERP': refA }), g);
+    assert.equal(retry.length, 1); assert.equal(retry[0].trailPositionRef, refA);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: a confirmed flat position clears the old peak even if the grid remains', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0, { 'ZEC-PERP': refA }), g);
+    run(dir, trailCfg(), obsOf(g, [], 15, {}), g);
+    assert.equal(trailPeak(dir), undefined);
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 30, { 'ZEC-PERP': refB }), g).length, 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: an unbound legacy peak is quarantined instead of stopping a position', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    fs.writeFileSync(path.join(dir, 'state/trail_peak.json'), JSON.stringify({ accountKey: identity.accountKey,
+      markets: { 'ZEC-PERP': { peak: 13, since: iso(0) } } }));
+    assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(8.9, 1400)], 15, { 'ZEC-PERP': refA }), g).length, 0);
+    assert.equal(trailPeak(dir).positionRef, refA); assert.equal(trailPeak(dir).unboundLegacyPeak.peak, 13);
+    run(dir, trailCfg(), obsOf(g, [posZ(11, 1400)], 30, { 'ZEC-PERP': refA }), g);
+    assert.equal(trailPeak(dir).peak, 11); assert.equal(trailPeak(dir).unboundLegacyPeak.peak, 13);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+check('AUTO_TRAIL: corrupt or foreign peak state is preserved and only trailing is skipped', () => {
+  for (const contents of ['{broken', JSON.stringify({ accountKey: 'other-account', markets: {} }),
+    JSON.stringify({ accountKey: identity.accountKey, markets: { 'ZEC-PERP': { peak: 'invalid', since: iso(0) } } }),
+    JSON.stringify({ accountKey: identity.accountKey, markets: { 'ZEC-PERP': { peak: 13, since: iso(0), positionRef: 'invalid' } } })]) {
+    const { dir } = fixture();
+    try {
+      const g = [gridZ(1400)], file = path.join(dir, 'state/trail_peak.json'), lines = [];
+      fs.writeFileSync(file, contents);
+      assert.equal(run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g, [], lines).length, 0);
+      assert.equal(fs.readFileSync(file, 'utf8'), contents); assert(lines.some(line => /preserved; trailing skipped/.test(line)));
+      const riskExit = run(dir, trailCfg(), obsOf(g, [posZ(-200, 1400)], 15), g);
+      assert.equal(riskExit.length, 1); assert.match(riskExit[0].reason, /AUTO_SL/);
+      assert.equal(fs.readFileSync(file, 'utf8'), contents);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  }
 });
 check('AUTO_TRAIL: missed execution respects zero-profit hold and can retry after recovery', () => {
   const { dir } = fixture();
@@ -208,6 +288,17 @@ check('AUTO_TRAIL: gate off (keys absent) → never arms even at big profit', ()
   assert.equal(a.length, 0);
   assert.equal(fs.existsSync(path.join(dir, 'state', 'trail_peak.json')), false);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+check('AUTO_TRAIL: disabling the feature does not silently erase an existing peak', () => {
+  const { dir } = fixture();
+  try {
+    const g = [gridZ(1400)];
+    run(dir, trailCfg(), obsOf(g, [posZ(13, 1400)], 0), g);
+    run(dir, { ...baseCfg }, obsOf(g, [], 15), g);
+    assert.equal(trailPeak(dir).peak, 13); assert.equal(trailPeak(dir).positionRef, refA);
+    run(dir, trailCfg(), obsOf(g, [], 30), g);
+    assert.equal(trailPeak(dir), undefined);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 check('AUTO_TRAIL: state pruned when grid no longer configured', () => {
   const { dir } = fixture();

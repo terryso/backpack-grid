@@ -14,6 +14,8 @@ const ROOT = "__BG_ROOT__"; // placeholder injected by ego_dispatch.sh (ego-brow
 const { createRequire } = await import("node:module");
 const requireLocal = createRequire(path.join(ROOT, "scripts/act.mjs"));
 const { expectedIdentity, assertIdentity, collateralFor, validateConfig, positionsRisk, gridConfigConfirmed, gridConfirmed, forwardRisk, marginEstimate, manualPausesFor } = requireLocal("./contracts.cjs");
+const { finiteNumber } = requireLocal("./state_schema.cjs");
+const { positionRef } = requireLocal("./position_ref.cjs");
 const {verifyLease} = requireLocal("./execution_lease.cjs");
 const cfg = JSON.parse(await fs.readFile(path.join(ROOT, "config.json"), "utf8"));
 validateConfig(cfg);
@@ -57,9 +59,10 @@ async function jget(pathname) {
   if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status}`);
   return JSON.parse(r.body);
 }
-async function jpatch(pathname, body) {
+async function jpatch(pathname, body, beforeSend) {
   await assertExecutionLease();
   await accountCheck();
+  if (beforeSend) await beforeSend();
   await assertExecutionLease();
   const r = await page.fetch(API + pathname, {
     method: "PATCH", credentials: "include", timeout: 15000,
@@ -150,9 +153,18 @@ const io = {
     }
     return data;
   },
-  jpatch: async (pathname, body) => {
+  jpatch: async (pathname, body, beforeSend) => {
     const real = pathname === "/wapi/v1/subaccount/automation" ? `/wapi/v1/subaccount/${SUB}/automation` : pathname;
-    return jpatch(real, body);
+    return jpatch(real, body, beforeSend);
+  },
+  getTrailPositionRef: async symbol => {
+    const rows = await io.jget('/api/v1/position');
+    const position = rows.find(p => p.symbol === symbol);
+    if (!position) return { state: 'flat' };
+    if (!finiteNumber(position.netQuantity)) return { state: 'unknown' };
+    if (Number(position.netQuantity) === 0) return { state: 'flat' };
+    const ref = positionRef(identity, position);
+    return ref ? { state: 'known', ref } : { state: 'unknown' };
   },
   getAutomation: () => jget(`/wapi/v1/subaccount/${SUB}/automation`),
   sleep: (ms) => page.waitForTimeout(ms),
@@ -177,7 +189,8 @@ for (const a of actions) {
     try {
       await accountCheck(); // every action, including stops/protects, belongs to the pinned owner
       if (a.act === "stop") {
-        const r = await stopGrid(a.market, a.range, a.reason, results);
+        const options = Object.prototype.hasOwnProperty.call(a, 'trailPositionRef') ? { trailPositionRef: a.trailPositionRef } : {};
+        const r = await stopGrid(a.market, a.range, a.reason, results, options);
         if (!r || r.done !== true) stopIncomplete = true;
         return { done: true };
       }

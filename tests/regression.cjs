@@ -85,7 +85,7 @@ T("T10a decide no longer auto-clears vanished-grid pending",
 T("T10c pendCorrupt blocks mayCreate", !mayCreate(null, false, true, false, true, 0));
 
 // ---------- T8: stop completion gates creation ----------
-T("T8b act checks stopGrid return value", actSrc.includes("const r = await stopGrid(a.market, a.range, a.reason, results);")
+T("T8b act checks stopGrid return value", actSrc.includes("const r = await stopGrid(a.market, a.range, a.reason, results, options);")
   && actSrc.includes("if (!r || r.done !== true) stopIncomplete = true;"));
 T("T8c emergency stop verified before claiming success", actSrc.includes("emergencyDone = !!(r && r.done === true);")
   && actSrc.includes("MANUAL INTERVENTION REQUIRED"));

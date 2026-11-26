@@ -20,6 +20,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { plainObject, finiteNumber } = require('./state_schema.cjs');
+const { isPositionRef } = require('./position_ref.cjs');
+const { trailStateOk } = require('./trail_state_schema.cjs');
 
 function defaultsFor(cfg) {
   return {
@@ -64,13 +66,16 @@ function loadTrailState(ROOT, identity, lines) {
   const file = path.join(ROOT, 'state', 'trail_peak.json');
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const ok = plainObject(parsed) && parsed.accountKey === identity.accountKey && plainObject(parsed.markets);
-    if (ok) return { file, accountKey: identity.accountKey, markets: parsed.markets, dirty: false };
-    lines.push('AUTO TRAIL peak state invalid shape: starting fresh');
-    return { file, accountKey: identity.accountKey, markets: {}, dirty: true };
+    const ok = trailStateOk(parsed, identity.accountKey);
+    if (ok) return { file, accountKey: identity.accountKey, markets: parsed.markets, dirty: false, valid: true };
+    lines.push('AUTO TRAIL peak state invalid or foreign: preserved; trailing skipped');
+    return { file, accountKey: identity.accountKey, markets: {}, dirty: false, valid: false };
   } catch (e) {
-    if (e.code !== 'ENOENT') lines.push('AUTO TRAIL peak state unreadable: starting fresh');
-    return { file, accountKey: identity.accountKey, markets: {}, dirty: fs.existsSync(file) };
+    let exists = true;
+    try { fs.lstatSync(file); } catch (statError) { if (statError.code === 'ENOENT') exists = false; }
+    if (e.code === 'ENOENT' && !exists) return { file, accountKey: identity.accountKey, markets: {}, dirty: false, valid: true };
+    lines.push('AUTO TRAIL peak state unreadable: preserved; trailing skipped');
+    return { file, accountKey: identity.accountKey, markets: {}, dirty: false, valid: false };
   }
 }
 
@@ -93,6 +98,21 @@ function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, m
     let dirty = state.dirty;
     const stateTrail = loadTrailState(ROOT, identity, lines);
     let dirtyTrail = stateTrail.dirty;
+    const positionList = Array.isArray(obs.positions) ? obs.positions : null;
+    const refs = plainObject(obs.positionRefs) ? obs.positionRefs : {};
+    const refFor = market => isPositionRef(refs[market]) ? refs[market] : null;
+    // Reconcile independently of grid presence: a still-open position keeps its
+    // peak across grid rebuilds, while an observed flat or different position
+    // cannot inherit the old position's peak.
+    if (stateTrail.valid && d.trailArm > 0 && d.trailGiveback > 0 && positionList) for (const market of Object.keys(stateTrail.markets)) {
+      const position = positionList.find(p => p && p.market === market);
+      const old = stateTrail.markets[market];
+      const currentRef = refFor(market);
+      if (!position || (finiteNumber(position.size) && Number(position.size) === 0)
+          || (currentRef && plainObject(old) && isPositionRef(old.positionRef) && old.positionRef !== currentRef)) {
+        delete stateTrail.markets[market]; dirtyTrail = true;
+      }
+    }
 
     for (const g of Array.isArray(grids) ? grids : []) {
       if (pending[g.market] || heldByUser(g.market) || manualCorrupt) continue;
@@ -122,23 +142,35 @@ function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, m
       }
       // 2.5) trailing profit lock — arm at +trailArm%, giveback ≥ trailGiveback pp and still >0 → realize.
       // Falls below 0 → hold (nativeSL is the floor). pnlPct NaN → keep peak untouched.
-      if (d.trailArm > 0 && d.trailGiveback > 0 && Number.isFinite(pnlPct)) {
-        const prevPeak = plainObject(stateTrail.markets[g.market]) && finiteNumber(stateTrail.markets[g.market].peak)
-          ? Number(stateTrail.markets[g.market].peak) : null;
-        const armed = prevPeak != null || pnlPct >= d.trailArm;
-        if (armed) {
-          const peak = Math.max(prevPeak ?? -Infinity, pnlPct);
-          if (prevPeak == null || peak > prevPeak) { stateTrail.markets[g.market] = { peak, since: obs.at }; dirtyTrail = true; }
-          const giveback = peak - pnlPct;
-          if (giveback >= d.trailGiveback && pnlPct > 0) {
-            actions.push({ act: 'stop', market: g.market, range: g.range,
-              reason: `AUTO_TRAIL: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% (>0)` });
-            lines.push(`AUTO TRAIL ${g.market}: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% via stop`);
-            // Planning is not execution: if the actor never starts, the same
-            // still-valid drawdown must remain eligible for the next round.
-            // The existing prune below clears the peak once a fresh observation
-            // confirms that this grid is no longer configured.
-            continue;
+      if (stateTrail.valid && d.trailArm > 0 && d.trailGiveback > 0 && pos) {
+        const currentRef = refFor(g.market);
+        if (!currentRef) {
+          lines.push(`AUTO TRAIL ${g.market}: position identity unavailable — peak retained, trailing skipped`);
+        } else {
+          let entry = plainObject(stateTrail.markets[g.market]) ? stateTrail.markets[g.market] : null;
+          // Old versions stored no position identity. Keep that value for review,
+          // but never use it to stop a position whose ownership cannot be proven.
+          if (entry && !isPositionRef(entry.positionRef) && finiteNumber(entry.peak)) {
+            entry = { positionRef: currentRef, unboundLegacyPeak: { peak: Number(entry.peak), since: typeof entry.since === 'string' ? entry.since : null } };
+            stateTrail.markets[g.market] = entry; dirtyTrail = true;
+            lines.push(`AUTO TRAIL ${g.market}: unbound legacy peak quarantined`);
+          }
+          const prevPeak = entry && entry.positionRef === currentRef && finiteNumber(entry.peak) ? Number(entry.peak) : null;
+          const armed = Number.isFinite(pnlPct) && (prevPeak != null || pnlPct >= d.trailArm);
+          if (armed) {
+            const peak = Math.max(prevPeak ?? -Infinity, pnlPct);
+            if (prevPeak == null || peak > prevPeak) {
+              stateTrail.markets[g.market] = { ...(entry || {}), positionRef: currentRef, peak, since: obs.at }; dirtyTrail = true;
+            }
+            const giveback = peak - pnlPct;
+            if (giveback >= d.trailGiveback && pnlPct > 0) {
+              actions.push({ act: 'stop', market: g.market, range: g.range, trailPositionRef: currentRef,
+                reason: `AUTO_TRAIL: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% (>0)` });
+              lines.push(`AUTO TRAIL ${g.market}: peak ${peak.toFixed(1)}% gave back ${giveback.toFixed(1)}pp — lock in ${pnlPct.toFixed(1)}% via stop`);
+              // Planning is not execution; retain this position's peak until a
+              // later observation confirms the position has closed or changed.
+              continue;
+            }
           }
         }
       }
@@ -181,10 +213,7 @@ function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, m
       if (!grids.some((g) => g.market === k)) { delete state.markets[k]; dirty = true; }
     }
     if (dirty) saveDwellState(state);
-    for (const k of Object.keys(stateTrail.markets)) {
-      if (!grids.some((g) => g.market === k)) { delete stateTrail.markets[k]; dirtyTrail = true; }
-    }
-    if (dirtyTrail) saveTrailState(stateTrail);
+    if (stateTrail.valid && dirtyTrail) saveTrailState(stateTrail);
   } catch (e) {
     lines.push(`AUTO EXITS failed: ${String(e.message).slice(0, 140)} — no auto actions this round`);
   }

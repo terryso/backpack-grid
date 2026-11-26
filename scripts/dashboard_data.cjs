@@ -4,6 +4,7 @@ const path = require('node:path');
 const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cjs');
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
+const { trailStatus } = require('./trail_status.cjs');
 const {identityOk,manualPausesFor,validateConfig,expectedIdentity}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
@@ -68,6 +69,13 @@ const pendingValid = (pendingStructOk(pending)&&Object.values(pending).every(p=>
 const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
 let manualPauses=[],manualPauseValid=true;
 try{manualPauses=Object.keys(manualPausesFor(ROOT,identity));}catch{manualPauseValid=false;}
+// A missing peak file is a fresh state; unreadable files and broken symlinks are
+// unknown, not fresh. Never publish position references or saved peak values.
+let trailStateExists = true;
+try { fs.lstatSync(file('state/trail_peak.json')); } catch (e) { if (e.code === 'ENOENT') trailStateExists = false; }
+const trail = trailStatus({ cfg, obs, identity, snapshotValid: dataValid, manualHolds: manualPauses,
+  manualValid: manualPauseValid, pending: pending || {}, pendingValid: !pendingCorrupt,
+  state: read('state/trail_peak.json'), stateExists: trailStateExists });
 let lastRoundStatus = null;
 try { lastRoundStatus = fs.readFileSync(file('state/last_round_status'), 'utf8').trim() || null; } catch {}
 let lastAction = null, lastActionNote = null;
@@ -139,7 +147,7 @@ const snapshot = {
   grids: grids.map((g) => ({ market: g.market, direction: g.direction, rangeLow: num(g.range?.[0]), rangeHigh: num(g.range?.[1]), count: g.count, value: num(g.value), pnl: num(g.pnl), pnlPct: num(g.pnlPct), status: g.status, price: num(g.price), nativeSL: g.nativeSL, effPnlPct: num(g.effPnlPct), gridAgeLabel: formatAgeMin(gridCreatedAt[g.market] != null ? (gridNowMs - gridCreatedAt[g.market]) / 60000 : null) })),
   marketDataAvailable:obs?.marketDataAvailable!==false,
   tpPct: cfg.takeProfitPct, slPct: cfg.stopLossPct, positions,
-  autoExits: { enabled: cfg.autoExitsEnabled === true,
+  autoExits: { enabled: cfg.autoExitsEnabled === true, trailEnabled: trail.enabled, trailReady: trail.ready, trailReason: trail.reason,
     // effective values: mirror auto_exits.cjs defaultsFor so the UI shows what the
     // executor will actually do when a key is omitted (posTp omitted = 150 ENABLED,
     // only an explicit 0 disables take-profit)

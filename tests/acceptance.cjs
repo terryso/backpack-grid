@@ -45,6 +45,7 @@ async function observedCase(mode) {
   if (mode === 'ledger-live-position-zero') {pos.netQuantity='0';pos.markPrice=null;}
   const inputs = { auto, positionsRaw: mode === 'missing-position' ? [] : [pos], account: { limitOrders: 0, liquidating: false }, collateralAll: { 'fixture-3': { netEquity: '500', netEquityAvailable: '300' } }, markAll: [], cfg, identity:{userId:'fixture',subaccountId:3,accountKey:'fixture-3'},marketDataAvailable:true,col:{netEquity:'500',netEquityAvailable:'300'}, SUB: 3, ROOT: '/fixture', API: 'mock', path, finiteNumber,
     positionListOk: require('../scripts/state_schema.cjs').positionListOk,
+    positionRef: require('../scripts/position_ref.cjs').positionRef,
     fs: { writeFile: async (p, s) => files.set(p, s), rename: async (a, b) => files.set(b, files.get(a)) },
     console: { log: () => {} }, process: { exit: (n) => { throw new Error('exit:' + n); } } };
   let error = null;

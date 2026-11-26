@@ -200,15 +200,21 @@ const writeAtomic = (p, data) => {
   // ---------- pending stop retries: highest priority actions, no tickers needed ----------
   for (const [mkt, p] of Object.entries(pending)) {
     const g = grids.find((x) => x.market === mkt);
+    // Older pending trail stops predate position references. Mark them as
+    // trailing even when the grid is absent from the observation: the grid may
+    // reappear before act runs, and the missing identity must fail closed.
+    const trailFields = Object.prototype.hasOwnProperty.call(p, 'trailPositionRef')
+      ? { trailPositionRef: p.trailPositionRef }
+      : /AUTO_TRAIL/.test(String(p.reason || '')) ? { trailPositionRef: null } : {};
     if (!g) {
       // grid absent from config — act must confirm no residue before the entry is released
-      actions.push({ act: "stop", market: mkt, reason: `pending stop verify (${p.at}): grid absent from config — confirm flat, then clear ledger` });
+      actions.push({ act: "stop", market: mkt, ...trailFields, reason: `pending stop verify (${p.at}): grid absent from config — confirm flat, then clear ledger` });
       lines.push(`PENDING STOP verify planned for ${mkt} (grid absent from config)`);
       continue;
     }
     const pos = (obs.positions || []).find((pp) => pp.market === mkt);
     const hasResidue = pos && Math.abs(num(pos.size)) > 0;
-    actions.push({ act: "stop", market: mkt, range: g.range, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` });
+    actions.push({ act: "stop", market: mkt, range: g.range, ...trailFields, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` });
     lines.push(`PENDING STOP retry planned for ${mkt} (queued ${p.at})`);
   }
 
