@@ -54,20 +54,60 @@ fs.writeFileSync('state/dashboard_upload.json.tmp', JSON.stringify(status));
 fs.renameSync('state/dashboard_upload.json.tmp', 'state/dashboard_upload.json');
 console.log(status.ok ? 'dashboard updated and read back' : `dashboard upload/readback failed HTTP ${status.httpStatus} (non-fatal, next scheduled round retries)`);
 JS
-# Operations history for /ops.html: build from local records and upload only when
-# the payload actually changed (hash gate), so quiet rounds cost zero requests.
-# ops_data also writes ops_content_hash — the data only, no build timestamp — because
-# ops.json bytes change every build (updatedAt) and would defeat the gate.
-if node scripts/ops_data.cjs >/dev/null 2>&1; then
-  OHASH=$(cat state/ops_content_hash 2>/dev/null || shasum -a 256 state/ops.json | awk '{print $1}')
-  if [ "$OHASH" != "$(cat state/ops_upload.hash 2>/dev/null || true)" ]; then
-    POST_HTTP=000
-    if post_json state/ops.json "$DASH_URL/api/ops" 20; then printf '%s' "$OHASH" > state/ops_upload.hash; fi
-    printf '{"at":"%s","httpStatus":%s}\n' "$(date -u '+%FT%TZ')" "$POST_HTTP" > state/ops_upload.json
-    rm -f state/ops.json.upload.tmp
+# History is rebuilt each round so new fills and actions can be detected, but
+# routine-only changes are batched. The snapshot above keeps its original cadence.
+upload_ops_history() {
+  local mode="$1" OHASH OPS_PAYLOAD OPS_ACTION OPS_TMP_DIR OPS_PLAN
+  if ! node scripts/ops_data.cjs >/dev/null 2>&1; then
+    echo 'ops history build failed (non-fatal)' >&2
+    return 0
   fi
+  OHASH=$(cat state/ops_content_hash 2>/dev/null || shasum -a 256 state/ops.json | awk '{print $1}')
+  OPS_PAYLOAD=state/ops.json; OPS_ACTION=''; OPS_TMP_DIR=''; OPS_PLAN=''
+  if [ "$mode" = policy ]; then
+    OPS_TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/backpack-ops-upload.XXXXXXXX" 2>/dev/null) || OPS_TMP_DIR=''
+    if [ -n "$OPS_TMP_DIR" ] && cp state/ops.json "$OPS_TMP_DIR/payload.json"; then
+      OPS_PLAN="$OPS_TMP_DIR/plan.json"
+      OPS_ACTION=$(node scripts/ops_upload_policy.cjs plan "$OPS_TMP_DIR/payload.json" "$OPS_PLAN" 2>/dev/null) || OPS_ACTION=''
+      case "$OPS_ACTION" in upload|skip) OPS_PAYLOAD="$OPS_TMP_DIR/payload.json" ;; *) OPS_ACTION=''; OPS_PLAN='' ;; esac
+    fi
+  fi
+  # Missing policy, temp directory or lock support falls back to the old
+  # immediate hash gate rather than silently suppressing a history update.
+  if [ -z "$OPS_ACTION" ]; then
+    OPS_PLAN=''
+    if [ "$OHASH" = "$(cat state/ops_upload.hash 2>/dev/null || true)" ]; then OPS_ACTION=skip; else OPS_ACTION=upload; fi
+  fi
+  if [ "$OPS_ACTION" = upload ]; then
+    POST_HTTP=000
+    if post_json "$OPS_PAYLOAD" "$DASH_URL/api/ops" 20; then
+      if [ -z "$OPS_PLAN" ] || ! node scripts/ops_upload_policy.cjs commit "$OPS_PLAN" >/dev/null 2>&1; then
+        printf '%s' "$OHASH" > state/ops_upload.hash
+      fi
+    fi
+    # curl reports network failure as 000, which is not a valid JSON number.
+    [ "$POST_HTTP" = 000 ] && POST_HTTP=0
+    printf '{"at":"%s","httpStatus":%s}\n' "$(date -u '+%FT%TZ')" "$POST_HTTP" > state/ops_upload.json
+    rm -f "$OPS_PAYLOAD.upload.tmp"
+  fi
+  if [ -n "$OPS_TMP_DIR" ]; then
+    rm -f "$OPS_TMP_DIR/payload.json" "$OPS_TMP_DIR/plan.json" "$OPS_TMP_DIR/payload.json.upload.tmp"
+    rmdir "$OPS_TMP_DIR" 2>/dev/null || true
+  fi
+  return 0
+}
+# A separate, nonblocking kernel lock prevents a simultaneous manual upload
+# from publishing an older history after a newer one. Busy means retry on the
+# next invocation; it never delays observation or trading.
+if [ -x /usr/bin/lockf ]; then
+  (
+    /usr/bin/lockf -s -t 0 9; OPS_LOCK_STATUS=$?
+    if [ "$OPS_LOCK_STATUS" -eq 75 ]; then echo 'ops history upload busy; next round retries'; exit 0; fi
+    [ "$OPS_LOCK_STATUS" -eq 0 ] || exit 1
+    upload_ops_history policy
+  ) 9>>state/ops_upload.lock || upload_ops_history legacy
 else
-  echo 'ops history build failed (non-fatal)' >&2
+  upload_ops_history legacy
 fi
 rm -f state/dashboard.json.upload.tmp state/dashboard_readback.tmp
 exit 0

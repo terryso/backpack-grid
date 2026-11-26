@@ -85,6 +85,12 @@ async function main() {
   const r = run(d, 'ops_data.cjs');
   assert.equal(r.status, 0, r.stderr);
   const ops = read(d, 'state/ops.json');
+  test('batch policy hashes the real production operations payload consistently', () => {
+    const { inspect } = require('../scripts/ops_upload_policy.cjs');
+    const view = inspect(ops, {}, identity, { ok: true });
+    assert.equal(view.contentHash, fs.readFileSync(path.join(d, 'state/ops_content_hash'), 'utf8').trim());
+    assert.equal(view.unhealthy, true); // missing snapshot health must fail open
+  });
   test('grid decisions flatten newest-first with reason and status', () => {
     assert.equal(ops.ops.length, 3);
     assert.equal(ops.ops[0].act, 'stop'); assert.equal(ops.ops[0].market, 'X-PERP'); assert.equal(ops.ops[0].dry, true); assert.equal(ops.ops[0].status, 'complete');
