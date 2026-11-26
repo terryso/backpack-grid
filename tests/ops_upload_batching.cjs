@@ -16,7 +16,7 @@ fs.writeFileSync(path.join(state, 'account_identity.json'), JSON.stringify({ use
 const fixturePath = path.join(state, 'fixture.json');
 const logPath = path.join(state, 'mock-http.jsonl');
 fs.writeFileSync(path.join(base, 'scripts', 'dashboard_data.cjs'), `const fs=require('fs');const f=JSON.parse(fs.readFileSync('state/fixture.json'));fs.writeFileSync('state/dashboard.json',JSON.stringify(f.dashboard));`);
-fs.writeFileSync(path.join(base, 'scripts', 'ops_data.cjs'), `const fs=require('fs'),{hash}=require('./contracts.cjs');const f=JSON.parse(fs.readFileSync('state/fixture.json'));if(f.failBuild)process.exit(2);const data={ops:f.ops,fills:f.fills,rounds:f.rounds,dataAsOf:f.dataAsOf,fillsAsOf:null,ledgerAsOf:f.ledgerAsOf,collection:f.collection};fs.writeFileSync('state/ops.json',JSON.stringify({...data,updatedAt:f.dashboard.generatedAt}));fs.writeFileSync('state/ops_content_hash',hash(data));`);
+fs.writeFileSync(path.join(base, 'scripts', 'ops_data.cjs'), `const fs=require('fs'),{hash}=require('./contracts.cjs');const f=JSON.parse(fs.readFileSync('state/fixture.json'));if(f.failBuild)process.exit(2);if(Object.prototype.hasOwnProperty.call(f,'auditSummary'))fs.writeFileSync('state/fees.json',JSON.stringify(f.auditSummary));const data={ops:f.ops,fills:f.fills,rounds:f.rounds,dataAsOf:f.dataAsOf,fillsAsOf:null,ledgerAsOf:f.ledgerAsOf,collection:f.collection};fs.writeFileSync('state/ops.json',JSON.stringify({...data,updatedAt:f.dashboard.generatedAt}));fs.writeFileSync('state/ops_content_hash',hash(data));`);
 fs.writeFileSync(path.join(base, 'bin', 'curl'), `#!${process.execPath}\nconst fs=require('fs');const a=process.argv.slice(2),f=JSON.parse(fs.readFileSync('state/fixture.json'));const u=a.find(v=>v.startsWith('https://fixture.invalid/'));if(!u)process.exit(2);const p=new URL(u).pathname,method=a.includes('-X')?a[a.indexOf('-X')+1]:'GET',out=a[a.indexOf('-o')+1];let code=method==='POST'&&p==='/api/ops'&&f.failOps?(f.failOps==='network'?0:500):method==='POST'&&p==='/api/snapshot'&&f.failSnapshot?500:200;let body=null;if(method==='POST'){const raw=a[a.indexOf('--data-binary')+1];body=JSON.parse(fs.readFileSync(raw.slice(1),'utf8'));}fs.appendFileSync('state/mock-http.jsonl',JSON.stringify({method,path:p,status:code,body})+'\\n');fs.writeFileSync(out,method==='GET'?fs.readFileSync('state/dashboard.json'):'ok');if(a.includes('-w'))process.stdout.write(code===0?'000':String(code));if(code===0)process.exit(7);`, { mode: 0o755 });
 const fixture = { dashboard: { updatedAt: '2026-11-27T00:00:00Z', generatedAt: '2026-11-27T00:00:00Z', lastRoundStatus: 'ok', dataValid: true, identityValid: true, riskStateValid: true, riskWriteValid: true, manualPauseValid: true, pendingCorrupt: false, riskPaused: false, pending: [], orphans: [], marketDataAvailable: true, autoExits: { trailEnabled: true, trailReady: true } }, ops: [], fills: [], rounds: [], dataAsOf: null, ledgerAsOf: new Date(Date.now() - 21 * 60000).toISOString(), collection: { ok: true, incomplete: false, forwardIncomplete: false, auditIncomplete: false, checkedAt: '2026-11-27T00:00:00Z' }, failOps: false };
 function put() { fs.writeFileSync(fixturePath, JSON.stringify(fixture)); }
@@ -129,4 +129,43 @@ try {
   const timing = minutes => decide({ view: sample, checkpoint: { ...baseCheckpoint, coverageAt: new Date(now - 10 * 60000).toISOString(), lastSuccessAt: new Date(now - minutes * 60000).toISOString() }, legacyHash: null, lastAttempt: { httpStatus: 200 }, routine: true, now });
   assert.equal(timing(13.9).upload, false); assert.equal(timing(14.5).reason, 'interval-or-clock');
   passed('one minute timing grace prevents a routine five-minute round slipping to twenty minutes');
+  let expectedAuditPosts = posts(log, '/api/ops').length;
+  Object.assign(fixture.collection, { ok: true, incomplete: true, forwardIncomplete: false, auditIncomplete: true, checkedAt: new Date().toISOString() });
+  fixture.auditSummary = { accountKey: 'fixture2-3', acquiredAt: fixture.collection.checkedAt, incomplete: true, forwardIncomplete: false, auditIncomplete: true, symbols: { TEST: { incomplete: false, auditTarget: 1, error: null } } };
+  addRound(35); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'new audit backlog must be published immediately');
+  addRound(36); log = run(); assert.equal(posts(log, '/api/ops').length, expectedAuditPosts, 'unchanged audit backlog should not defeat batching');
+  passed('verified stable audit backlog batches routine history');
+  fixture.auditSummary.symbols.TEST.auditError = 'fixture error';
+  addRound(37); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  addRound(38); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'actual audit error must remain fail-open');
+  delete fixture.auditSummary.symbols.TEST.auditError; addRound(39); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'audit-error recovery must publish immediately');
+  passed('audit errors and recovery are never hidden by a stable backlog flag');
+  const summary = fixture.auditSummary; fixture.auditSummary = null;
+  addRound(40); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  addRound(41); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'missing audit summary must remain fail-open');
+  fixture.auditSummary = summary; addRound(42); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  passed('missing audit detail remains fail-open until verified');
+  Object.assign(fixture.collection, { incomplete: false, auditIncomplete: false });
+  addRound(43); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'audit completion must be published immediately');
+  passed('audit completion is published immediately');
+  Object.assign(fixture.collection, { incomplete: true, forwardIncomplete: true, auditIncomplete: false });
+  addRound(44); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  addRound(45); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'active forward-collection failure remains fail-open');
+  passed('forward collection failure continues to bypass batching');
+  Object.assign(fixture.collection, { incomplete: false, forwardIncomplete: false, auditIncomplete: true });
+  addRound(46); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  addRound(47); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'inconsistent completeness flags must fail open');
+  Object.assign(fixture.collection, { incomplete: true, forwardIncomplete: null, auditIncomplete: true });
+  addRound(48); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts);
+  addRound(49); log = run(); assert.equal(posts(log, '/api/ops').length, ++expectedAuditPosts, 'unknown forward coverage must fail open');
+  passed('inconsistent or unknown collection completeness never suppresses updates');
+  const { inspect } = require('../scripts/ops_upload_policy.cjs'), stamp = new Date().toISOString();
+  const account = { userId: 'fixture2', subaccountId: 3, accountKey: 'fixture2-3' };
+  const auditPayload = { ops: [], fills: [], rounds: [], ledgerAsOf: null, collection: { ok: true, incomplete: true, forwardIncomplete: false, auditIncomplete: true, checkedAt: stamp } };
+  const auditSummary = { accountKey: account.accountKey, acquiredAt: stamp, incomplete: true, forwardIncomplete: false, auditIncomplete: true, symbols: { TEST: { incomplete: false } } };
+  assert.equal(inspect(auditPayload, fixture.dashboard, account, { ok: true }, auditSummary).unhealthy, false);
+  for (const bad of [{ ...auditSummary, accountKey: 'foreign' }, { ...auditSummary, acquiredAt: new Date(Date.now() - 3600000).toISOString() }, { ...auditSummary, symbols: {} }, { ...auditSummary, symbols: { TEST: {} } }]) {
+    assert.equal(inspect(auditPayload, fixture.dashboard, account, { ok: true }, bad).unhealthy, true);
+  }
+  passed('foreign, stale or malformed audit summaries fail open');
 } finally { fs.rmSync(base, { recursive: true, force: true }); }

@@ -15,7 +15,7 @@ const COVERAGE_HEADROOM_MS = 20 * 60 * 1000;
 const hex = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const read = file => { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } };
 
-function inspect(payload, snapshot, identity, snapshotUpload) {
+function inspect(payload, snapshot, identity, snapshotUpload, historySummary) {
   if (!plainObject(payload) || !Array.isArray(payload.ops) || !Array.isArray(payload.fills)
       || !Array.isArray(payload.rounds) || !plainObject(payload.collection)) throw Error('invalid operations payload');
   const accountHash = identityOk(identity) ? hash(identity.accountKey) : null;
@@ -23,6 +23,19 @@ function inspect(payload, snapshot, identity, snapshotUpload) {
   const contentHash = hash(data), c = payload.collection, s = plainObject(snapshot) ? snapshot : {};
   const coverageAt = payload.ledgerAsOf == null ? null : payload.ledgerAsOf;
   if (coverageAt !== null && (typeof coverageAt !== 'string' || !Number.isFinite(Date.parse(coverageAt)))) throw Error('invalid collection watermark');
+  const auditPending = c.ok === true && c.incomplete === true && c.forwardIncomplete === false && c.auditIncomplete === true;
+  const summaryAt = Date.parse(historySummary?.acquiredAt), checkedAt = Date.parse(c.checkedAt);
+  const noError = value => value === undefined || value === null || value === '';
+  // A partial audit may also contain a real per-market API error. Only treat it
+  // as routine when the account-bound collector summary agrees and all of its
+  // forward and audit error fields are known clear; unknown fails open.
+  const auditSummarySafe = auditPending && identityOk(identity) && plainObject(historySummary)
+    && historySummary.accountKey === identity.accountKey && historySummary.incomplete === true
+    && historySummary.forwardIncomplete === false && historySummary.auditIncomplete === true
+    && Number.isFinite(summaryAt) && Number.isFinite(checkedAt) && checkedAt <= Date.now() + 60000
+    && summaryAt <= checkedAt + 60000 && checkedAt - summaryAt <= 5 * 60000
+    && plainObject(historySummary.symbols) && Object.keys(historySummary.symbols).length > 0
+    && Object.values(historySummary.symbols).every(v => plainObject(v) && v.incomplete === false && noError(v.error) && noError(v.auditError));
   const health = { lastRoundStatus: s.lastRoundStatus ?? null, dataValid: s.dataValid ?? null,
     identityValid: s.identityValid ?? null, riskStateValid: s.riskStateValid ?? null,
     riskWriteValid: s.riskWriteValid ?? null, manualPauseValid: s.manualPauseValid ?? null,
@@ -32,14 +45,19 @@ function inspect(payload, snapshot, identity, snapshotUpload) {
     trailEnabled: s.autoExits?.trailEnabled ?? null, trailReady: s.autoExits?.trailReady ?? null,
     snapshotUploadOk: snapshotUpload?.ok ?? null,
     collection: { ok: c.ok ?? null, incomplete: c.incomplete ?? null,
-      forwardIncomplete: c.forwardIncomplete ?? null, auditIncomplete: c.auditIncomplete ?? null } };
+      forwardIncomplete: c.forwardIncomplete ?? null, auditIncomplete: c.auditIncomplete ?? null,
+      auditOnlyVerified: auditPending ? auditSummarySafe : null } };
+  // A known deep-audit backlog is not a fresh forward-collection failure.
+  // Its flag remains in importantHash, so entering or leaving it is published
+  // immediately; unchanged routine rows can still be batched afterward.
+  const auditOnlyPending = auditPending && auditSummarySafe;
   const unhealthy = !accountHash || !['ok', 'dryrun'].includes(health.lastRoundStatus)
     || health.dataValid !== true || health.identityValid !== true || health.riskStateValid !== true
     || health.riskWriteValid !== true || health.manualPauseValid !== true || health.pendingCorrupt !== false
     || health.riskPaused !== false || health.marketDataAvailable !== true || health.snapshotUploadOk !== true || !health.pending || health.pending.length > 0
     || !health.orphans || health.orphans.length > 0 || (health.trailEnabled === true && health.trailReady !== true)
-    || health.collection.ok !== true || health.collection.incomplete !== false
-    || health.collection.forwardIncomplete !== false || health.collection.auditIncomplete !== false;
+    || health.collection.ok !== true || health.collection.forwardIncomplete !== false
+    || (!auditOnlyPending && (health.collection.incomplete !== false || health.collection.auditIncomplete !== false));
   return { accountHash, contentHash, importantHash: hash({ accountHash, ops: payload.ops, fills: payload.fills, health }), unhealthy, coverageAt };
 }
 
@@ -77,7 +95,8 @@ function cli() {
   const state = name => path.join(ROOT, 'state', name);
   if (mode === 'plan') {
     const payload = JSON.parse(fs.readFileSync(payloadFile, 'utf8'));
-    const view = inspect(payload, read(state('dashboard.json')), read(state('account_identity.json')), read(state('dashboard_upload.json')));
+    const view = inspect(payload, read(state('dashboard.json')), read(state('account_identity.json')),
+      read(state('dashboard_upload.json')), read(state('fees.json')));
     const checkpoint = read(state('ops_upload_checkpoint.json'));
     let legacyHash = null; try { legacyHash = fs.readFileSync(state('ops_upload.hash'), 'utf8').trim(); } catch {}
     const lastAttempt = read(state('ops_upload.json'));
