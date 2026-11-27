@@ -31,13 +31,26 @@ if (resolveBotPage) {
 // 稳态零导航零等待——以下全部数据获取都是带 cookie 的 page.fetch。
 
 async function jget(pathname) {
-  // 瞬时网络抖动（超时/连接重置）重试一次，磨掉单次失败导致的整轮 observe 失败
+  // 瞬时网络抖动（超时/连接重置）重试一次，磨掉单次失败导致的整轮 observe 失败。
+  // WAF challenge 自愈（11-26/11-27 两次 403-HTML 盲窗各 ~2h）：交易所盾周期性
+  // challenge 高频会话，返回 403 + HTML 页——重载停靠页（新文档可自动过 managed
+  // challenge）后重试；发生在已失败路径，不违反稳态零导航纪律（此刻无 in-flight fetch）。
+  let reloaded = false;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const r = await page.fetch(API + pathname, { credentials: "include", timeout: attempt === 1 ? 15000 : 25000 });
       if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status} ${String(r.body).slice(0, 120)}`);
       return JSON.parse(r.body);
     } catch (e) {
+      const wafChallenge = attempt === 1 && /-> 403 /.test(String(e.message)) && /<HTML|<!DOCTYPE/i.test(String(e.message));
+      if (wafChallenge && !reloaded) {
+        reloaded = true;
+        console.log(`WAF CHALLENGE on ${pathname} — reloading parked page and retrying`);
+        await page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 })
+          .catch(() => page.waitForTimeout(3000).then(() => page.goto("https://backpack.exchange/portfolio/balances/assets", { waitUntil: "domcontentloaded", timeout: 25000 })));
+        await page.waitForTimeout(3000);
+        continue;
+      }
       if (attempt === 2) throw e;
       await page.waitForTimeout(4000);
     }
