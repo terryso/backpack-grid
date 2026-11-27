@@ -127,6 +127,18 @@ async function main() {
   d = fixture(); put(d, 'state/risk.json', { peakEquity: null }); put(d, 'state/pending_stops.json', []); put(d, 'state/act_results.json', { at: new Date().toISOString(), results: [{ act: 'protect', market: 'X', done: false, error: 'bad' }, { act: 'stop', market: 'Y', done: true }] });
   spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(d), encoding: 'utf8' }); let snap = json(d, 'state/dashboard.json');
   check('dashboard refuses malformed state and aggregates prior failure', () => { assert.equal(snap.riskStateValid, false); assert.equal(snap.pendingCorrupt, true); assert.equal(snap.drawdownPct, null); assert.match(snap.lastAction, /失败/); assert.equal(snap.strategyTotalPnl, null); });
+  // ⚡ 显示守卫：指令已被云端切换（override=Neutral）而 stale 副本 switchLog 末条 to=Short
+  // → lastSwitch 必须置 null（不得显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾）
+  {
+    const dir2 = fixture();
+    const acct = 'fixture-' + (cfg.subaccountId ?? 3);
+    put(dir2, 'state/direction_advice.json', { schemaVersion: 1, at: new Date().toISOString(), directive: 'Short', rec: 'Neutral', streak: 0, switchLog: [{ at: '2026-11-23T22:11:31.167Z', from: 'Long', to: 'Short', via: 'cloud' }] });
+    put(dir2, 'state/direction_override.json', { schemaVersion: 1, accountKey: acct, directions: {}, updatedAt: new Date().toISOString() });
+    spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(dir2), encoding: 'utf8' });
+    const snap2 = json(dir2, 'state/dashboard.json');
+    check('lastSwitch stale vs applied directive is nulled for display', () => { assert.equal(snap2.direction.directive, 'Neutral'); assert.equal(snap2.direction.lastSwitch, null); });
+    fs.rmSync(dir2, { recursive: true, force: true });
+  }
   fs.unlinkSync(path.join(d, 'state/observed.json')); spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(d) }); snap = json(d, 'state/dashboard.json');
   check('missing observation remains unknown, not fresh zero equity', () => { assert.equal(snap.updatedAt, null); assert.equal(snap.equity, null); assert.equal(snap.dataValid, false); });
   // Run the actual shell orchestrator with mock ego and upload commands in a disposable checkout.

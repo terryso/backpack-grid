@@ -55,6 +55,10 @@ try {
     direction = { ...(direction || {}), ...current };
   }
 } catch { direction = null; }
+// ⚡ 显示守卫：lastSwitch 只在切换目标 === 当前指令时有效。stale KV 副本的旧切换
+// 不能挂在已变化的指令上——11-27 指令已切 Neutral 而副本 switchLog 末条仍是
+// to=Short，页面会显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾。
+if (direction && direction.lastSwitch && direction.lastSwitch.to !== direction.directive) direction.lastSwitch = null;
 const positions = Array.isArray(obs?.positions) ? obs.positions : [];
 // 网格时长（网格卡「网格时长」）：最近一次成功建格动作 = 当前网格的开始时刻
 const { latestCreates, formatAgeMin } = require('./grid_age.cjs');
