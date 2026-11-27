@@ -168,7 +168,7 @@ vm.runInNewContext(workerSource, workerContext);
     const identity = { userId: 'fixture', subaccountId: 3, accountKey: key };
     const observed = { at: eventAt(Date.now()), source: 'fixture', identity, gridRows: [], positions: [],
       margin: { totalEquity: '$500.00', availableEquity: '$400.00', openPnl: '$0.00', initMarginPct: '0%' }, badges: {}, ledger: [] };
-    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(cfg));
+    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ ...cfg, requireDirection: false }));
     fs.writeFileSync(path.join(root, 'state/account_identity.json'), JSON.stringify(identity));
     fs.writeFileSync(path.join(root, 'state/observed.json'), JSON.stringify(observed));
     fs.writeFileSync(path.join(root, 'state/risk.json'), '[]'); // invalid fixture: no risk-writer subprocess

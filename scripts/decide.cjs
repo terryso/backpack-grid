@@ -468,6 +468,13 @@ const writeAtomic = (p, data) => {
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
       const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
+      // 方向强制策略（2026-11-28 用户拍板）：中性格不再建——指令为 Neutral 时槽位
+      // 保持空置（观望语义），只有 Long/Short 才建格。config requireDirection=true
+      // 开启；存量中性格不受影响（指令只作用于新格）。
+      if (cfg.requireDirection === true && dir === "Neutral") {
+        lines.push(`PLAN stop: neutral directive + requireDirection — no-direction grids disabled, slot stays empty`);
+        break;
+      }
       // Short 格费率硬门：空头扎堆的币（深负费率）持仓即持续付费——ADA 11-16 案例
       // （-0.104%/次 × 八轮）实亏。只拦极端值（fundingShortBanPct=-0.05%，常态
       // ~±0.004% 距门 12 倍不误伤）；负费率只伤空头，Long/Neutral 不受限。

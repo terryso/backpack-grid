@@ -85,5 +85,6 @@
   "positionTakeProfitPct": 0,
   "trailArmPct": 10,
   "trailGivebackPct": 4,
-  "accountFloorUsd": 0
+  "accountFloorUsd": 0,
+  "requireDirection": true
 }

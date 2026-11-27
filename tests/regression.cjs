@@ -167,7 +167,8 @@ T("T16 breaker loop has no Disabled filter", !decideSrc.includes('g.status !== "
 function makeFixture(mods) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bg-fix-"));
   fs.mkdirSync(path.join(dir, "state"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify(cfg, null, 2));
+  // 机制测试与生产策略解耦：requireDirection 默认关闭（方向策略测试在 INT14 显式覆盖）
+  fs.writeFileSync(path.join(dir, "config.json"), JSON.stringify({ ...cfg, requireDirection: false }, null, 2));
   const observed = {
     at: new Date().toISOString(), source: "api", url: "fixture",
     gridRows: [], positions: [],
@@ -637,7 +638,7 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
   };
   const dir = makeFixture({
     // 机制测试锁定 gridValueUsd=2500：累积预留/shrink 的期望值按此演算，不随生产参数漂移
-    "config.json": { ...cfg, gridValueUsd: 2500 },
+    "config.json": { ...cfg, gridValueUsd: 2500, requireDirection: false },
     "state/analysis.json": analysis,
     "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
       gridRows: [], positions: [],
@@ -667,7 +668,7 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
     nativeTP: 10, nativeSL: 6, nativeCloseOnStop: true };
   const dir = makeFixture({
     // 机制测试锁定 gridValueUsd=2500（与 INT11 同理）
-    "config.json": { ...cfg, gridValueUsd: 2500 },
+    "config.json": { ...cfg, gridValueUsd: 2500, requireDirection: false },
     "state/observed.json": JSON.stringify({ at: new Date().toISOString(), source: "api", url: "fixture",
       gridRows: [keepRow], positions: [],
       margin: { totalEquity: "$300.00", availableEquity: "$300.00", openPnl: "$0.00", initMarginPct: "0%" },
@@ -687,11 +688,50 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
   T("INT12c shrink reported", r.stdout.includes("PLAN shrink"));
 }
 
+// INT14: requireDirection — neutral directive builds nothing, directional unaffected
+{
+  const mk = (requireDirection, directive) => {
+    const mods = {
+      "config.json": (() => { const c = { ...cfg, gridValueUsd: 600, requireDirection: false }; if (requireDirection === undefined) delete c.requireDirection; else c.requireDirection = requireDirection; return c; })(),
+      "state/analysis.json": { generatedAt: new Date().toISOString(),
+        top: [{ symbol: "ETH_USDC_PERP", score: 14, chop: 14, range24: 3.4, qvol24: 30000000,
+          grid: { lower: 1400, upper: 1830, count: 32, widthPct: 26, spacingPct: 0.8 } }],
+        directional: [] },
+    };
+    if (directive) mods["state/direction_override.json"] = { schemaVersion: 1, accountKey: "fixture-" + (cfg.subaccountId ?? 3), directions: { "*": directive }, updatedAt: new Date().toISOString() };
+    return makeFixture(mods);
+  };
+  const tick = (dir) => { const t = path.join(dir, "state", "tickers.json"); fs.writeFileSync(t, JSON.stringify([{ symbol: "ETH_USDC_PERP", lastPrice: "1616" }])); return t; };
+  // a) Neutral 指令 + requireDirection → 不建格、槽位空置
+  {
+    const dir = mk(true, "Neutral");
+    const r = runDecide(dir, false, tick(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    T("INT14a neutral directive + requireDirection builds nothing", r.status === 0
+      && !actions.some((a) => a.act === "create") && r.stdout.includes("no-direction grids disabled"));
+  }
+  // b) Short 指令 + requireDirection → 正常建方向格
+  {
+    const dir = mk(true, "Short");
+    const r = runDecide(dir, false, tick(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    const c = actions.find((a) => a.act === "create");
+    T("INT14b directional directive unaffected by requireDirection", r.status === 0 && c && c.direction === "Short");
+  }
+  // c) 未开启（键缺省）+ Neutral → 旧行为，中性格照建
+  {
+    const dir = mk(undefined, "Neutral");
+    const r = runDecide(dir, false, tick(dir));
+    const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
+    T("INT14c policy off preserves legacy neutral grids", r.status === 0 && actions.filter((a) => a.act === "create").length === 1 && actions.find((a) => a.act === "create").direction === "Neutral");
+  }
+}
+
 // INT13: Short funding ban — deep-negative funding vetoes Short grid only
 {
   const mk = (fundingRate, directive) => {
     const mods = {
-      "config.json": { ...cfg, gridValueUsd: 600, fundingShortBanPct: -0.05 },
+      "config.json": { ...cfg, gridValueUsd: 600, fundingShortBanPct: -0.05, requireDirection: false },
       "state/analysis.json": { generatedAt: new Date().toISOString(),
         top: [{ symbol: "ETH_USDC_PERP", score: 14, chop: 14, range24: 3.4, qvol24: 30000000, fundingRate,
           grid: { lower: 1400, upper: 1830, count: 32, widthPct: 26, spacingPct: 0.8 } }],

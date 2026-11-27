@@ -238,7 +238,7 @@ async function main() {
   await check('production collector completes a fixture audit without losing existing fills', async () => {
     const now = Date.now(), d = fixture(), cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'));
     cfg.watch = { spaceId: 7, page: 'p1' };
-    fs.writeFileSync(path.join(d, 'config.json'), JSON.stringify(cfg));
+    fs.writeFileSync(path.join(d, 'config.json'), JSON.stringify({ ...cfg, requireDirection: false }));
     fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
     const names = ['X_USDC_PERP', 'Y_USDC_PERP'];
     fs.writeFileSync(path.join(d, 'state/observed.json'), JSON.stringify({ gridRows: names.map(symbol => ({ symbol })) }));

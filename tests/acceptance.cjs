@@ -18,7 +18,7 @@ const json = (dir, f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
 const put = (dir, f, data) => { fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true }); fs.writeFileSync(path.join(dir, f), JSON.stringify(data)); };
 function fixture(eq = 1000, risk = { peakEquity: 1000, paused: null }, grids = []) {
   const dir = fs.mkdtempSync(path.join(tmp, 'fixture-')), at = new Date().toISOString();
-  const files = { 'config.json': cfg, 'state/observed.json': { at, gridRows: grids, positions: [], ledger: [], margin: { totalEquity: String(eq), availableEquity: '500', openPnl: '0' } }, 'state/risk.json': risk, 'state/pending_stops.json': {}, 'state/tickers.json': [{ symbol: 'ETH_USDC_PERP', lastPrice: '100' }], 'state/analysis.json': { generatedAt: at, top: [{ symbol: 'ETH_USDC_PERP', score: 10, chop: 10, range24: 5, qvol24: 1e6, minQuantity: .1, grid: { lower: 90, upper: 110, count: 100 } }], directional: [] } };
+  const files = { 'config.json': { ...cfg, requireDirection: false }, 'state/observed.json': { at, gridRows: grids, positions: [], ledger: [], margin: { totalEquity: String(eq), availableEquity: '500', openPnl: '0' } }, 'state/risk.json': risk, 'state/pending_stops.json': {}, 'state/tickers.json': [{ symbol: 'ETH_USDC_PERP', lastPrice: '100' }], 'state/analysis.json': { generatedAt: at, top: [{ symbol: 'ETH_USDC_PERP', score: 10, chop: 10, range24: 5, qvol24: 1e6, minQuantity: .1, grid: { lower: 90, upper: 110, count: 100 } }], directional: [] } };
   for (const [f, v] of Object.entries(files)) put(dir, f, v);
   const identity={userId:'fixture',subaccountId:cfg.subaccountId??3,accountKey:'fixture-'+(cfg.subaccountId??3)};
   put(dir,'state/account_identity.json',identity);
@@ -174,7 +174,7 @@ async function main() {
     const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500 }));
     const { createHash } = require('node:crypto'); const h = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
     const identity=json(d,'state/account_identity.json');const runId='accept-'+mode;put(d,'state/run_context.json',{runId,identity,startedAt:new Date().toISOString(),ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(d,'state/last_round_status'),'running');
-    put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { planId:'plan-'+mode,runId,identity, at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h(cfg), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 });
+    put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { planId:'plan-'+mode,runId,identity, at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h({ ...cfg, requireDirection: false }), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 }); // 与 fixture config 内容一致（fixture 已解耦策略键）
     let autos = [], writes = 0, clock = Date.now(), firstProtectionRead = false;
     class Clock extends Date { static now() { return clock += 1000; } }
     const page = { goto: async () => {}, waitForTimeout: async () => {}, fetch: async (url, options = {}) => {
