@@ -22,14 +22,25 @@ function fetchCloudAdvice(base, curlBin, timeoutMs) {
 
 // The new mailbox endpoint is deliberately distinct from the legacy advice
 // endpoint: a new client must never treat an old transient flag as durable.
+// 双路+重试（对齐 upload_dashboard.sh 的已验证模式，11-27 缺口：单发 curl 在
+// 网络抖动窗口整段断粮，镜像停更 ~3.5h——上传有直连/代理双路而拉取没有）：
+// 直连两次 + 走 BG_PROXY 一次，任一成功即返回。
 function fetchCloudMailbox(base, curlBin, timeoutMs = 10000) {
-  try {
-    const r = curlBin.spawnSync('curl', ['-fsS', '-m', String(Math.max(3, Math.ceil(timeoutMs / 1000))), `${base}/api/direction-event`], { encoding: 'utf8', timeout: timeoutMs + 2000 });
-    if (r.status === 0 && r.stdout) {
-      const state = JSON.parse(r.stdout);
-      if (state && typeof state === 'object' && !Array.isArray(state) && Object.prototype.hasOwnProperty.call(state, 'pending')) return state;
-    }
-  } catch {}
+  const secs = String(Math.max(3, Math.ceil(timeoutMs / 1000)));
+  const attempts = [
+    ['-fsS', '-m', secs, `${base}/api/direction-event`],
+    ['-fsS', '-m', secs, `${base}/api/direction-event`],
+    ...(process.env.BG_PROXY ? [['-fsS', '-m', secs, '-x', process.env.BG_PROXY, `${base}/api/direction-event`]] : []),
+  ];
+  for (const args of attempts) {
+    try {
+      const r = curlBin.spawnSync('curl', args, { encoding: 'utf8', timeout: timeoutMs + 2000 });
+      if (r.status === 0 && r.stdout) {
+        const state = JSON.parse(r.stdout);
+        if (state && typeof state === 'object' && !Array.isArray(state) && Object.prototype.hasOwnProperty.call(state, 'pending')) return state;
+      }
+    } catch {}
+  }
   return null;
 }
 
