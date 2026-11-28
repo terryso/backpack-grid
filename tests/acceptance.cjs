@@ -171,7 +171,7 @@ async function main() {
   // and real anchored core imports. Includes intent/gate/cleanup interactions.
   for (const mode of ['success', 'upsert-lost', 'protect-read-fails', 'cleanup-incomplete', 'budget-changed', 'stale-plan']) {
     d = fixture(); fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
-    const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500 }));
+    const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500, direction: 'Neutral' }));
     const { createHash } = require('node:crypto'); const h = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
     const identity=json(d,'state/account_identity.json');const runId='accept-'+mode;put(d,'state/run_context.json',{runId,identity,startedAt:new Date().toISOString(),ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(d,'state/last_round_status'),'running');
     put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { planId:'plan-'+mode,runId,identity, at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h({ ...cfg, requireDirection: false }), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 }); // 与 fixture config 内容一致（fixture 已解耦策略键）
@@ -246,6 +246,13 @@ async function main() {
   uiContext.snapshot={...display,stopBudget:{valid:true,pct:125,usedUsd:100,budgetUsd:80,remainingUsd:-20,bufferUsd:15,riskBudgetPct:80,overBudget:true}};
   vm.runInNewContext('render(snapshot)',uiContext);
   check('production UI names nominal budget and exposes excess without clipping',()=>{const output=elements.get('content').innerHTML;assert.match(output,/止损预算占用/);assert.match(output,/125\.0%/);assert.match(output,/超出 20\.00/);assert.match(output,/配置估算，非实际回撤/);});
+  const chainEntries = Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c,{direction:c==='ETH'?'Neutral':'Long'}]));
+  uiContext.snapshot={...display,direction:{healthy:true,chainSnapshot:{id:'applied',asOf:new Date().toISOString(),chains:chainEntries},reportedSnapshotId:'incoming',lastCloudEvent:{id:'incoming',status:'expired'}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI shows applied chain directions and rejected new snapshot',()=>{const output=elements.get('dirBanner').innerHTML;assert.match(output,/BTC Long/);assert.match(output,/ETH Neutral/);assert.match(output,/TRX Long/);assert.match(output,/最新快照尚未应用：expired/);});
+  uiContext.snapshot={...display,direction:{chainSnapshot:{id:'applied',asOf:new Date().toISOString(),chains:chainEntries}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI distinguishes missing advice from an expired snapshot',()=>assert.match(elements.get('dirBanner').innerHTML,/未收到最新方向快照/));
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

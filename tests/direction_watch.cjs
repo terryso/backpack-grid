@@ -141,9 +141,9 @@ check('接线：入口走 with_lock --name direction 且导出 BG_PROXY', () => 
   assert.ok(sh.includes('--name direction'));
   assert.ok(sh.includes('export BG_PROXY'));
 });
-check('接线：launchd JOBS 注册 direction 每小时', () => {
+check('接线：launchd 不再安装每小时方向判定', () => {
   const py = fs.readFileSync(path.join(ROOT, 'scripts/install_launch_agents.py'), 'utf8');
-  assert.ok(py.includes('"com.backpack-grid-direction.plist", "direction_watch.sh", 3600'));
+  assert.ok(!py.includes('"com.backpack-grid-direction.plist", "direction_watch.sh", 3600'));
 });
 check('接线：with_lock 白名单含 direction', () => {
   const py = fs.readFileSync(path.join(ROOT, 'scripts/with_lock.py'), 'utf8');

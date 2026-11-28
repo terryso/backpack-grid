@@ -63,10 +63,11 @@ check('接线：decide 拉云端/代执行切换/镜像写 direction_advice.json
   assert.ok(src.includes("directionTransaction(ROOT, { op: 'cloud'"));
   assert.ok(src.includes("process.env.DRYRUN !== '1'"));
 });
-check('接线：Worker 双写 advice 与 advice_cloud 展示副本', () => {
+check('接线：Worker 使用同一个 durable mailbox 并保留哨兵定时', () => {
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/worker.js'), 'utf8');
-  assert.ok(src.includes('DASH.put("advice"'));
-  assert.ok(src.includes('DASH.put("advice_cloud"'));
-  assert.ok(src.includes('source: "cloud"'));
+  assert.ok(src.includes('/api/direction-snapshot'));
+  assert.ok(src.includes('direction.internal/ack'));
+  assert.ok(src.includes('runSentinel(env)'));
+  assert.ok(!src.includes('runShadowJudge'));
 });
 console.log(`${count} cloud sync scenarios passed`);

@@ -1,68 +1,8 @@
 'use strict';
-// patterns.js — 方向判定纯函数 + 哨兵触发评估（无 IO）。
-// metrics/judge/nextAdvice/SWITCH_THRESHOLD 自 scripts/direction_watch.cjs 原样移植，
-// 语义零漂移是影子期一致率的前提——改动这里必须与本地版本逐字对齐。
+// patterns.js — 持仓风险哨兵触发评估（无 IO）。
+// 旧 streak 告警仅保留给切换期的旧快照。
 
 const SWITCH_THRESHOLD = 5;
-
-// 1h 收盘价（时间升序）→ 趋势指标。数据不足的维度为 NaN，由 judge 逐项判可用性。
-function metrics(closes) {
-  const cs = Array.isArray(closes) ? closes.filter((c) => Number.isFinite(c) && c > 0) : [];
-  if (cs.length < 25) return null; // 连 t24 都算不出
-  const last = cs[cs.length - 1];
-  const pct = (a, b) => (b > 0 ? (a / b - 1) * 100 : NaN);
-  const t24 = cs.length > 24 ? pct(last, cs[cs.length - 25]) : NaN;
-  const t7 = cs.length > 168 ? pct(last, cs[cs.length - 169]) : NaN;
-  const t14 = cs.length > 336 ? pct(last, cs[cs.length - 337]) : NaN;
-  const win = cs.slice(-Math.min(cs.length, 336)); // 最多看 14d
-  const hi = Math.max(...win);
-  const lo = Math.min(...win);
-  const rangePos = hi > lo ? (last - lo) / (hi - lo) : 0.5; // 零宽度=横盘，中性 0.5
-  const bounce = hi > lo ? (last / lo - 1) * 100 : 0; // 距低点反弹%
-  const drop = hi > lo ? (1 - last / hi) * 100 : 0;   // 距高点回落%（Long 指令镜像用）
-  return { t24, t7, t14, rangePos, bounce, drop };
-}
-
-// 判定归一化为 rec（Long/Short/Neutral）。强证据优先：维持 → 强反转 → 弱反转 → 维持。
-// 数据不完整（关键指标 NaN）→ 维持当前指令（无判断不作数）。
-function judge(m, directive) {
-  if (!m || !Number.isFinite(m.t7) || !Number.isFinite(m.rangePos)) return directive;
-  const { t7, t14, rangePos: pos, bounce, drop } = m;
-  if (directive === "Short") {
-    if (Number.isFinite(t7) && t7 < -3) return "Short";
-    if (pos < 1 / 3) return "Short";
-    if (Number.isFinite(t14) && t14 > 0 && t7 > 5) return "Long";
-    if (Number.isFinite(t7) && t7 > 3) return "Neutral";
-    if (Number.isFinite(bounce) && bounce > 8) return "Neutral";
-    return "Short";
-  }
-  if (directive === "Long") {
-    if (Number.isFinite(t7) && t7 > 3) return "Long";
-    if (pos > 2 / 3) return "Long";
-    if (Number.isFinite(t14) && t14 < 0 && t7 < -5) return "Short";
-    if (Number.isFinite(t7) && t7 < -3) return "Neutral";
-    if (Number.isFinite(drop) && drop > 8) return "Neutral";
-    return "Long";
-  }
-  // Neutral 指令：任一锚出现明确趋势才顺势，否则维持
-  if (Number.isFinite(t7) && t7 > 5) return "Long";
-  if (Number.isFinite(t7) && t7 < -5) return "Short";
-  return "Neutral";
-}
-
-// streak 计数器与切换判定（与本地 direction_watch 完全同语义）：
-// 用户手动改指令 → 清零；与指令一致 → 清零；与上一次判定同向 → 累积；否则从 1 起。
-function nextAdvice(prev, rec, directive, at) {
-  const p = prev && typeof prev === "object" ? prev : {};
-  const manual = p.lastDirective !== undefined && p.lastDirective !== directive;
-  let streak;
-  if (manual) streak = 0;
-  else if (rec === directive) streak = 0;
-  else if (rec === p.rec) streak = (Number(p.streak) || 0) + 1;
-  else streak = 1;
-  const switching = streak >= SWITCH_THRESHOLD && rec !== directive;
-  return { advice: { ...p, at, directive, rec, streak: switching ? 0 : streak, lastDirective: directive }, switching };
-}
 
 // ---------- 哨兵 ----------
 
@@ -144,4 +84,4 @@ function evaluate(latest, liveMarks, nowMs = Date.now()) {
   };
 }
 
-module.exports = { metrics, judge, nextAdvice, SWITCH_THRESHOLD, SENTINEL, evaluate };
+module.exports = { SENTINEL, evaluate };

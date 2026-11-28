@@ -86,7 +86,7 @@
 <body>
 <div class="wrap">
   <h1>Backpack 网格自动驾驶 <span class="livebadge" id="liveBadge"><span class="dot"></span>实盘</span></h1>
-  <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
+  <div class="sub">巡检每 5 分钟 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div id="dirBanner" class="dirbanner ok"><span class="db-title">方向哨兵</span><span class="db-main">加载中…</span></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
@@ -234,9 +234,23 @@ function render(s) {
     const d = s.direction;
     let cls = "ok", main = "", sub = "";
     if (!d) { cls = "bad"; main = "方向哨兵：无数据"; sub = "direction_advice.json 缺失或损坏"; }
+    else if (d.chainSnapshot || d.reportedSnapshotId) {
+      const applied = d.chainSnapshot, pending = d.reportedSnapshotId && d.reportedSnapshotId !== applied?.id;
+      cls = !d.healthy || pending ? "warn" : "ok";
+      if (!applied) main = "分链方向待应用";
+      else {
+        main = ["BTC", "ETH", "SOL", "BNB", "SUI", "HYPE", "TRX"]
+          .map(chain => `${chain} ${applied.chains?.[chain]?.direction ?? "未知"}`).join(" · ");
+      }
+      const bits = [];
+      if (applied?.asOf) bits.push(`已应用快照 ${new Date(applied.asOf).toLocaleString("zh-CN", { hour12: false })}`);
+      if (pending) bits.push(`最新快照尚未应用${d.lastCloudEvent?.id === d.reportedSnapshotId ? "：" + d.lastCloudEvent.status : ""}`);
+      if (!d.healthy) bits.push(d.judgedAgeMin == null ? "未收到最新方向快照，请检查同步链路" : "方向快照已过期或时间异常，请检查写入方和同步链路");
+      sub = bits.join(" · ");
+    }
     else {
       if (d.failed) sub = "近 24 轮含失败行（数据链路/切换写入），详情看 direction_advice.json（switchingObserved/DATA_FAIL 标记） · ";
-      if (!d.healthy) { cls = "bad"; main = `⚠️ 方向任务记录已 ${d.judgedAgeMin} 分钟未更新`; sub += "检查云端判定（judge-cloud scheduled）与网络链路"; }
+      if (!d.healthy) { cls = "bad"; main = `⚠️ 方向任务记录已 ${d.judgedAgeMin} 分钟未更新`; sub += "检查外部分链快照写入与网络链路"; }
       else {
         const st = Number(d.streak) || 0, th = d.threshold || 5;
         cls = st >= 4 ? "bad" : st >= 1 ? "warn" : "ok";

@@ -38,18 +38,24 @@ const writeAtomic = (p, data) => {
   fs.renameSync(tmp, p);
 };
 
-// ---------- 云端判定同步（cutover 11-21：权威源 = Cloudflare Worker 每小时判定） ----------
-// Mac 端读取待确认事件，在锁内验证版本并提交或拒绝；下次快照携带结果作为确认。
-// 旧版临时切换标记不作为待确认事件使用。请求失败时沿用本地指令。
+// ---------- 方向邮箱同步 ----------
+// 新版 advice 保留完整快照，pending 是待确认副本；旧版事件仍可在过渡期处理。
+// 请求失败或快照过期时保留已应用方向。DRYRUN 不应用任何方向。
 {
   const { dashUrlOf, fetchCloudMailbox } = require("./cloud_sync.cjs");
   const dashUrl = dashUrlOf(path.join(ROOT, "state/dashboard.env"), fs, path);
   if (dashUrl) {
     try {
       const mailbox = fetchCloudMailbox(dashUrl, require("node:child_process"));
-      if (mailbox?.pending && process.env.DRYRUN !== '1') {
-        const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: mailbox.pending });
-        console.log(`CLOUD SWITCH: event ${outcome.status}`);
+      const cloudEvent = mailbox?.advice?.snapshot?.type === 'chain_snapshot'
+        ? mailbox.advice.snapshot : mailbox?.pending;
+      if (cloudEvent && process.env.DRYRUN !== '1') {
+        try {
+          const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: cloudEvent });
+          console.log(`CLOUD SWITCH: event ${outcome.status}`);
+        } catch (e) {
+          console.error(`CLOUD DIRECTION APPLY FAILED: ${String(e && e.message || e).slice(0, 120)} — keeping local directive`);
+        }
       }
       if (mailbox?.advice && typeof mailbox.advice.at === 'string') writeAtomic(path.join(ROOT, 'state/direction_advice.json'), JSON.stringify(mailbox.advice, null, 1));
       else console.log('CLOUD ADVICE: mailbox unavailable — keeping local directive');
@@ -467,13 +473,13 @@ const writeAtomic = (p, data) => {
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
-      const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
+      const dir = directionFor(ROOT, identity.accountKey, mkt, cfg);
       // 方向强制策略（2026-11-28 用户拍板）：中性格不再建——指令为 Neutral 时槽位
       // 保持空置（观望语义），只有 Long/Short 才建格。config requireDirection=true
       // 开启；存量中性格不受影响（指令只作用于新格）。
       if (cfg.requireDirection === true && dir === "Neutral") {
-        lines.push(`PLAN stop: neutral directive + requireDirection — no-direction grids disabled, slot stays empty`);
-        break;
+        lines.push(`PLAN skip ${mkt}: neutral directive + requireDirection — no-direction grids disabled`);
+        continue;
       }
       // Short 格费率硬门：空头扎堆的币（深负费率）持仓即持续付费——ADA 11-16 案例
       // （-0.104%/次 × 八轮）实亏。只拦极端值（fundingShortBanPct=-0.05%，常态

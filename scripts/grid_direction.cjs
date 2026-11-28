@@ -4,11 +4,11 @@
 //   Neutral = 双向（现状，下方买单+上方卖单）
 //   Long    = 只在现价下方挂买单——跌下来单边接多
 //   Short   = 只在现价上方挂卖单——反弹时单边压空
-// 优先级：单市场指令 > 全局指令(*) > 默认 Neutral。身份绑定：只认本账户的表；
-// 读侧任何失败（缺失/损坏/外账户）一律退回 Neutral（指令是观点输入，不是安全依赖）。
+// 优先级：已应用的分链快照 > 单市场指令 > 全局指令(*) > 默认 Neutral。
+// 快照按 config.json ecosystems 继承，不需要写入方枚举所有市场。
 // CLI:
-//   node scripts/grid_direction.cjs set '*' Short      # 全局新格一律做空头格
-//   node scripts/grid_direction.cjs set ETH-PERP Long  # 单市场覆盖
+//   node scripts/grid_direction.cjs set '*' Short       # 无分链快照时的全局回退
+//   node scripts/grid_direction.cjs set ETH-PERP Long  # 无分链快照时的单市场覆盖
 //   node scripts/grid_direction.cjs clear '*'          # 清全局指令（回到 Neutral）
 //   node scripts/grid_direction.cjs show
 const fs = require("node:fs");
@@ -16,20 +16,61 @@ const path = require("node:path");
 const crypto = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const VALID = new Set(["Long", "Short", "Neutral"]);
+const ECO_CHAIN = { btc: 'BTC', eth_l1: 'ETH', solana: 'SOL', sui: 'SUI',
+  bnb: 'BNB', hyperliquid: 'HYPE', tron: 'TRX' };
+const CHAIN_NAMES = new Set(Object.values(ECO_CHAIN));
+const JUDGMENTS = { '偏多':'Long', '偏空':'Short', '中性':'Neutral', '中性偏空':'Short', '中性偏多':'Long',
+  Long:'Long', Short:'Short', Neutral:'Neutral' };
 
-function loadDirections(root, accountKey) {
+function validChainSnapshot(snapshot) {
+  const chains = snapshot?.chains;
+  return typeof snapshot?.id === 'string' && !!snapshot.id && typeof snapshot?.asOf === 'string'
+    && Number.isFinite(Date.parse(snapshot.asOf)) && chains && typeof chains === 'object' && !Array.isArray(chains)
+    && Object.keys(chains).length === CHAIN_NAMES.size
+    && [...CHAIN_NAMES].every(chain => {
+      const entry = chains[chain];
+      return entry && typeof entry === 'object' && typeof entry.judgment === 'string'
+        && Object.hasOwn(JUDGMENTS, entry.judgment) && JUDGMENTS[entry.judgment] === entry.direction;
+    });
+}
+
+function loadRegistry(root, accountKey) {
   let reg = null;
   try { reg = JSON.parse(fs.readFileSync(path.join(root, "state/direction_override.json"), "utf8")); } catch {}
-  if (!reg || reg.schemaVersion !== 1 || reg.accountKey !== accountKey || !reg.directions || typeof reg.directions !== "object") return {};
+  if (!reg || reg.schemaVersion !== 1 || reg.accountKey !== accountKey || !reg.directions ||
+      Array.isArray(reg.directions) || typeof reg.directions !== "object") return null;
+  return reg;
+}
+
+function loadDirections(root, accountKey) {
+  const reg = loadRegistry(root, accountKey);
+  if (!reg) return {};
   const out = {};
   for (const [mkt, d] of Object.entries(reg.directions)) if (VALID.has(d)) out[mkt] = d;
   return out;
 }
 
 // act/decide 的唯一取值入口；指令只影响「新格」，存量网格不受影响。
-function directionFor(root, accountKey, market) {
-  const d = loadDirections(root, accountKey);
-  return d[market] || d["*"] || "Neutral";
+function directionFor(root, accountKey, market, cfg) {
+  const reg = loadRegistry(root, accountKey);
+  if (reg && Object.hasOwn(reg, 'chainSnapshot')) {
+    if (!cfg) { try { cfg = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8')); } catch { cfg = {}; } }
+    const base = String(market).replace(/-PERP$|_USDC_PERP$/, '').toUpperCase();
+    let chain = CHAIN_NAMES.has(base) ? base : null;
+    if (!chain) {
+      for (const [eco, list] of Object.entries(cfg.ecosystems || {})) {
+        if (Object.hasOwn(ECO_CHAIN, eco) && Array.isArray(list) && list.some(symbol => String(symbol).toUpperCase() === base)) {
+          chain = ECO_CHAIN[eco]; break;
+        }
+      }
+    }
+    // A malformed/incomplete applied snapshot fails closed for known chains.
+    if (chain) {
+      return validChainSnapshot(reg.chainSnapshot) ? reg.chainSnapshot.chains[chain].direction : 'Neutral';
+    }
+  }
+  const d = reg?.directions || {};
+  return VALID.has(d[market]) ? d[market] : VALID.has(d["*"]) ? d["*"] : "Neutral";
 }
 
 function setDirection(root, accountKey, market, direction, now = Date.now()) {
@@ -57,7 +98,9 @@ function directionSnapshot(root, accountKey) {
   if (raw) { reg = JSON.parse(raw); if (!reg || reg.schemaVersion !== 1 || reg.accountKey !== accountKey || !reg.directions || Array.isArray(reg.directions) || typeof reg.directions !== 'object') throw Error('direction state invalid'); }
   const direction = reg && Object.prototype.hasOwnProperty.call(reg.directions, '*') ? reg.directions['*'] : 'Neutral';
   if (!VALID.has(direction)) throw Error('invalid global direction');
-  return { directive: direction, version: crypto.createHash('sha256').update(accountKey).update(Buffer.from([0])).update(raw || Buffer.from('<missing>')).digest('hex'), lastCloudEvent: reg?.lastCloudEvent || null };
+  if (reg && Object.hasOwn(reg, 'chainSnapshot') && !validChainSnapshot(reg.chainSnapshot)) throw Error('invalid chain direction snapshot');
+  return { directive: direction, version: crypto.createHash('sha256').update(accountKey).update(Buffer.from([0])).update(raw || Buffer.from('<missing>')).digest('hex'),
+    lastCloudEvent: reg?.lastCloudEvent || null, chainSnapshot: reg?.chainSnapshot || null };
 }
 
 module.exports = { loadDirections, directionFor, setDirection, directionTransaction, directionSnapshot, VALID };

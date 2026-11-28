@@ -2,14 +2,16 @@
 
 **[中文](README.zh-CN.md) | [English](README.md)**
 
-自动化管理 Backpack 合约网格：自动分析适合网格的币种、止盈止损换仓、同时最多 4 个中性网格，附带交易量活动进度追踪与线上状态仪表盘。本机 launchd 每 15 分钟自动执行一轮，人工零干预；所有操作走 Backpack 网页会话鉴权接口（复用 ego lite 浏览器登录态），不使用任何 API key。
+自动化管理 Backpack 合约网格：自动分析适合网格的币种、止盈止损换仓、同时最多 4 个网格，附带交易量活动进度追踪与线上状态仪表盘。本机 launchd 每 5 分钟自动执行一轮，人工零干预；所有操作走 Backpack 网页会话鉴权接口（复用 ego lite 浏览器登录态），不使用任何 API key。
 
 > **📌 账号前提**：Backpack 的合约网格功能**仅对 Bot 类型的子账号开放**——普通子账号没有网格入口，无法被本系统管理。本项目所有网格的创建/停用都发生在 Bot 子账号上；复刻时请用 ego lite 浏览器登录该 Bot 账号，让系统复用它的会话。
 
+分链方向写入、生态继承与切换步骤见[方向快照说明](docs/chain-direction-mailbox.md)。
+
 ## 🔴 实盘运行中
 
-这不是回测或模拟盘——策略以真实资金（4 个中性网格）持续运行在 Backpack 永续市场，
-下方截图即线上仪表盘的实时画面（权益、网格盈亏、活动进度每 15 分钟自动更新）：
+这不是回测或模拟盘——策略以真实资金持续运行在 Backpack 永续市场，
+下方截图即线上仪表盘的实时画面（权益、网格盈亏、活动进度在巡检后更新）：
 
 <p align="center">
   <a href="https://grid.terryso.dev">
@@ -36,7 +38,7 @@ node tests/run.cjs                    # 全量测试（11 套件，430+ 场景�
 bash scripts/upload_dashboard.sh     # 手动刷新线上仪表盘数据
 ```
 
-定时执行由本机 launchd 承担（巡检每 15 分钟，另有峰值采样 60 秒、采集/核算/研究等任务，
+定时执行由本机 launchd 承担（巡检每 5 分钟，另有峰值采样 60 秒、采集/核算/研究等任务，
 `"$PY_BIN" scripts/install_launch_agents.py --install` 一键生成全部 plist）。
 另有 **`com.backpack-grid-keepawake` 常驻防休眠任务**（`caffeinate -i`）：Mac 闲置休眠会停掉整个交易循环
 （电池模式闲置定时可能短至 1 分钟），此任务通过 PreventUserIdleSystemSleep 断言保持系统清醒——

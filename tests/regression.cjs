@@ -725,6 +725,45 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
     const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
     T("INT14c policy off preserves legacy neutral grids", r.status === 0 && actions.filter((a) => a.act === "create").length === 1 && actions.find((a) => a.act === "create").direction === "Neutral");
   }
+  // 分链后，中性只跳过该候选，后面的其他生态仍可建格。
+  {
+    const dir = mk(true, "Short"), regFile = path.join(dir, "state/direction_override.json");
+    const reg = JSON.parse(fs.readFileSync(regFile));
+    const chains = Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c, { judgment: c === 'ETH' ? 'Neutral' : 'Long', direction: c === 'ETH' ? 'Neutral' : 'Long' }]));
+    reg.chainSnapshot = { id: 'mixed', asOf: new Date().toISOString(), chains };
+    fs.writeFileSync(regFile, JSON.stringify(reg));
+    const analysisFile = path.join(dir, "state/analysis.json"), analysis = JSON.parse(fs.readFileSync(analysisFile));
+    analysis.top.push({ ...analysis.top[0], symbol: 'SOL_USDC_PERP', score: 13 });
+    fs.writeFileSync(analysisFile, JSON.stringify(analysis));
+    const t = path.join(dir, 'state/tickers.json');
+    fs.writeFileSync(t, JSON.stringify([{ symbol: 'ETH_USDC_PERP', lastPrice: '1616' }, { symbol: 'SOL_USDC_PERP', lastPrice: '1616' }]));
+    const r = runDecide(dir, false, t), actions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14d neutral ecosystem is skipped and another directional ecosystem can create", r.status === 0
+      && !actions.some(a => a.act === 'create' && a.market === 'ETH-PERP')
+      && actions.some(a => a.act === 'create' && a.market === 'SOL-PERP' && a.direction === 'Long'));
+  }
+  // A direction update only changes future creates. Existing risk exits still run.
+  {
+    const now = Date.now(), grid = { market:'SOL-PERP', symbol:'SOL_USDC_PERP', direction:'Short', range:[90,110],
+      allocationRaw:600, pnlRaw:0, pnlPct:0, status:'Triggered', nativeTP:10, nativeSL:6, nativeCloseOnStop:true };
+    const dir = makeFixture({ 'config.json': { ...cfg, maxGrids:1, requireDirection:true },
+      'state/observed.json': { at:new Date().toISOString(), gridRows:[grid], positions:[], ledger:[],
+        margin:{ totalEquity:'500', availableEquity:'400', openPnl:'0' } } });
+    const key = 'fixture-' + (cfg.subaccountId ?? 3), transact = require('../scripts/grid_direction.cjs').directionTransaction;
+    const chains = direction => Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c, { judgment: direction, direction }]));
+    const event = (id, direction, offset) => ({ type:'chain_snapshot', id, at:new Date(now).toISOString(), asOf:new Date(now + offset).toISOString(), chains:chains(direction) });
+    const first = transact(dir, { op:'cloud', accountKey:key, event:event('first','Short',-2000) });
+    const t = path.join(dir, 'state/tickers.json'); fs.writeFileSync(t, JSON.stringify([{symbol:'SOL_USDC_PERP', lastPrice:'100'}]));
+    const before = runDecide(dir, false, t);
+    const second = transact(dir, { op:'cloud', accountKey:key, event:event('second','Long',-1000) });
+    const after = runDecide(dir, false, t), actions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14e applying an opposite chain direction does not stop an existing grid", first.status === 'applied' && second.status === 'applied'
+      && before.status === 0 && after.status === 0 && !actions.some(a => a.act === 'stop'));
+    const obsFile = path.join(dir, 'state/observed.json'), obs = JSON.parse(fs.readFileSync(obsFile));
+    obs.gridRows[0].pnlRaw = -60; obs.gridRows[0].pnlPct = -10; fs.writeFileSync(obsFile, JSON.stringify(obs));
+    const exit = runDecide(dir, false, t), exitActions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14f existing stop-loss rules still stop the grid", exit.status === 0 && exitActions.some(a => a.act === 'stop' && a.market === 'SOL-PERP' && a.reason.startsWith('SL:')));
+  }
 }
 
 // INT13: Short funding ban — deep-negative funding vetoes Short grid only

@@ -276,10 +276,12 @@ for (const a of actions) {
         const mark = await currentMark(symbol);
         if (!Number.isFinite(Number(mark)) || Number(mark) <= 0) throw new Error(`create ${a.market}: no mark price`);
         if(Number(mark)<Number(a.lower)||Number(mark)>Number(a.upper))throw Error("current mark outside proposed grid range");
-        // 手动方向指令（state/direction_override.json，grid_direction.cjs set）：
-        // Long=只在下方挂买单 / Short=只在上方挂卖单 / Neutral=双向（默认）。
-        // 写回 action 使确认比对（gridConfigConfirmed）与载荷一致；其余逻辑零改动。
-        a.direction = directionFor(ROOT, identity.accountKey, a.market);
+        // Recheck the same inherited direction used when planning. A changed
+        // direction must be replanned, including direction-dependent risk gates.
+        const currentDirection = directionFor(ROOT, identity.accountKey, a.market, cfg);
+        if ((cfg.requireDirection === true && currentDirection === "Neutral") || currentDirection !== a.direction) {
+          throw Error("direction changed after planning or is Neutral; create must be replanned");
+        }
         const base = {
           strategyType: "Grid", symbol,
           priceLow: String(a.lower), priceHigh: String(a.upper),

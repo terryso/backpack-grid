@@ -8,24 +8,27 @@ async function run(mode){
  try{
   fs.mkdirSync(path.join(d,'state'));fs.cpSync(path.join(ROOT,'scripts'),path.join(d,'scripts'),{recursive:true});
   const cfg=JSON.parse(fs.readFileSync(path.join(ROOT,'config.example.json')));cfg.watch={spaceId:7,page:'p1'};
+  cfg.requireDirection=['direction-neutral-after-plan','direction-changed-after-plan'].includes(mode);
   const identity={userId:'fixture',subaccountId:3,accountKey:'fixture-3'},at=new Date().toISOString(),runId='alignment-'+mode;
   const put=(n,v)=>fs.writeFileSync(path.join(d,n),typeof v==='string'?v:JSON.stringify(v));
   const actions=mode==='infeasible-create'
     ?[{act:'create',market:'kPEPE-PERP',urlSymbol:'kPEPE_USD_PERP',lower:0.0042,upper:0.0058,count:38,value:850,why:'fixture infeasible create'}]
-    :(mode==='infeasible-create-soft'||mode==='valid-create'||mode==='directional-create')
+    :(mode==='infeasible-create-soft'||mode==='valid-create'||mode==='directional-create'||mode==='direction-neutral-after-plan'||mode==='direction-changed-after-plan')
     ?[{act:'create',market:'UNI-PERP',urlSymbol:'UNI_USD_PERP',lower:6.6,upper:7.7,count:38,value:2500,why:'fixture create'}]
     :[{act:'stop',market:'ETH-PERP',range:[90,110],reason:'fixture risk exit'}];
+  for(const a of actions)if(a.act==='create')a.direction=['directional-create','direction-neutral-after-plan'].includes(mode)?'Short':mode==='direction-changed-after-plan'?'Long':'Neutral';
   put('config.json',cfg);put('state/account_identity.json',identity);put('state/risk.json',{peakEquity:1000,paused:null,accountKey:identity.accountKey});
   put('state/run_context.json',{runId,identity,startedAt:at,ownerPid:process.pid,ownerStart:ownerStart(process.pid)});put('state/last_round_status','running');put('state/actions.json',actions);put('state/manual_pauses.json',{});
-  if(mode==='directional-create')put('state/direction_override.json',{schemaVersion:1,accountKey:identity.accountKey,directions:{'UNI-PERP':'Short'}});
+  if(mode==='directional-create'||mode==='direction-changed-after-plan')put('state/direction_override.json',{schemaVersion:1,accountKey:identity.accountKey,directions:{'UNI-PERP':'Short'}});
   put('state/actions_meta.json',{runId,planId:'plan-'+mode,identity,at,configHash:hash(cfg),actionsHash:hash(actions),riskWriteOk:true,subaccountId:3});
   const sid=mode==='replaced-space'?9:7,labels=mode==='missing-primary'?['p4']:mode==='empty-space'?[]:['p1'];
-  let deletes=0,patches=0,created=0,autos=[{symbol:'ETH_USDC_PERP',enabled:true,allocationUsd:100,priceLow:90,priceHigh:110,levels:20,direction:'Neutral',takeProfitPercentage:10,stopLossPercentage:6,closePositionsOnStop:true}];const navigation=[];
+  let deletes=0,patches=0,created=0,validations=0,autos=[{symbol:'ETH_USDC_PERP',enabled:true,allocationUsd:100,priceLow:90,priceHigh:110,levels:20,direction:'Neutral',takeProfitPercentage:10,stopLossPercentage:6,closePositionsOnStop:true}];const navigation=[];
   const pageFor=label=>({label,async url(){return 'https://backpack.exchange/portfolio/balances/assets';},async goto(){if(!labels.includes(label))throw Error('page label not found: '+label);navigation.push(label);},async waitForTimeout(){},async fetch(url,options={}){
    if(!labels.includes(label))throw Error('page label not found: '+label);
    const u=new URL(url);let body;
    if(options.method==='PATCH'){patches++;const op=JSON.parse(options.body).params.symbols[0];if(op.operation==='Delete'){deletes++;autos=[];}else autos=[op];return{status:200,body:'{}'};}
    if(options.method==='POST'&&u.pathname.endsWith('/automation/validate')){
+     validations++;
      if(mode==='infeasible-create')return{status:422,body:JSON.stringify({code:'INVALID_CLIENT_REQUEST',message:'Invalid parameters'})}; // kPEPE 形态：不透明确定性拒绝
      if(mode==='infeasible-create-soft'||mode==='valid-create'||mode==='directional-create'){
        // 真实响应形态（UNI 探针实测 ~2000 字符）：echo 字段+挂单在前，errorField 若有则在尾部
@@ -63,7 +66,7 @@ async function run(mode){
   const results=JSON.parse(fs.readFileSync(path.join(d,'state/act_results.json')));
   const registryFile=path.join(d,'state/infeasible_markets.json');
   const stored=autos.find(g=>g.symbol==='UNI_USDC_PERP')||null;
-  return{mode,observationSpace:sid,observationPage:observation.page.label,actError,exit,peakError,patches,deletes,created,navigation,status:results.status,done:results.results.some(r=>r.act==='stop'&&r.done===true),
+  return{mode,observationSpace:sid,observationPage:observation.page.label,actError,exit,peakError,patches,deletes,created,validations,navigation,status:results.status,done:results.results.some(r=>r.act==='stop'&&r.done===true),
     create:results.results.find(r=>r.act==='create')||null,
     createdDirection:stored?stored.direction:null,
     registry:fs.existsSync(registryFile)?JSON.parse(fs.readFileSync(registryFile,'utf8')):null,
@@ -73,7 +76,7 @@ async function run(mode){
 }
 (async()=>{
  const evidence=process.argv.includes('--evidence'),rows=[];let count=0;
- for(const mode of ['healthy','missing-primary','replaced-space','empty-space','foreign-owner','infeasible-create','infeasible-create-soft','valid-create','directional-create']){
+ for(const mode of ['healthy','missing-primary','replaced-space','empty-space','foreign-owner','infeasible-create','infeasible-create-soft','valid-create','directional-create','direction-neutral-after-plan','direction-changed-after-plan']){
   const r=await run(mode);rows.push(r);if(evidence)continue;
   assert.equal(r.actError,null);assert.equal(r.peakError,null);
   if(mode==='foreign-owner'){assert.equal(r.exit,2);assert.equal(r.patches,0);assert.equal(r.done,false);}
@@ -106,6 +109,10 @@ async function run(mode){
    assert.equal(r.createdDirection,'Short'); // 指令生效：只挂卖单的方向格；确认比对按计划方向通过
    assert.equal(r.registry,null);
    assert.deepEqual(r.pending,{});
+  }
+  else if(mode==='direction-neutral-after-plan'||mode==='direction-changed-after-plan'){
+   assert.equal(r.exit,2);assert.equal(r.patches,0);assert.equal(r.validations,0);
+   assert(r.create&&r.create.done===false);assert.match(r.create.error,/direction changed after planning or is Neutral/);
   }
   else{assert.equal(r.exit,0);assert.equal(r.deletes,1);assert.equal(r.done,true);assert.equal(r.status,'complete');}
   assert(r.navigation.every(label=>label===r.observationPage));assert.equal(r.created,mode==='empty-space'?1:0);count++;console.log('PASS production execution browser alignment: '+mode);

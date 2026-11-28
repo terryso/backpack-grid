@@ -62,8 +62,8 @@ test('atomic write leaves no tmp residue', () => {
 
 // ---- 接线形状 ----
 const actSrc = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8');
-test('act reads the directive at execution time and no longer hardcodes Neutral', () => {
-  assert(actSrc.includes('directionFor(ROOT, identity.accountKey, a.market)'));
+test('act rechecks the directive at execution time', () => {
+  assert(actSrc.includes('directionFor(ROOT, identity.accountKey, a.market, cfg)'));
   assert(actSrc.includes('direction: a.direction'));
   assert(!actSrc.includes('direction: "Neutral"'));
 });
