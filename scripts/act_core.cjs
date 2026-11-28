@@ -33,16 +33,18 @@ function makeStopGrid(io) {
       return { done:false };
     }
     const unknownCreate = createState === 'unknown';
+    const retryingRisk = options.retryPendingRisk === true || /^pending risk stop retry \(/.test(String(reason || ''));
+    const supersedingRisk = unknownCreate && existing?.riskStop?.status === 'pending' && !retryingRisk;
     const isTrail = Object.prototype.hasOwnProperty.call(options, 'trailPositionRef') || /AUTO_TRAIL/.test(String(reason || ''));
     let trailRef = null;
     if (isTrail) {
       const requested = options.trailPositionRef;
-      const stored = existing?.trailPositionRef;
+      const stored = supersedingRisk ? null : existing?.trailPositionRef;
       if ((requested != null && !isPositionRef(requested)) || (stored != null && !isPositionRef(stored))
           || (requested && stored && requested !== stored)) throw new Error('trail position identity invalid');
       trailRef = requested || stored;
       if (!isPositionRef(trailRef) || typeof io.getTrailPositionRef !== 'function') throw new Error('trail position identity unavailable');
-      if (existing?.trailPhase != null && !['prepared', 'issued'].includes(existing.trailPhase)) throw new Error('trail position phase invalid');
+      if (!supersedingRisk && existing?.trailPhase != null && !['prepared', 'issued'].includes(existing.trailPhase)) throw new Error('trail position phase invalid');
     }
     const trailState = async () => {
       const current = await io.getTrailPositionRef(symbol);
@@ -51,7 +53,9 @@ function makeStopGrid(io) {
       return 'unknown';
     };
     const skipPrepared = async message => {
-      if (pending[market]) {
+      // A newly planned trail that is already stale cannot cancel an older,
+      // possibly issued risk stop before its replacement is persisted.
+      if (pending[market] && !supersedingRisk) {
         if (unknownCreate) {
           const { trailPositionRef, trailPhase, ...create } = pending[market];
           pending[market] = { ...create, riskStop:{ at:new Date().toISOString(), reason:message, status:'cancelled' } };
@@ -65,9 +69,10 @@ function makeStopGrid(io) {
     if (isTrail) {
       const current = await trailState();
       if (current === 'unknown') throw new Error('trail position identity unavailable');
-      if ((current === 'flat' || current === 'changed') && existing?.trailPhase === 'prepared')
+      const priorTrailPhase = supersedingRisk ? null : existing?.trailPhase;
+      if ((current === 'flat' || current === 'changed') && priorTrailPhase === 'prepared')
         return await skipPrepared('trailing position changed before any exchange request');
-      if (current === 'flat' && (!existing || (createState && existing.trailPhase !== 'issued'))) return await skipPrepared('trailing position already flat');
+      if (current === 'flat' && (!existing || (createState && priorTrailPhase !== 'issued'))) return await skipPrepared('trailing position already flat');
       if (current === 'changed') throw new Error('trail position identity changed');
     }
     // WRITE-AHEAD: persist the stop intent BEFORE any exchange write, so a lost response
@@ -80,9 +85,18 @@ function makeStopGrid(io) {
       await io.savePending(pending);
     } else if (unknownCreate) {
       // Do not discard an unknown create outcome when independently managing risk.
-      pending[market] = { ...existing, riskStop:{ at:new Date().toISOString(), reason, status:'pending' },
+      let retained = existing;
+      if (supersedingRisk) {
+        const { trailPositionRef, trailPhase, ...create } = existing;
+        const history = Array.isArray(existing.previousRiskStops) ? existing.previousRiskStops
+          : existing.previousRiskStops == null ? [] : [{ unrecognizedHistory:existing.previousRiskStops }];
+        retained = { ...create, previousRiskStops:[...history,
+          { ...existing.riskStop, ...(trailPositionRef != null ? { trailPositionRef } : {}),
+            ...(trailPhase != null ? { trailPhase } : {}), supersededAt:new Date().toISOString() }] };
+      }
+      pending[market] = { ...retained, riskStop:{ at:new Date().toISOString(), reason, status:'pending' },
         ...(isTrail ? { trailPositionRef:trailRef,
-          trailPhase:existing?.trailPositionRef === trailRef && existing?.trailPhase === 'issued' ? 'issued' : 'prepared' } : {}) };
+          trailPhase:!supersedingRisk && existing?.trailPositionRef === trailRef && existing?.trailPhase === 'issued' ? 'issued' : 'prepared' } : {}) };
       await io.savePending(pending);
     } else if (!pending[market]) {
       pending[market] = { at: new Date().toISOString(), reason,

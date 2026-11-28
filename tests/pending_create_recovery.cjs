@@ -2,6 +2,7 @@
 // Execute production decide/act over isolated fixtures. All exchange I/O is mocked.
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
+const {PY}=require('./env.cjs');
 const {dispatchSource,mockEgo,fixtureTask}=require('./ego_fixture.cjs');
 const {run:firstRound}=require('./browser_alignment.cjs');
 const {ownerStart}=require('../scripts/execution_lease.cjs');
@@ -48,7 +49,7 @@ function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=
       else throw Error('unexpected mocked exchange read: '+u.pathname);
       return{status:200,body:JSON.stringify(body)};
     }};
-  async function execute({diskFailure=false,mutateAfterPlan=false}={}) {
+  async function execute({diskFailure=false,mutateAfterPlan=false,concurrentIssue=false}={}) {
     const at=new Date().toISOString(),runId='recovery-'+(++round);
     observed.at=at;put('state/observed.json',observed);
     put('state/run_context.json',{runId,identity,startedAt:at,ownerPid:process.pid,ownerStart:ownerStart(process.pid)});
@@ -65,16 +66,31 @@ function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=
     }
     const tmp=path.join(d,'state/pending_stops.json.tmp');
     if(diskFailure)fs.mkdirSync(tmp);
-    const before=patches.length,source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/act.mjs'),'utf8'),d);
+    const before=patches.length;let source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/act.mjs'),'utf8'),d);
+    let concurrentDispatches=0;
+    if(concurrentIssue){
+      const needle='delete ledger.pending[a.market];\n          try { await savePending(ledger.pending); }';
+      assert(source.includes(needle));
+      source=source.replace(needle,'delete ledger.pending[a.market];\n          await concurrentDispatch();\n          try { await savePending(ledger.pending); }');
+    }
+    const concurrentDispatch=async()=>{
+      const expected={intentId:intent.intentId,planId:intent.planId,runId:intent.runId};
+      const child=spawnSync(PY,[path.join(d,'scripts/with_lock.py'),'--name','pending','--wait','5',
+        process.execPath,path.join(d,'scripts/pending_store.cjs')],{
+        input:JSON.stringify({op:'issue',market,expected,accountKey:identity.accountKey}),encoding:'utf8',
+        env:{...process.env,BG_ROOT:d},timeout:10000});
+      assert.equal(child.status,0,child.stdout+child.stderr);
+      concurrentDispatches++; // simulated other executor sends after its real issued transition
+    };
     let exit=0,error=null;
     try{
-      await new AsyncFunction('ego','taskSpace','process','console',source)(mockEgo(d),async()=>fixtureTask(d,page),
-        {exit:code=>{throw Object.assign(Error('fixture exit'),{exit:code});}},{log(){}});
+      await new AsyncFunction('ego','taskSpace','process','console','concurrentDispatch',source)(mockEgo(d),async()=>fixtureTask(d,page),
+        {exit:code=>{throw Object.assign(Error('fixture exit'),{exit:code});}},{log(){}},concurrentDispatch);
     }catch(e){if(e.exit!==undefined)exit=e.exit;else error=e.message;}
     const result=JSON.parse(fs.readFileSync(path.join(d,'state/act_results.json')));
     const pending=JSON.parse(fs.readFileSync(path.join(d,'state/pending_stops.json')));
     if(diskFailure)fs.rmSync(tmp,{recursive:true,force:true});
-    return{actions,exit,error,result,pending,patches:patches.slice(before)};
+    return{actions,exit,error,result,pending,patches:patches.slice(before),concurrentDispatches};
   }
   return{execute,clearRisk:()=>{if(observed.gridRows[0]){observed.gridRows[0].pnlRaw=0;observed.gridRows[0].pnlPct=0;}},
     close:()=>fs.rmSync(d,{recursive:true,force:true})};
@@ -105,6 +121,15 @@ async function check(name,fn){await fn();console.log('PASS '+name);}
     assert.equal(first.patches,0);assert.match(first.actError,/EXECUTION_CONFIG_CHANGED/);assert.equal(first.pending[market].phase,'prepared');
     const f=fixture(first.pending[market]);try{const r=await f.execute();assert.equal(r.exit,0);assert.deepEqual(r.pending,{});assert.equal(r.patches.length,0);}finally{f.close();}
   });
+  for(const mode of ['lease-revoked-during-issue','config-changed-during-issue']){
+    await check(mode+' blocks dispatch and remains unknown across rounds',async()=>{
+      const first=await firstRound(mode);assert.equal(first.patches,0);assert.equal(first.pending[market].phase,'issued');
+      const f=fixture(first.pending[market]);try{const r=await f.execute();
+        assert.equal(r.exit,2);assert.equal(r.patches.length,0);assert.equal(r.pending[market].phase,'issued');
+        assert(r.result.results.some(x=>x.manualRequired));
+      }finally{f.close();}
+    });
+  }
   for(const [mode,code,phase] of [['snapshot-crash-after-prepare',47,'prepared'],['crash-after-issued',48,'issued']]){
     await check(mode+' survives a process crash without stopping an independent grid',async()=>{
       const temp=fs.mkdtempSync(path.join(os.tmpdir(),'bg-create-crash-')),keep=path.join(temp,'fixture-path'),sent=path.join(temp,'patch-sent');
@@ -134,6 +159,15 @@ async function check(name,fn){await fn();console.log('PASS '+name);}
     const f=fixture(prepared);try{
       const first=await f.execute({mutateAfterPlan:'issued'});assert.equal(first.exit,2);
       assert.equal(first.pending[market].phase,'issued');assert.equal(first.patches.length,0);
+      const retry=await f.execute();assert.equal(retry.exit,2);assert.equal(retry.patches.length,0);
+      assert.equal(retry.pending[market].phase,'issued');assert(retry.result.results.some(x=>x.manualRequired));
+    }finally{f.close();}
+  });
+  await check('concurrent issued transition defeats stale cleanup and survives the next round',async()=>{
+    const f=fixture(prepared);try{
+      const first=await f.execute({concurrentIssue:true});
+      assert.equal(first.concurrentDispatches,1);assert.equal(first.exit,2);assert.equal(first.patches.length,0);
+      assert.equal(first.pending[market].phase,'issued');assert(first.result.results.some(x=>x.done===false));
       const retry=await f.execute();assert.equal(retry.exit,2);assert.equal(retry.patches.length,0);
       assert.equal(retry.pending[market].phase,'issued');assert(retry.result.results.some(x=>x.manualRequired));
     }finally{f.close();}
@@ -175,6 +209,37 @@ async function check(name,fn){await fn();console.log('PASS '+name);}
         assert(r.result.results.some(x=>x.act==='hold-unknown-create'&&x.manualRequired===true));
       }finally{f.close();}
     }
+  });
+  await check('fresh grid and position stop-loss override an older issued trail retry',async()=>{
+    for(const options of [{risk:true},{autoRisk:true}]){
+      let saved={[market]:{...prepared,phase:'issued'}},writes=0;const oldRef='a'.repeat(64);
+      const oldStop=makeStopGrid({loadPending:async()=>({pending:structuredClone(saved),corrupt:false}),
+        savePending:async p=>{saved=structuredClone(p);},getTrailPositionRef:async()=>({state:'known',ref:oldRef}),
+        getAutomation:async()=>({params:{symbols:[{symbol,enabled:true}]}}),
+        jpatch:async(_url,_body,before)=>{await before();writes++;throw Error('fixture lost trailing response');}});
+      await assert.rejects(oldStop(market,null,'AUTO_TRAIL: old position',[],{independentRisk:true,trailPositionRef:oldRef}),/lost trailing response/);
+      assert.equal(writes,1);assert.equal(saved[market].trailPhase,'issued');
+      const f=fixture(saved[market],options);try{
+        const r=await f.execute();assert.equal(r.error,null);assert.equal(r.exit,2);
+        const stop=r.actions.find(a=>a.act==='stop');assert(stop.independentRisk);
+        assert.match(stop.reason,options.risk?/^SL:/ : /^AUTO_SL:/);
+        assert.deepEqual(r.patches.map(p=>p.operation),['Upsert','Delete']);
+        assert.equal(r.pending[market].phase,'issued');assert.equal(r.pending[market].riskStop.status,'completed');
+        assert.equal(r.pending[market].previousRiskStops.length,1);
+        assert.equal(r.pending[market].previousRiskStops[0].trailPositionRef,oldRef);
+        assert.equal(r.pending[market].previousRiskStops[0].trailPhase,'issued');
+        assert.equal(r.pending[market].trailPositionRef,undefined);
+        assert(r.result.results.some(x=>x.manualRequired));
+      }finally{f.close();}
+    }
+  });
+  await check('old trailing retry remains bound when no fresh risk exit exists',async()=>{
+    const oldRef='a'.repeat(64),f=fixture({...prepared,phase:'issued',trailPositionRef:oldRef,trailPhase:'issued',
+      riskStop:{at:new Date().toISOString(),reason:'AUTO_TRAIL: old position',status:'pending'}});
+    try{const r=await f.execute();const stop=r.actions.find(a=>a.act==='stop');
+      assert.equal(stop.retryPendingRisk,true);assert.equal(stop.trailPositionRef,oldRef);
+      assert.equal(r.patches.length,0);assert.equal(r.pending[market].trailPositionRef,oldRef);
+    }finally{f.close();}
   });
   await check('an incomplete independent risk stop is retried without clearing the unknown create',async()=>{
     const f=fixture({...prepared,phase:'issued'},{risk:true,stopTimeoutOnce:true});

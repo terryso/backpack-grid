@@ -213,6 +213,7 @@ let cloudDirectionBlock = null;
   }
 
   // ---------- pending stop retries: highest priority actions, no tickers needed ----------
+  const deferredTrailingRiskStops = [];
   for (const [mkt, p] of Object.entries(pending)) {
     if (unresolvedCreates[mkt] === 'prepared') {
       actions.push({ act:'clear-prepared-create', market:mkt, intent:{ intentId:p.intentId, planId:p.planId, runId:p.runId } });
@@ -228,9 +229,12 @@ let cloudDirectionBlock = null;
         const grid = grids.find(g => g.market === mkt);
         const trailFields = Object.prototype.hasOwnProperty.call(p, 'trailPositionRef')
           ? { trailPositionRef:p.trailPositionRef } : /AUTO_TRAIL/.test(p.riskStop.reason) ? { trailPositionRef:null } : {};
-        actions.push({ act:'stop', market:mkt, ...(grid ? {range:grid.range} : {}), ...trailFields,
-          reason:`pending risk stop retry (${p.riskStop.reason})`, independentRisk:true });
-        lines.push(`PENDING RISK STOP ${mkt}: retrying an independently planned exit`);
+        const retry = { act:'stop', market:mkt, ...(grid ? {range:grid.range} : {}), ...trailFields,
+          reason:`pending risk stop retry (${p.riskStop.reason})`, independentRisk:true, retryPendingRisk:true };
+        // A trailing retry is bound to its original position. Give fresh risk
+        // rules a chance to stop a replacement position before retrying it.
+        if (Object.prototype.hasOwnProperty.call(trailFields, 'trailPositionRef')) deferredTrailingRiskStops.push(retry);
+        else { actions.push(retry); lines.push(`PENDING RISK STOP ${mkt}: retrying an independently planned exit`); }
       }
       continue;
     }
@@ -351,6 +355,12 @@ let cloudDirectionBlock = null;
   if (cfg.autoExitsEnabled) {
     const { planAutoExits } = require("./auto_exits.cjs");
     planAutoExits({ ROOT, identity, cfg, obs, grids, pending:pendingForRisk, heldByUser, manualCorrupt, actions, lines });
+  }
+  for (const retry of deferredTrailingRiskStops) {
+    if (!actions.some(a => a.act === 'stop' && a.market === retry.market)) {
+      actions.push(retry);
+      lines.push(`PENDING RISK STOP ${retry.market}: retrying an independently planned exit`);
+    } else lines.push(`PENDING RISK STOP ${retry.market}: fresh exit takes priority over old trailing retry`);
   }
 
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------

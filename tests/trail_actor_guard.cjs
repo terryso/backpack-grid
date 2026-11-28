@@ -96,6 +96,26 @@ async function check(name, fn) { await fn(); console.log('PASS ' + name); }
     assert.equal(f.read().pending[market].phase,'issued');assert.equal(f.read().pending[market].riskStop.status,'completed');
     assert.equal(f.read().pending[market].trailPositionRef,undefined);
   });
+  await check('a fresh position trail supersedes an old issued trail while preserving its history', async () => {
+    const old = {kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',riskStop:{status:'pending',reason,at:new Date().toISOString()}};
+    const f=fixture({refs:[known(B),known(B),flat],initialPending:{[market]:old}});
+    const result=await f.stop(market,null,reason,[],{trailPositionRef:B,independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    const saved=f.read().pending[market];assert.equal(saved.phase,'issued');assert.equal(saved.riskStop.status,'completed');
+    assert.equal(saved.previousRiskStops[0].trailPositionRef,A);assert.equal(saved.previousRiskStops[0].trailPhase,'issued');
+    assert.equal(saved.riskStop.trailPositionRef,B);
+  });
+  await check('malformed older risk history is retained without blocking a fresh stop-loss', async () => {
+    const old = {kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',previousRiskStops:{legacy:'evidence'},
+      riskStop:{status:'pending',reason,at:new Date().toISOString()}};
+    const f=fixture({initialPending:{[market]:old}});
+    const result=await f.stop(market,null,'SL: current grid loss',[],{independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.deepEqual(f.read().pending[market].previousRiskStops[0].unrecognizedHistory,{legacy:'evidence'});
+    assert.equal(f.read().pending[market].previousRiskStops[1].trailPositionRef,A);
+  });
   await check('a cancelled prepared trail keeps unknown create but releases its old position binding', async () => {
     const pending = { kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
       trailPositionRef:A,trailPhase:'prepared',riskStop:{status:'pending',reason,at:new Date().toISOString()} };

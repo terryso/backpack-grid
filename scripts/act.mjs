@@ -90,7 +90,6 @@ async function jpost(pathname, body) {
 }
 const getAutomation = () => jget(`/wapi/v1/subaccount/${SUB}/automation`);
 const symOf = (market) => market.replace("-PERP", "_USDC_PERP");
-const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.rename(p + ".tmp", p));
 // production control flow lives in act_core.cjs (CJS) with injected io so the REAL
 // stop/create-gate logic is executable under Node with mocked exchange access
 // import.meta.url is an eval artifact under the ego-browser runner — anchor the require
@@ -99,7 +98,30 @@ const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path
 const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
 const { directionDecision } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
 const { createIntentState, samePreparedCreate } = requireLocal("./pending_create.cjs");
-const fsSync = requireLocal("node:fs");
+const nodeProcess = requireLocal("node:process");
+const { spawnSync } = requireLocal("node:child_process");
+const pendingVersions = new WeakMap();
+const pendingVersion = raw => raw === null ? 'missing' : createHash('sha256').update(raw).digest('hex');
+const PY = "__PY_BIN__";
+// ego's process.execPath is an Electron helper, not the standalone Node CLI.
+const NODE = "__NODE_BIN__";
+
+// All ledger mutations share a kernel lock and compare their original file
+// version before writing. A dead writer releases the lock automatically.
+function pendingTransaction(request) {
+  if (PY.startsWith('__') || NODE.startsWith('__')) throw Error('interpreter path not injected');
+  const child = spawnSync(PY, [path.join(ROOT, 'scripts/with_lock.py'), '--name', 'pending', '--wait', '5',
+    NODE, path.join(ROOT, 'scripts/pending_store.cjs')], {
+    input:JSON.stringify(request), encoding:'utf8', timeout:9000, env:{...nodeProcess.env, BG_ROOT:ROOT},
+  });
+  let result;
+  try { result = JSON.parse(child.stdout); } catch {}
+  if (child.error || child.status !== 0 || !result?.ok) {
+    const code = result?.code || (child.status === 3 ? 'PENDING_LOCK_BUSY' : child.error?.code) || 'PENDING_ERROR';
+    throw Object.assign(new Error('pending transaction failed'), { code });
+  }
+  return result;
+}
 
 function requirePlannedDirection(action) {
   const current = directionDecision(ROOT, identity.accountKey, action.market, cfg);
@@ -114,23 +136,9 @@ function requirePlannedDirection(action) {
 // exchange dispatch. If it fails after rename, the outcome remains uncertain;
 // recovery never treats an uncertain create as authority to stop another grid.
 function issuePreparedCreateIntent(action, expected) {
-  const target = path.join(ROOT, "state/pending_stops.json");
-  let temporary = null, fd = null;
   try {
     requirePlannedDirection(action);
-    const pending = JSON.parse(fsSync.readFileSync(target, "utf8"));
-    if (!pendingStructOk(pending) || Object.keys(pending).length !== 1 ||
-        !samePreparedCreate(pending[action.market], expected, identity.accountKey)) throw Error("prepared intent changed");
-    pending[action.market] = { ...pending[action.market], phase:"issued", reason:"create intent (outcome unconfirmed)" };
-    temporary = target + "." + randomUUID() + ".tmp";
-    fd = fsSync.openSync(temporary, "wx", 0o600);
-    fsSync.writeFileSync(fd, JSON.stringify(pending, null, 2));
-    fsSync.fsyncSync(fd);
-    fsSync.closeSync(fd); fd = null;
-    requirePlannedDirection(action);
-    fsSync.renameSync(temporary, target); temporary = null;
-    const dir = fsSync.openSync(path.dirname(target), "r");
-    try { fsSync.fsyncSync(dir); } finally { fsSync.closeSync(dir); }
+    pendingTransaction({ op:'issue', market:action.market, expected, accountKey:identity.accountKey });
     requirePlannedDirection(action);
   } catch (error) {
     if (error?.code === 'DIRECTION_REPLAN') throw error;
@@ -138,9 +146,6 @@ function issuePreparedCreateIntent(action, expected) {
     const wrapped = new Error(`create intent transition failed (${code})`);
     wrapped.code = 'INTENT_TRANSITION_FAILED';
     throw wrapped;
-  } finally {
-    if (fd !== null) try { fsSync.closeSync(fd); } catch {}
-    if (temporary) try { fsSync.unlinkSync(temporary); } catch {}
   }
 }
 
@@ -162,27 +167,34 @@ async function waitFor(cond, ms, step = 1500) {
 // io adapters: act_core.cjs executes the REAL control flow with these injected
 async function loadPending() {
   const p = path.join(ROOT, "state/pending_stops.json");
+  let raw = null;
   try {
-    const parsed = JSON.parse(await fs.readFile(p, "utf8"));
+    raw = await fs.readFile(p);
+    const parsed = JSON.parse(raw.toString('utf8'));
     if (pendingStructOk(parsed) && Object.values(parsed).some(e=>e.accountKey!==identity.accountKey)) throw Error("pending account mismatch");
     const structOk = pendingStructOk(parsed);
     if (!structOk) throw Object.assign(new Error("invalid pending ledger structure"), { code: "EBADSTRUCT" });
+    pendingVersions.set(parsed, pendingVersion(raw));
     return { pending: parsed, corrupt: false };
   } catch (e) {
     if (e.message === "pending account mismatch") throw e;
-    if (e.code === "ENOENT") return { pending: {}, corrupt: false };
+    if (e.code === "ENOENT") { const pending={}; pendingVersions.set(pending, pendingVersion(null)); return { pending, corrupt: false }; }
     // corrupt or malformed ledger: archive the evidence and leave a persistent block flag —
     // it must never be silently treated as empty (unknown unresolved cleanups)
-    try { await fs.rename(p, path.join(ROOT, `state/pending_stops.corrupt-${Date.now()}.json`)); } catch {}
-    await writeAtomic(path.join(ROOT, "state/pending_corrupt.json"), JSON.stringify({ at: new Date().toISOString(), note: "pending ledger was corrupt and archived; new-risk creation stays blocked until this flag file is manually removed after inspecting the archive" }, null, 2));
-    console.log("WARNING: pending_stops.json was corrupt — archived, flag file written, new-risk blocked");
+    // pending_stops.corrupt- archives are also made under the lock: never move
+    // a file another writer replaced after our read.
+    try { pendingTransaction({op:'quarantine', version:pendingVersion(raw)}); } catch {}
+    console.log("WARNING: pending_stops.json was corrupt or changed — new-risk blocked");
     return { pending: {}, corrupt: true };
   }
 }
 async function savePending(p) {
   await assertExecutionLease();
   for(const entry of Object.values(p)) entry.accountKey=identity.accountKey;
-  await writeAtomic(path.join(ROOT, "state/pending_stops.json"), JSON.stringify(p, null, 2));
+  const version = pendingVersions.get(p);
+  if (version === undefined) throw Error('pending ledger has no read version');
+  const saved = pendingTransaction({op:'save', version, pending:p, accountKey:identity.accountKey});
+  pendingVersions.set(p, saved.version);
 }
 async function assertExecutionLease() { verifyLease(ROOT,meta,identity); }
 async function accountCheck() { const all = await jget("/wapi/v1/portfolio/collateral"); return collateralFor(all, identity); }
@@ -267,7 +279,8 @@ for (const a of actions) {
       await accountCheck(); // every action, including stops/protects, belongs to the pinned owner
       if (a.act === "stop") {
         const options = { ...(Object.prototype.hasOwnProperty.call(a, 'trailPositionRef') ? { trailPositionRef:a.trailPositionRef } : {}),
-          ...(a.independentRisk === true ? { independentRisk:true } : {}) };
+          ...(a.independentRisk === true ? { independentRisk:true } : {}),
+          ...(a.retryPendingRisk === true ? { retryPendingRisk:true } : {}) };
         const r = await stopGrid(a.market, a.range, a.reason, results, options);
         if (!r || r.done !== true) stopIncomplete = true;
         return { done: true };
@@ -398,7 +411,13 @@ for (const a of actions) {
               at:new Date().toISOString(), reason:"create intent (not yet sent)" };
             await savePending(intent.pending);
             intentWritten = true;
-          }, () => issuePreparedCreateIntent(a, expectedIntent), () => { requestDispatched = true; });
+          }, () => {
+            issuePreparedCreateIntent(a, expectedIntent);
+            // Persistence and lock acquisition can outlast the lease or change
+            // the plan's configuration. Recheck after both and before dispatch.
+            verifyLease(ROOT, meta, identity);
+            requirePlannedDirection(a);
+          }, () => { requestDispatched = true; });
         } catch (error) {
           if (!requestDispatched && intentWritten) {
             // No Upsert was dispatched. A failed cleanup retains prepared state
