@@ -253,6 +253,10 @@ async function main() {
   uiContext.snapshot={...display,direction:{chainSnapshot:{id:'applied',asOf:new Date().toISOString(),chains:chainEntries}}};
   vm.runInNewContext('render(snapshot)',uiContext);
   check('production UI distinguishes missing advice from an expired snapshot',()=>assert.match(elements.get('dirBanner').innerHTML,/未收到最新方向快照/));
+  uiContext.snapshot={...display,direction:{healthy:true,chainSnapshot:{id:'old',asOf:new Date(Date.now()-7201000).toISOString(),chains:chainEntries},
+    reportedSnapshotId:'new',snapshotHealth:{active:true,blocked:true,reason:'expired-snapshot'}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI warns when applied directions expire despite newer advice',()=>assert.match(elements.get('dirBanner').innerHTML,/新格已暂停：已应用快照超过两小时/));
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

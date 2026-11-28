@@ -59,11 +59,12 @@ async function jget(pathname) {
   if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status}`);
   return JSON.parse(r.body);
 }
-async function jpatch(pathname, body, beforeSend) {
+async function jpatch(pathname, body, beforeSend, finalGuard) {
   await assertExecutionLease();
   await accountCheck();
   if (beforeSend) await beforeSend();
   await assertExecutionLease();
+  if (finalGuard) finalGuard(); // synchronous: no other await before dispatch
   const r = await page.fetch(API + pathname, {
     method: "PATCH", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -95,7 +96,16 @@ const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.re
 // base to the real file location (round-7 #1: MODULE_NOT_FOUND before any action)
 const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
 const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
-const { directionFor } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
+const { directionDecision } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
+
+function requirePlannedDirection(action) {
+  const current = directionDecision(ROOT, identity.accountKey, action.market, cfg);
+  if (current.blocked || (cfg.requireDirection === true && current.direction === "Neutral") || current.direction !== action.direction) {
+    const error = new Error(`direction changed after planning or is Neutral${current.reason ? ': ' + current.reason : ''}; create must be replanned`);
+    error.code = 'DIRECTION_REPLAN';
+    throw error;
+  }
+}
 
 async function currentMark(symbol) {
   const marks = await jget("/api/v1/markPrices");
@@ -278,10 +288,7 @@ for (const a of actions) {
         if(Number(mark)<Number(a.lower)||Number(mark)>Number(a.upper))throw Error("current mark outside proposed grid range");
         // Recheck the same inherited direction used when planning. A changed
         // direction must be replanned, including direction-dependent risk gates.
-        const currentDirection = directionFor(ROOT, identity.accountKey, a.market, cfg);
-        if ((cfg.requireDirection === true && currentDirection === "Neutral") || currentDirection !== a.direction) {
-          throw Error("direction changed after planning or is Neutral; create must be replanned");
-        }
+        requirePlannedDirection(a);
         const base = {
           strategyType: "Grid", symbol,
           priceLow: String(a.lower), priceHigh: String(a.upper),
@@ -308,18 +315,40 @@ for (const a of actions) {
           writeDemotion(ROOT, identity.accountKey, a.market, vErr);
           throw new Error(`create ${a.market}: ${vErr} — market demoted for 24h`);
         }
-        // WRITE-AHEAD create intent, immediately before the first side-effecting request:
-        // from here the grid is in an unconfirmed state; the ledger entry keeps that visible
-        // (blocks new risk, drives next-round cleanup) until full confirmation or verified
-        // cleanup releases it. Request-issued-but-unknown outcomes MUST keep this entry.
-        {
-          const intent = await loadPending();
-          intent.pending[a.market] = { kind:"create",phase:"issued",accountKey: identity.accountKey, planId: meta.planId, runId: meta.runId, at: new Date().toISOString(), reason: "create intent (unconfirmed)" };
-          await savePending(intent.pending);
+        // WRITE-AHEAD create intent is persisted after account/lease checks, immediately before
+        // the write. Unknown write outcomes still retain the write-ahead record.
+        let r, intentWritten = false;
+        try {
+          r = await jpatch(`/wapi/v1/subaccount/${SUB}/automation`, {
+            params: { strategyType: "Grid", symbols: [{ operation: "Upsert", ...base, enabled: true, initialPrice: mark }] },
+          }, async () => {
+            requirePlannedDirection(a);
+            const intent = await loadPending();
+            if (intent.corrupt || Object.keys(intent.pending).length) throw Error("pending changed before create");
+            intent.pending[a.market] = { kind:"create",phase:"issued",accountKey: identity.accountKey, planId: meta.planId, runId: meta.runId, at: new Date().toISOString(), reason: "create intent (unconfirmed)" };
+            await savePending(intent.pending);
+            intentWritten = true;
+          }, () => requirePlannedDirection(a));
+        } catch (error) {
+          if (error?.code === 'DIRECTION_REPLAN' && intentWritten) {
+            // The final guard rejected the request: no Upsert was dispatched.
+            // Remove only this run's own unissued intent; never clear others.
+            try {
+              const ledger = await loadPending(), entry = ledger.pending[a.market];
+              if (ledger.corrupt || !entry || entry.kind !== 'create' || entry.phase !== 'issued' ||
+                  entry.accountKey !== identity.accountKey || entry.planId !== meta.planId || entry.runId !== meta.runId) {
+                throw Error('create intent ownership changed');
+              }
+              delete ledger.pending[a.market];
+              await savePending(ledger.pending);
+            } catch (cleanupError) {
+              unresolvedCleanup = true; stopIncomplete = true;
+              const code = typeof cleanupError.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(cleanupError.code) ? cleanupError.code : 'unknown';
+              throw Error(`direction replan refused before send; create intent cleanup failed (${code})`);
+            }
+          }
+          throw error;
         }
-        const r = await jpatch(`/wapi/v1/subaccount/${SUB}/automation`, {
-          params: { strategyType: "Grid", symbols: [{ operation: "Upsert", ...base, enabled: true, initialPrice: mark }] },
-        });
         if (r.status !== 200) throw new Error(`create ${a.market}: upsert failed ${r.status} ${r.body}`);
         const acknowledged=await loadPending();
         acknowledged.pending[a.market].phase="acknowledged";await savePending(acknowledged.pending);

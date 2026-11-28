@@ -55,6 +55,16 @@ export class DirectionMailbox {
             !['Long', 'Short', 'Neutral'].includes(direction?.directive) ||
             !/^[a-f0-9]{64}$/.test(direction?.version || '')) return stateResponse(prior);
         const ack = direction.lastCloudEvent;
+        if (typeof ack?.id !== 'string' || !ack.id) return stateResponse(prior);
+        // A Mac running an earlier version may already have acknowledged a
+        // temporarily-future event as expired. If it later applies the retained
+        // advice after clock recovery, correct that same event's receipt.
+        if (!prior.pending && ack?.status === 'applied' && ack.id === prior.advice?.snapshot?.id &&
+            ack.id === prior.lastAcknowledged?.id && prior.lastAcknowledged.status === 'expired') {
+          prior.lastAcknowledged = ack;
+          await this.ctx.storage.put('state', prior);
+          return stateResponse({ ...prior, resolved: true });
+        }
         if (!prior.pending || ack?.id !== prior.pending.id || !['applied', 'conflict', 'expired'].includes(ack?.status)) return stateResponse(prior);
         if (prior.pending.type !== 'chain_snapshot' && ack.status === 'applied' && prior.advice) {
           prior.advice.switchLog = [...(Array.isArray(prior.advice.switchLog) ? prior.advice.switchLog : []).slice(-49),

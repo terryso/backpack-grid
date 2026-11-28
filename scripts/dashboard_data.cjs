@@ -53,12 +53,15 @@ if (advice && Number.isFinite(Date.parse(advice.at))) {
 }
 // The mailbox compares this exact revision with the file under the local lock.
 // Invalid/foreign direction state must never be advertised as a valid version.
+let snapshotHealth = null;
 try {
   if (identityValid) {
-    const current = require('./grid_direction.cjs').directionSnapshot(ROOT, identity.accountKey);
-    direction = { ...(direction || {}), ...current };
+    const { directionSnapshot, directionHealth } = require('./grid_direction.cjs');
+    snapshotHealth = directionHealth(ROOT, identity.accountKey, cfg);
+    const current = directionSnapshot(ROOT, identity.accountKey);
+    direction = { ...(direction || {}), ...current, snapshotHealth };
   }
-} catch { direction = null; }
+} catch { direction = snapshotHealth?.active ? { ...(direction || {}), snapshotHealth } : null; }
 // ⚡ 显示守卫：lastSwitch 只在切换目标 === 当前指令时有效。stale KV 副本的旧切换
 // 不能挂在已变化的指令上——11-27 指令已切 Neutral 而副本 switchLog 末条仍是
 // to=Short，页面会显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾。

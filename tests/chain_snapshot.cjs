@@ -4,7 +4,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path'), vm = require('node:vm');
 const { webcrypto } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { directionFor, directionSnapshot, directionTransaction, setDirection } = require('../scripts/grid_direction.cjs');
+const { directionFor, directionDecision, directionHealth, directionSnapshot, directionTransaction, setDirection } = require('../scripts/grid_direction.cjs');
+const { PY } = require('./env.cjs');
 const patterns = require('../cloudflare/patterns.js');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-chain-snapshot-'));
 const key = 'fixture-3';
@@ -83,14 +84,20 @@ const snapUpload = () => ({ updatedAt: asOf(0), dataValid: true, direction: dire
     const cases = { 'BTC-PERP': 'Long', 'ETH-PERP': 'Neutral', 'AAVE_USDC_PERP': 'Neutral',
       'SOL-PERP': 'Short', 'PENGU-PERP': 'Short', 'SUI-PERP': 'Short', 'DEEP-PERP': 'Short',
       'BNB-PERP': 'Long', 'CAKE-PERP': 'Long', 'HYPE-PERP': 'Long', 'PURR-PERP': 'Long',
-      'TRX-PERP': 'Neutral', 'JST-PERP': 'Neutral', 'OTHER-PERP': 'Short' };
+      'TRX-PERP': 'Neutral', 'JST-PERP': 'Neutral' };
     for (const [market, expected] of Object.entries(cases)) assert.equal(directionFor(root, key, market, cfg), expected, market);
+    assert.equal(directionDecision(root, key, 'OTHER-PERP', cfg).reason, 'unmapped-market');
     assert.deepEqual(apply(event), { id: event.id, status: 'applied' });
     assert.equal(directionFor(root, 'foreign-account', 'BTC-PERP', cfg), 'Neutral');
     const altered = structuredClone(event); altered.id = 'malformed'; altered.chains.BTC.direction = 'Short';
     assert.throws(() => apply(altered), /transaction failed/);
     assert.equal(directionFor(root, key, 'BTC-PERP', cfg), 'Long');
-    const registryFile = path.join(root, 'state/direction_override.json'), original = fs.readFileSync(registryFile);
+    const registryFile = path.join(root, 'state/direction_override.json'), missingSnapshot=JSON.parse(fs.readFileSync(registryFile));
+    delete missingSnapshot.chainSnapshot;fs.writeFileSync(registryFile,JSON.stringify(missingSnapshot));
+    assert.equal(directionHealth(root,key,cfg).reason,'missing-snapshot');
+    assert.equal(apply(event).status,'applied');
+    assert.equal(directionFor(root,key,'BTC-PERP',cfg),'Long');
+    const original = fs.readFileSync(registryFile);
     const corrupt = JSON.parse(original); delete corrupt.chainSnapshot.chains.ETH;
     fs.writeFileSync(registryFile, JSON.stringify(corrupt));
     assert.equal(directionFor(root, key, 'PENGU-PERP', cfg), 'Neutral');
@@ -130,6 +137,13 @@ const snapUpload = () => ({ updatedAt: asOf(0), dataValid: true, direction: dire
     const expired = { ...event, id: 'expired', at: asOf(-7201000), asOf: asOf(-7201000) };
     assert.equal(apply(expired).status, 'expired');
     assert.equal(directionFor(root, key, 'PENGU-PERP', cfg), 'Long');
+    const emptyRoot=fs.mkdtempSync(path.join(os.tmpdir(),'bg-chain-first-expired-'));
+    try {
+      fs.mkdirSync(path.join(emptyRoot,'state'));
+      fs.writeFileSync(path.join(emptyRoot,'state/direction_override.json'),JSON.stringify({schemaVersion:1,accountKey:key,directions:{'*':'Short'}}));
+      assert.equal(directionTransaction(emptyRoot,{op:'cloud',accountKey:key,event:expired}).status,'expired');
+      assert.equal(directionDecision(emptyRoot,key,'BTC-PERP',cfg).reason,'missing-snapshot');
+    } finally { fs.rmSync(emptyRoot,{recursive:true,force:true}); }
     console.log('PASS newer snapshots supersede older pending and stale local replays cannot roll back');
 
     // Real decide reads the same Worker response via a fixture curl. Four
@@ -144,10 +158,14 @@ const snapUpload = () => ({ updatedAt: asOf(0), dataValid: true, direction: dire
         allocationRaw:600, pnlRaw:0, pnlPct:0, status:'Triggered', nativeTP:cfg.takeProfitPct,
         nativeSL:cfg.stopLossPct, nativeCloseOnStop:true,
       }));
-      put('config.json', { ...cfg, maxGrids:4, requireDirection:true, autoExitsEnabled:false });
+      put('config.json', { ...cfg, maxGrids:4, requireDirection:true, autoExitsEnabled:true,
+        positionStopLossPct:100, positionTakeProfitPct:0, trailArmPct:10, trailGivebackPct:4, accountFloorUsd:0 });
       put('state/account_identity.json', identity);
-      put('state/observed.json', { at:asOf(0), identity, gridRows:grids, positions:[], ledger:[],
-        margin:{ totalEquity:'500', availableEquity:'400', openPnl:'0' } });
+      const observed = { at:asOf(0), identity, gridRows:grids,
+        positions:grids.map(g=>({market:g.market,symbol:g.symbol,size:'-1',mark:'100',liq:'150',pnlPct:0,fundingRaw:0})),
+        positionRefs:Object.fromEntries(grids.map(g=>[g.market,'a'.repeat(64)])), ledger:[],
+        margin:{ totalEquity:'500', availableEquity:'400', openPnl:'0' } };
+      put('state/observed.json', observed);
       put('state/tickers.json', grids.map(g => ({ symbol:g.symbol, lastPrice:'100', quoteVolume:'100000000' })));
       put('state/dashboard.env', 'DASH_URL=https://fixture.invalid\n');
       put('mailbox.json', { advice:data.advice, pending:next });
@@ -168,6 +186,29 @@ const snapUpload = () => ({ updatedAt: asOf(0), dataValid: true, direction: dire
       const shown = JSON.parse(fs.readFileSync(path.join(mac, 'state/dashboard.json'))).direction;
       assert.equal(shown.chainSnapshot.id, next.id); assert.equal(shown.reportedSnapshotId, next.id);
       assert.equal(shown.chainSnapshot.chains.SOL.direction, 'Long');
+      assert.equal(shown.snapshotHealth.blocked,false);
+      const regFile=path.join(mac,'state/direction_override.json'),reg=JSON.parse(fs.readFileSync(regFile));
+      reg.chainSnapshot.asOf=asOf(-7201000);fs.writeFileSync(regFile,JSON.stringify(reg));
+      const staleDashboard = spawnSync(process.execPath, [path.join(__dirname, '../scripts/dashboard_data.cjs')],
+        { env:childEnv, encoding:'utf8', timeout:15000 });
+      assert.equal(staleDashboard.status,0,staleDashboard.stderr);
+      assert.equal(JSON.parse(fs.readFileSync(path.join(mac,'state/dashboard.json'))).direction.snapshotHealth.reason,'expired-snapshot');
+      // The mailbox is unreachable; it cannot silently refresh the stale local snapshot.
+      fs.writeFileSync(path.join(mac,'bin/curl'),'#!/bin/sh\nexit 1\n',{mode:0o755});
+      run=decide(false);assert.equal(run.status,0,run.stderr);
+      assert.match(run.stdout,/expired-snapshot/);
+      assert(!JSON.parse(fs.readFileSync(path.join(mac,'state/actions.json'))).some(a=>a.act==='stop'));
+      observed.positions[0].pnlPct=-101;put('state/observed.json',observed);
+      run=decide(false);assert.equal(run.status,0,run.stderr);
+      assert(JSON.parse(fs.readFileSync(path.join(mac,'state/actions.json'))).some(a=>a.act==='stop'&&a.market==='SOL-PERP'&&a.reason.startsWith('AUTO_SL')));
+      observed.positions[0].pnlPct=0;put('state/observed.json',observed);
+      const renewed={...next,id:'renewed-fixture',at:asOf(0),asOf:asOf(0)};
+      put('mailbox.json',{advice:{at:renewed.asOf,type:'chain_snapshot',snapshot:renewed},pending:renewed});
+      fs.writeFileSync(path.join(mac,'bin/curl'),'#!/bin/sh\ncat "$BG_CLOUD_FIXTURE"\n',{mode:0o755});
+      run=decide(false);assert.equal(run.status,0,run.stderr);
+      assert.equal(directionSnapshot(mac,key).chainSnapshot.id,'renewed-fixture');
+      assert.equal(directionHealth(mac,key,cfg).blocked,false);
+      assert(!JSON.parse(fs.readFileSync(path.join(mac,'state/actions.json'))).some(a=>a.act==='stop'));
     } finally { fs.rmSync(mac, { recursive:true, force:true }); }
     console.log('PASS Worker-to-decide application, dry run, existing grids and dashboard projection');
 
@@ -181,11 +222,78 @@ const snapUpload = () => ({ updatedAt: asOf(0), dataValid: true, direction: dire
     assert.equal(data.advice.snapshot.chains.BTC.direction, 'Short');
     console.log('PASS concurrent writers retain the newest snapshot');
 
+    // Worker and Mac clocks can differ: a temporarily-future event must remain
+    // pending, and the same ID must become applicable when the Mac clock recovers.
+    data = null; kv.clear();
+    const skewRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-chain-clock-'));
+    try {
+      fs.mkdirSync(path.join(skewRoot, 'state'));
+      const hook = path.join(skewRoot, 'clock-hook'); fs.mkdirSync(hook);
+      fs.writeFileSync(path.join(hook, 'sitecustomize.py'), `import datetime, os
+_real = datetime.datetime
+class Clock(_real):
+    @classmethod
+    def now(cls, tz=None):
+        return _real.now(tz) + datetime.timedelta(milliseconds=int(os.environ.get('BG_TEST_CLOCK_OFFSET_MS', '0')))
+datetime.datetime = Clock
+`);
+      const transact = (dir, event, offset = 0) => {
+        const r = spawnSync(PY, [path.join(__dirname, '../scripts/direction_state.py')], {
+          env:{...process.env, BG_ROOT:dir, PYTHONPATH:hook, BG_TEST_CLOCK_OFFSET_MS:String(offset)},
+          input:JSON.stringify({op:'cloud',accountKey:key,event}), encoding:'utf8', timeout:10000,
+        });
+        assert.equal(r.status,0,r.stderr); return JSON.parse(r.stdout);
+      };
+      const accepted = await send('/api/direction-snapshot','POST',payload(asOf(59000)));
+      assert.equal(accepted.status,200); const futureEvent = (await accepted.json()).pending;
+      const firstTry = transact(skewRoot,futureEvent,-10000);
+      assert.equal(firstTry.status,'deferred');
+      const beforeRetry = directionSnapshot(skewRoot,key);
+      assert.equal(beforeRetry.lastCloudEvent.status,'deferred');
+      assert.equal(directionHealth(skewRoot,key,cfg).reason,'pending-snapshot');
+      assert.equal(transact(skewRoot,futureEvent,-10000).status,'deferred');
+      assert.equal(directionSnapshot(skewRoot,key).version,beforeRetry.version);
+      await send('/api/snapshot','POST',{updatedAt:asOf(0),dataValid:true,direction:beforeRetry});
+      assert.equal(data.pending.id,futureEvent.id);
+      const oldReceiptFile=path.join(skewRoot,'state/direction_override.json'),oldReceipt=JSON.parse(fs.readFileSync(oldReceiptFile));
+      oldReceipt.lastCloudEvent={id:futureEvent.id,status:'expired'};fs.writeFileSync(oldReceiptFile,JSON.stringify(oldReceipt));
+      assert.equal(transact(skewRoot,futureEvent,-10000).status,'deferred');
+      const deferredReceipt=directionSnapshot(skewRoot,key);
+      assert.equal(deferredReceipt.lastCloudEvent.status,'deferred');
+      await send('/api/snapshot','POST',{updatedAt:asOf(0),dataValid:true,direction:deferredReceipt});
+      assert.equal(data.pending.id,futureEvent.id);
+      assert.equal(transact(skewRoot,futureEvent).status,'applied');
+      assert.equal(directionHealth(skewRoot,key,cfg).blocked,false);
+      await send('/api/snapshot','POST',{updatedAt:asOf(0),dataValid:true,direction:directionSnapshot(skewRoot,key)});
+      assert.equal(data.pending,null); assert.equal(data.lastAcknowledged.status,'applied');
+
+      // Repair a receipt produced by the earlier implementation: advice is
+      // retained even after an erroneous expired ack cleared pending.
+      const recovery = fs.mkdtempSync(path.join(os.tmpdir(),'bg-chain-clock-recover-'));
+      try {
+        fs.mkdirSync(path.join(recovery,'state'));
+        fs.writeFileSync(path.join(recovery,'state/direction_override.json'),JSON.stringify({
+          schemaVersion:1,accountKey:key,directions:{},lastCloudEvent:{id:futureEvent.id,status:'expired'},
+        }));
+        data.lastAcknowledged = {id:futureEvent.id,status:'expired'};
+        assert.equal(transact(recovery,futureEvent).status,'applied');
+        await send('/api/snapshot','POST',{updatedAt:asOf(0),dataValid:true,direction:directionSnapshot(recovery,key)});
+        assert.equal(data.lastAcknowledged.status,'applied');
+      } finally { fs.rmSync(recovery,{recursive:true,force:true}); }
+      console.log('PASS future clock skew remains pending and recovers for the same snapshot ID');
+    } finally { fs.rmSync(skewRoot,{recursive:true,force:true}); }
+
     // A pre-cutover legacy event can still be acknowledged by the regular upload.
     data = { advice: { at: asOf(0) }, pending: { id: 'old-legacy', at: asOf(0), from: 'Short', to: 'Long' } };
     const ack = snapUpload(); ack.direction.lastCloudEvent = { id: 'old-legacy', status: 'applied' };
     assert.equal((await send('/api/snapshot', 'POST', ack)).status, 200);
     assert.equal(data.pending, null); assert.equal(data.advice.switchLog[0].via, 'cloud');
+    data={advice:{at:asOf(0)},pending:null,lastAcknowledged:null};
+    const malformedAck=snapUpload();malformedAck.direction.lastCloudEvent={status:'applied'};
+    const malformedReply=await mailbox.fetch(new Request('https://direction.internal/ack',{
+      method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({snapshot:malformedAck}),
+    }));
+    assert.equal(malformedReply.status,200);assert.equal((await malformedReply.json()).pending,null);
     assert(!fs.readFileSync(path.join(__dirname, '../cloudflare/wrangler.toml'), 'utf8').includes('11 * * * *'));
     assert(fs.readFileSync(path.join(__dirname, '../cloudflare/wrangler.toml'), 'utf8').includes('*/5 * * * *'));
     console.log('PASS legacy acknowledgment and sentinel-only schedule');

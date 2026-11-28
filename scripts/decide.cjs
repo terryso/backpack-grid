@@ -13,7 +13,7 @@ const { riskStructOk, pendingStructOk, finiteNumber, money, plainObject } = requ
 const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
 const { loadInfeasible } = require("./infeasible.cjs");
-const { directionFor } = require("./grid_direction.cjs");
+const { directionDecision, directionHealth } = require("./grid_direction.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -40,7 +40,8 @@ const writeAtomic = (p, data) => {
 
 // ---------- 方向邮箱同步 ----------
 // 新版 advice 保留完整快照，pending 是待确认副本；旧版事件仍可在过渡期处理。
-// 请求失败或快照过期时保留已应用方向。DRYRUN 不应用任何方向。
+// 请求失败时保留快照，但过期快照不能用于新格。DRYRUN 不应用任何方向。
+let cloudDirectionBlock = null;
 {
   const { dashUrlOf, fetchCloudMailbox } = require("./cloud_sync.cjs");
   const dashUrl = dashUrlOf(path.join(ROOT, "state/dashboard.env"), fs, path);
@@ -53,7 +54,9 @@ const writeAtomic = (p, data) => {
         try {
           const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: cloudEvent });
           console.log(`CLOUD SWITCH: event ${outcome.status}`);
+          if (cloudEvent.type === 'chain_snapshot' && outcome.status !== 'applied') cloudDirectionBlock = outcome.status;
         } catch (e) {
+          if (cloudEvent.type === 'chain_snapshot') cloudDirectionBlock = 'apply-failed';
           console.error(`CLOUD DIRECTION APPLY FAILED: ${String(e && e.message || e).slice(0, 120)} — keeping local directive`);
         }
       }
@@ -385,7 +388,8 @@ const writeAtomic = (p, data) => {
   const slots = cfg.maxGrids - remaining.length;
   const ecoOf = (perpName) => {
     const base = perpBase(perpName);
-    for (const [eco, list] of Object.entries(cfg.ecosystems || {})) if (list.includes(base)) return eco;
+    const ecos = cfg.ecosystems && typeof cfg.ecosystems === 'object' && !Array.isArray(cfg.ecosystems) ? cfg.ecosystems : {};
+    for (const [eco, list] of Object.entries(ecos)) if (Array.isArray(list) && list.includes(base)) return eco;
     return base; // unknown symbols cluster by themselves
   };
   // analysis cache (used by replacement planning and paper directional tracking)
@@ -403,8 +407,11 @@ const writeAtomic = (p, data) => {
   // or a queued pending stop (cleanup before new risk) all veto creation
   const corruptFlagExists = fs.existsSync(path.join(ROOT, "state", "pending_corrupt.json"));
   if (orphanPositions.length) lines.push(`ORPHAN POSITIONS (no grid): ${orphanPositions.map((p) => p.market).join(", ")} — new-risk blocked; pending verification still runs`);
+  const chainHealth = directionHealth(ROOT, identity.accountKey, cfg);
+  if (chainHealth.blocked) lines.push(`DIRECTION BLOCKED: ${chainHealth.reason} — no new grids; existing risk exits remain active`);
+  if (cloudDirectionBlock) lines.push(`DIRECTION BLOCKED: cloud event ${cloudDirectionBlock} — no new grids; existing risk exits remain active`);
   const mayCreate = !manualCorrupt && !manualPauses["*"] && obs.marketDataAvailable !== false && breaker === null && riskWriteOk && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
-    && Object.keys(pending).length === 0 && orphanPositions.length === 0;
+    && Object.keys(pending).length === 0 && orphanPositions.length === 0 && !chainHealth.blocked && !cloudDirectionBlock;
   // phase semantics: risk exits must never wait for market analysis. When stops are
   // planned, defer creation to phase 2 (run_round re-observes, then BG_PHASE=creates);
   // when nothing needs to stop, plan creations inline. Phase 2 only creates.
@@ -473,7 +480,12 @@ const writeAtomic = (p, data) => {
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
-      const dir = directionFor(ROOT, identity.accountKey, mkt, cfg);
+      const directive = directionDecision(ROOT, identity.accountKey, mkt, cfg);
+      if (directive.blocked) {
+        lines.push(`PLAN skip ${mkt}: direction blocked (${directive.reason})`);
+        continue;
+      }
+      const dir = directive.direction;
       // 方向强制策略（2026-11-28 用户拍板）：中性格不再建——指令为 Neutral 时槽位
       // 保持空置（观望语义），只有 Long/Short 才建格。config requireDirection=true
       // 开启；存量中性格不受影响（指令只作用于新格）。
