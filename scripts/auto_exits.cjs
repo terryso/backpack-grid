@@ -89,7 +89,7 @@ function saveTrailState(state) {
   }
 }
 
-function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, manualCorrupt, actions, lines }) {
+function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, hardRiskOnly = {}, heldByUser, manualCorrupt, actions, lines }) {
   try {
     const d = defaultsFor(cfg);
     const nowMs = Date.parse(obs.at);
@@ -133,6 +133,7 @@ function planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, m
         lines.push(`AUTO SL ${g.market}: position pnl ${pnlPct.toFixed(1)}% <= -${d.posSl}% — stop planned`);
         continue;
       }
+      if (hardRiskOnly[g.market]) continue;
       // 2) position-level take-profit (0 disables; realizes via the standard stop path)
       if (d.posTp > 0 && Number.isFinite(pnlPct) && pnlPct >= d.posTp) {
         actions.push({ act: 'stop', market: g.market, range: g.range,

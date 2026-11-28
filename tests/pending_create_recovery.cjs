@@ -7,17 +7,18 @@ const {dispatchSource,mockEgo,fixtureTask}=require('./ego_fixture.cjs');
 const {run:firstRound}=require('./browser_alignment.cjs');
 const {ownerStart}=require('../scripts/execution_lease.cjs');
 const {makeStopGrid}=require('../scripts/act_core.cjs');
+const {positionRef}=require('../scripts/position_ref.cjs');
 const ROOT=path.join(__dirname,'..'),AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
 const market='UNI-PERP',symbol='UNI_USDC_PERP',identity={userId:'fixture',subaccountId:3,accountKey:'fixture-3'};
 
-function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=false}={}) {
+function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=false,keepPositionOnTimeout=false,stopResponseLostOnce=false,deleteResponseLostOnce=false,replaceBeforeDelete=false,positionId='current',tripBreaker=false}={}) {
   const d=fs.mkdtempSync(path.join(os.tmpdir(),'bg-create-recovery-'));
   fs.mkdirSync(path.join(d,'state'));fs.cpSync(path.join(ROOT,'scripts'),path.join(d,'scripts'),{recursive:true});
   const cfg={...JSON.parse(fs.readFileSync(path.join(ROOT,'config.example.json'))),autoExitsEnabled:autoRisk,
-    positionStopLossPct:100,positionTakeProfitPct:0,accountFloorUsd:0};
+    positionStopLossPct:100,positionTakeProfitPct:0,accountFloorUsd:0,...(tripBreaker?{riskBudgetPct:60,warnDrawdownPct:40}:{})};
   const put=(name,value)=>fs.writeFileSync(path.join(d,name),JSON.stringify(value));
   put('config.json',cfg);put('state/account_identity.json',identity);
-  put('state/risk.json',{accountKey:identity.accountKey,peakEquity:1000,paused:null});
+  put('state/risk.json',{accountKey:identity.accountKey,peakEquity:tripBreaker?3000:1000,paused:null});
   put('state/pending_stops.json',{[market]:intent});
   const grid={market,symbol,direction:'Short',range:[90,110],price:'100',status:'Triggered',allocationRaw:1000,
     pnlRaw:risk?-100:0,pnlPct:risk?-10:0,nativeTP:cfg.takeProfitPct,nativeSL:cfg.stopLossPct,nativeCloseOnStop:true};
@@ -28,28 +29,40 @@ function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=
   let automation=present?[{symbol,enabled:true,allocationUsd:'1000',priceLow:'90',priceHigh:'110',levels:20,
     direction:'Short',takeProfitPercentage:cfg.takeProfitPct,stopLossPercentage:cfg.stopLossPct,closePositionsOnStop:true}]:[];
   let positions=present?[{symbol,netQuantity:'-1',markPrice:'100',estLiquidationPrice:'150',
-    userId:identity.userId,subaccountId:identity.subaccountId}]:[];
-  const patches=[];let round=0,failWait=stopTimeoutOnce;
+    userId:identity.userId,subaccountId:identity.subaccountId,...(positionId ? {positionId} : {})}]:[];
+  if(positions[0]) observed.positionRefs={[market]:positionRef(identity,positions[0])};
+  const patches=[];let round=0,failWait=stopTimeoutOnce,lostStop=stopResponseLostOnce,lostDelete=deleteResponseLostOnce,afterDisableReads=0;
   const page={async url(){return 'https://backpack.exchange/portfolio/balances/assets';},async goto(){},async waitForTimeout(){
-      if(failWait){failWait=false;positions=[];throw Error('fixture poll timeout');}
+      if(failWait){failWait=false;if(!keepPositionOnTimeout)positions=[];throw Error('fixture poll timeout');}
     },
     async fetch(url,options={}){
       const u=new URL(url),method=options.method||'GET';let body;
       if(method==='PATCH'){
         const op=JSON.parse(options.body).params.symbols[0];
         patches.push({operation:op.operation,enabled:op.enabled,closePositionsOnStop:op.closePositionsOnStop});
-        if(op.operation==='Delete')automation=[];
-        else if(op.operation==='Upsert'&&op.enabled===false){automation=[op];if(!failWait)positions=[];}
+        if(op.operation==='Delete'){automation=[];if(lostDelete){lostDelete=false;throw Error('fixture delete response lost');}}
+        else if(op.operation==='Upsert'&&op.enabled===false){
+          if(lostStop){lostStop=false;throw Error('fixture disable response lost');}
+          automation=[op];if(!failWait)positions=[];
+        }
         else throw Error('unexpected mocked exchange write');
         return{status:200,body:'{}'};
       }
       if(u.pathname.endsWith('/collateral'))body={'fixture-3':{netEquity:'1000',netEquityAvailable:'500'}};
       else if(u.pathname.endsWith('/automation'))body={params:{symbols:structuredClone(automation)}};
-      else if(u.pathname.endsWith('/position'))body=structuredClone(positions);
+      else if(u.pathname.endsWith('/position')){
+        if(replaceBeforeDelete&&patches.some(p=>p.operation==='Upsert')&&++afterDisableReads===2){
+          replaceBeforeDelete=false;positions=[{symbol,positionId:'third-position',netQuantity:'-1',markPrice:'100',
+            estLiquidationPrice:'150',userId:identity.userId,subaccountId:identity.subaccountId}];
+          observed.positions=[{market,symbol,size:'-1',mark:'100',liq:'150',pnlPct:0,fundingRaw:0}];
+          observed.positionRefs={[market]:positionRef(identity,positions[0])};
+        }
+        body=structuredClone(positions);
+      }
       else throw Error('unexpected mocked exchange read: '+u.pathname);
       return{status:200,body:JSON.stringify(body)};
     }};
-  async function execute({diskFailure=false,mutateAfterPlan=false,concurrentIssue=false}={}) {
+  async function execute({diskFailure=false,mutateAfterPlan=false,concurrentIssue=false,afterPlan=null}={}) {
     const at=new Date().toISOString(),runId='recovery-'+(++round);
     observed.at=at;put('state/observed.json',observed);
     put('state/run_context.json',{runId,identity,startedAt:at,ownerPid:process.pid,ownerStart:ownerStart(process.pid)});
@@ -64,6 +77,7 @@ function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=
       if(mutateAfterPlan==='issued')current[market].phase='issued';else current[market].intentId='replacement-intent';
       put('state/pending_stops.json',current);
     }
+    if(afterPlan)await afterPlan();
     const tmp=path.join(d,'state/pending_stops.json.tmp');
     if(diskFailure)fs.mkdirSync(tmp);
     const before=patches.length;let source=dispatchSource(fs.readFileSync(path.join(ROOT,'scripts/act.mjs'),'utf8'),d);
@@ -92,12 +106,34 @@ function fixture(intent,{present=true,risk=false,autoRisk=false,stopTimeoutOnce=
     if(diskFailure)fs.rmSync(tmp,{recursive:true,force:true});
     return{actions,exit,error,result,pending,patches:patches.slice(before),concurrentDispatches};
   }
-  return{execute,clearRisk:()=>{if(observed.gridRows[0]){observed.gridRows[0].pnlRaw=0;observed.gridRows[0].pnlPct=0;}},
+  return{execute,clearRisk:()=>{if(observed.gridRows[0]){observed.gridRows[0].pnlRaw=0;observed.gridRows[0].pnlPct=0;}
+      if(observed.positions[0])observed.positions[0].pnlPct=0;},
+    setGridProfit:()=>{if(observed.gridRows[0]){observed.gridRows[0].pnlRaw=200;observed.gridRows[0].pnlPct=20;}},
+    replacePosition:(id,{gridLoss=false,positionLoss=false}={})=>{
+      positions=[{symbol,netQuantity:'-1',markPrice:'100',estLiquidationPrice:'150',userId:identity.userId,
+        subaccountId:identity.subaccountId,...(id ? {positionId:id} : {})}];
+      observed.positions=[{market,symbol,size:'-1',mark:'100',liq:'150',pnlPct:positionLoss?-101:0,fundingRaw:0}];
+      observed.positionRefs={[market]:positionRef(identity,positions[0])};
+      if(observed.gridRows[0]){observed.gridRows[0].pnlRaw=gridLoss?-100:0;observed.gridRows[0].pnlPct=gridLoss?-10:0;}
+    },
+    refreshObserved:()=>{if(!automation.length)observed.gridRows=[];if(!positions.length){observed.positions=[];observed.positionRefs={};}},
+    recreateLiveGrid:()=>{automation=[{symbol,enabled:true,allocationUsd:'1000',priceLow:'90',priceHigh:'110',levels:20,
+      direction:'Short',takeProfitPercentage:cfg.takeProfitPct,stopLossPercentage:cfg.stopLossPct,closePositionsOnStop:true}];},
+    replaceIntent:value=>put('state/pending_stops.json',{[market]:value}),
+    failDurableWrites:()=>{const file=path.join(d,'scripts/pending_store.cjs');const source=fs.readFileSync(file,'utf8');
+      fs.writeFileSync(file,source.replace('function write(data, durable) {',
+        "function write(data, durable) { if(durable) throw Object.assign(Error('fixture write failure'),{code:'EIO'});"));},
+    failDurableAfterRenameOnce:()=>{const file=path.join(d,'scripts/pending_store.cjs');const source=fs.readFileSync(file,'utf8');
+      const hook="function write(data, durable) { if(durable && !fs.existsSync(path.join(ROOT,'state/fixture-fsync-failed'))) { const real=fs.fsyncSync;let calls=0;fs.fsyncSync=fd=>{const result=real(fd);if(++calls===2){fs.writeFileSync(path.join(ROOT,'state/fixture-fsync-failed'),'1');throw Object.assign(Error('fixture fsync failure'),{code:'EIO'});}return result;}; }";
+      fs.writeFileSync(file,source.replace('function write(data, durable) {',hook));},
+    revokeLeaseDuringIssuedFsync:()=>{const file=path.join(d,'scripts/pending_store.cjs');const source=fs.readFileSync(file,'utf8');
+      const hook="function write(data, durable) { if(durable && data.includes('\\\"phase\\\": \\\"disable-issued\\\"') && !fs.existsSync(path.join(ROOT,'state/fixture-lease-revoked'))) { const real=fs.fsyncSync;let calls=0;fs.fsyncSync=fd=>{const result=real(fd);if(++calls===2){fs.writeFileSync(path.join(ROOT,'state/fixture-lease-revoked'),'1');fs.writeFileSync(path.join(ROOT,'state/last_round_status'),'aborted');}return result;}; }";
+      fs.writeFileSync(file,source.replace('function write(data, durable) {',hook));},
     close:()=>fs.rmSync(d,{recursive:true,force:true})};
 }
 
 async function check(name,fn){await fn();console.log('PASS '+name);}
-(async()=>{
+if(require.main===module)(async()=>{
   const failed=await firstRound('snapshot-cleanup-failure');
   assert.equal(failed.patches,0);assert.equal(failed.pending[market].phase,'prepared');
   assert.match(failed.pending[market].reason,/not yet sent/);
@@ -271,3 +307,4 @@ async function check(name,fn){await fn();console.log('PASS '+name);}
     }
   });
 })().catch(e=>{console.error(e);process.exitCode=1;});
+module.exports={fixture,market,symbol,identity};

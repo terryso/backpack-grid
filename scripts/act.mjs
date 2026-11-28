@@ -98,6 +98,7 @@ const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path
 const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
 const { directionDecision } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
 const { createIntentState, samePreparedCreate } = requireLocal("./pending_create.cjs");
+const { isStopReview } = requireLocal("./pending_stop.cjs");
 const nodeProcess = requireLocal("node:process");
 const { spawnSync } = requireLocal("node:child_process");
 const pendingVersions = new WeakMap();
@@ -188,12 +189,12 @@ async function loadPending() {
     return { pending: {}, corrupt: true };
   }
 }
-async function savePending(p) {
+async function savePending(p, options = {}) {
   await assertExecutionLease();
   for(const entry of Object.values(p)) entry.accountKey=identity.accountKey;
   const version = pendingVersions.get(p);
   if (version === undefined) throw Error('pending ledger has no read version');
-  const saved = pendingTransaction({op:'save', version, pending:p, accountKey:identity.accountKey});
+  const saved = pendingTransaction({op:'save', version, pending:p, accountKey:identity.accountKey, durable:options.durable === true});
   pendingVersions.set(p, saved.version);
 }
 async function assertExecutionLease() { verifyLease(ROOT,meta,identity); }
@@ -236,7 +237,7 @@ const stopGrid = makeStopGrid(io);
 // execution phases: all stops first (risk exits), then protects, then creates.
 // An incomplete stop blocks ALL creates in this run; per-action failures are recorded
 // and do not abort the remaining actions.
-const PHASE = { stop: 0, protect: 1, 'clear-prepared-create': 2, 'hold-unknown-create': 2, create: 3 };
+const PHASE = { stop: 0, protect: 1, 'clear-prepared-create': 2, 'hold-unknown-create': 2, 'hold-unknown-stop': 2, create: 3 };
 actions.sort((x, y) => (PHASE[x.act] ?? 3) - (PHASE[y.act] ?? 3));
 let stopIncomplete = false;
 let protectIncomplete = false;
@@ -246,7 +247,7 @@ let riskChanged = false;
 for (const a of actions) {
   const result = await (async () => {
     try {
-      if (a.act === 'clear-prepared-create' || a.act === 'hold-unknown-create') {
+      if (a.act === 'clear-prepared-create' || a.act === 'hold-unknown-create' || a.act === 'hold-unknown-stop') {
         const ledger = await loadPending(), entry = ledger.pending[a.market];
         if (ledger.corrupt) throw Error('pending ledger unavailable');
         if (!entry) {
@@ -267,6 +268,16 @@ for (const a of actions) {
           results.push({ act:a.act, market:a.market, done:true, reason:'unissued create cleared locally' });
           return { done:true };
         }
+        if (a.act === 'hold-unknown-stop') {
+          if (!isStopReview(entry)) {
+            results.push({act:a.act,market:a.market,done:false,skipped:true,error:'intent changed; preserved for next round'});
+            return {done:false,skipped:true};
+          }
+          const reason = 'stop outcome unknown or pending; manual review required; no automatic stop without current risk or a matching position';
+          results.push({act:a.act,market:a.market,done:false,manualRequired:true,unconfirmed:true,reason,error:reason});
+          anyFailure = true;
+          return {done:false};
+        }
         if (createIntentState(entry) !== 'unknown') {
           results.push({ act:a.act, market:a.market, done:false, skipped:true, error:'intent changed; preserved for next round' });
           return { done:false, skipped:true };
@@ -280,9 +291,12 @@ for (const a of actions) {
       if (a.act === "stop") {
         const options = { ...(Object.prototype.hasOwnProperty.call(a, 'trailPositionRef') ? { trailPositionRef:a.trailPositionRef } : {}),
           ...(a.independentRisk === true ? { independentRisk:true } : {}),
-          ...(a.retryPendingRisk === true ? { retryPendingRisk:true } : {}) };
+          ...(a.retryPendingRisk === true ? { retryPendingRisk:true } : {}),
+          ...(a.reviewStop === true ? {reviewStop:true,expectedPendingHash:a.expectedPendingHash,
+            riskPositionRef:a.riskPositionRef,verifyOnly:a.verifyOnly === true} : {}) };
         const r = await stopGrid(a.market, a.range, a.reason, results, options);
         if (!r || r.done !== true) stopIncomplete = true;
+        if (r?.manualRequired === true) anyFailure = true;
         return { done: true };
       }
       if (a.act === "protect") {

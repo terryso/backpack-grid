@@ -6,6 +6,7 @@ const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
 const { trailStatus } = require('./trail_status.cjs');
 const { createIntentState } = require('./pending_create.cjs');
+const { isStopReview } = require('./pending_stop.cjs');
 const {identityOk,manualPausesFor,validateConfig,expectedIdentity}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
@@ -81,6 +82,8 @@ const pendingValid = (pendingStructOk(pending)&&Object.values(pending).every(p=>
 const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
 const pendingCreateUnknown = pendingCorrupt ? null : Object.entries(pending || {})
   .filter(([, entry]) => createIntentState(entry) === 'unknown').map(([market]) => market);
+const pendingStopReview = pendingCorrupt ? null : Object.entries(pending || {})
+  .filter(([, entry]) => isStopReview(entry)).map(([market]) => market);
 let manualPauses=[],manualPauseValid=true;
 try{manualPauses=Object.keys(manualPausesFor(ROOT,identity));}catch{manualPauseValid=false;}
 // A missing peak file is a fresh state; unreadable files and broken symlinks are
@@ -180,7 +183,7 @@ const snapshot = {
     dwellMin: cfg.breachDwellMin === undefined ? 10 : num(cfg.breachDwellMin),
     bufferPct: cfg.breachBufferPct === undefined ? 0.5 : num(cfg.breachBufferPct) },
   direction,
-  pending: pendingValid ? Object.keys(pending || {}) : null, pendingCreateUnknown,
+  pending: pendingValid ? Object.keys(pending || {}) : null, pendingCreateUnknown, pendingStopReview,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
   lastAction, lastActionNote, curve,
 };

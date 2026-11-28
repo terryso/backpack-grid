@@ -11,11 +11,16 @@ async function run(mode) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'bg-trail-act-entry-'));
   try {
     fs.mkdirSync(path.join(d, 'state')); fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
+    if(mode==='issued-fsync-failure'){
+      const file=path.join(d,'scripts/pending_store.cjs'),source=fs.readFileSync(file,'utf8');
+      const hook="function write(data, durable) { if(durable && data.includes('\\\"trailPhase\\\": \\\"issued\\\"')) { const real=fs.fsyncSync;let calls=0;fs.fsyncSync=fd=>{const result=real(fd);if(++calls===2)throw Object.assign(Error('fixture fsync failure'),{code:'EIO'});return result;}; }";
+      fs.writeFileSync(file,source.replace('function write(data, durable) {',hook));
+    }
     const cfg = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'))); cfg.watch = { spaceId: 7, page: 'p1' };
     const identity = { userId: 'fixture', subaccountId: 3, accountKey: 'fixture-3' }, at = new Date().toISOString(), runId = 'trail-' + mode;
     const original = { symbol: 'TEST_USDC_PERP', positionId: 'fixture-A', netQuantity: '1', markPrice: '100', estLiquidationPrice: '1' };
     const replacement = { ...original, positionId: 'fixture-B' }, expectedRef = positionRef(identity, original);
-    const pendingMode = mode === 'issued-replacement' || mode === 'prepared-flat' || mode === 'breaker';
+    const pendingMode = ['issued-replacement','prepared-flat','legacy-prepared-flat','legacy-midflight','breaker'].includes(mode);
     const action = { act: 'stop', market: 'TEST-PERP', range: [90, 110],
       reason: mode === 'breaker' ? 'circuit breaker: fixture' : 'AUTO_TRAIL: fixture',
       ...(mode === 'breaker' ? {} : { trailPositionRef: expectedRef }) };
@@ -25,9 +30,10 @@ async function run(mode) {
     put('state/last_round_status', 'running'); put('state/actions.json', [action]);
     put('state/actions_meta.json', { runId, planId: 'plan-' + mode, identity, at, configHash: hash(cfg), actionsHash: hash([action]), riskWriteOk: true, subaccountId: 3 });
     if (pendingMode) put('state/pending_stops.json', { 'TEST-PERP': { accountKey: identity.accountKey, at, reason: 'AUTO_TRAIL: fixture',
-      trailPositionRef: expectedRef, trailPhase: mode === 'prepared-flat' ? 'prepared' : 'issued' } });
+      trailPositionRef: expectedRef, trailPhase: ['prepared-flat','legacy-prepared-flat','legacy-midflight'].includes(mode) ? 'prepared' : 'issued',
+      ...(mode === 'prepared-flat' ? {trailIntentVersion:2} : {}) } });
     let grid = [{ symbol: original.symbol, enabled: true }], position = mode === 'replacement' || mode === 'issued-replacement' || mode === 'breaker' ? [replacement]
-      : mode === 'missing-id' ? [{ ...original, positionId: undefined }] : mode === 'prepared-flat' ? [] : [original];
+      : mode === 'missing-id' ? [{ ...original, positionId: undefined }] : ['prepared-flat','legacy-prepared-flat'].includes(mode) ? [] : [original];
     let positionReads = 0, patches = 0, deletes = 0;
     const page = { url: async () => 'https://backpack.exchange/portfolio/balances/assets', goto: async () => {}, waitForTimeout: async () => {},
       fetch: async (url, options = {}) => {
@@ -42,7 +48,7 @@ async function run(mode) {
         else if (name.endsWith('/automation')) body = { params: { symbols: structuredClone(grid) } };
         else if (name.endsWith('/position')) {
           positionReads++;
-          if (mode === 'midflight-replacement' && positionReads >= 2) position = [replacement];
+          if (['midflight-replacement','legacy-midflight'].includes(mode) && positionReads >= 2) position = [replacement];
           body = structuredClone(position);
         } else throw Error('unexpected fixture endpoint');
         return { status: 200, body: JSON.stringify(body) };
@@ -61,7 +67,7 @@ async function run(mode) {
 }
 
 (async () => {
-  for (const mode of ['match', 'replacement', 'missing-id', 'midflight-replacement', 'issued-replacement', 'prepared-flat', 'breaker']) {
+  for (const mode of ['match', 'replacement', 'missing-id', 'midflight-replacement', 'issued-replacement', 'prepared-flat', 'legacy-prepared-flat', 'legacy-midflight', 'issued-fsync-failure', 'breaker']) {
     const r = await run(mode); assert.equal(r.error, null); assert.equal(r.referenceLeakedIntoResults, false);
     if (mode === 'match' || mode === 'breaker') {
       assert.equal(r.exit, 0); assert.equal(r.patches, 2); assert.equal(r.deletes, 1); assert.deepEqual(r.pending, {});
@@ -70,6 +76,9 @@ async function run(mode) {
       if (mode === 'midflight-replacement') assert.equal(r.pending['TEST-PERP'].trailPhase, 'prepared');
       if (mode === 'issued-replacement') assert.equal(r.pending['TEST-PERP'].trailPhase, 'issued');
       if (mode === 'prepared-flat') assert.deepEqual(r.pending, {});
+      if (mode === 'legacy-prepared-flat') assert.equal(r.pending['TEST-PERP'].trailPhase,'prepared');
+      if (mode === 'legacy-midflight') { assert.equal(r.pending['TEST-PERP'].trailPhase,'issued');assert.equal(r.pending['TEST-PERP'].trailIntentVersion,undefined); }
+      if (mode === 'issued-fsync-failure') { assert.equal(r.pending['TEST-PERP'].trailPhase,'issued');assert.equal(r.pending['TEST-PERP'].trailIntentVersion,2); }
       if (mode === 'replacement' || mode === 'missing-id') assert.equal(r.pending, null);
     }
     console.log('PASS actual act entrypoint trailing identity: ' + mode);

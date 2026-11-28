@@ -57,7 +57,7 @@ function main(request) {
     if (!pendingStructOk(request.pending) || Object.values(request.pending).some(e => e.accountKey !== request.accountKey))
       fail('PENDING_INVALID', 'invalid pending ledger');
     const data = JSON.stringify(request.pending, null, 2);
-    write(data, false);
+    write(data, request.durable === true);
     return { version:version(Buffer.from(data)) };
   }
   if (request.op === 'quarantine') {

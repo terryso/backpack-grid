@@ -133,11 +133,13 @@ async function main() {
       'UNI-PERP':{kind:'create',phase:'issued',accountKey:acct},
       'ETH-PERP':{kind:'create',phase:'prepared',accountKey:acct,planId:'plan',runId:'run',intentId:'123e4567-e89b-42d3-a456-426614174000'},
       'BTC-PERP':{kind:'create',phase:'acknowledged',accountKey:acct},
+      'SOL-PERP':{kind:'stop_review',accountKey:acct,previousRiskStops:[{positionRef:'private-fixture-reference'}]},
     });
     const dashboard=spawnSync(process.execPath,[path.join(ROOT,'scripts/dashboard_data.cjs')],{env:env(dir3),encoding:'utf8'});
     check('dashboard identifies unknown create outcomes without exposing intent metadata',()=>{
       assert.equal(dashboard.status,0,dashboard.stderr);
       const result=json(dir3,'state/dashboard.json');assert.deepEqual(result.pendingCreateUnknown,['UNI-PERP']);
+      assert.deepEqual(result.pendingStopReview,['SOL-PERP']);assert(!JSON.stringify(result).includes('private-fixture-reference'));
       assert(!JSON.stringify(result).includes('123e4567-e89b-42d3-a456-426614174000'));
     });
   }
@@ -281,6 +283,12 @@ async function main() {
   });
   uiContext.snapshot=display;vm.runInNewContext('render(snapshot)',uiContext);
   check('production UI hides the unknown-create warning after resolution',()=>assert.equal(elements.get('unknownCreateBanner').hidden,true));
+  uiContext.snapshot={...display,pending:['UNI-PERP'],pendingStopReview:['UNI-PERP']};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI warns when a prior stop requires review',()=>{
+    assert.match(elements.get('content').innerHTML,/停格结果待核对 1/);
+    assert(!elements.get('content').innerHTML.includes('风控正常'));
+  });
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

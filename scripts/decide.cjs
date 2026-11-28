@@ -15,6 +15,8 @@ const { sizeGrid } = require("./grid_sizing.cjs");
 const { loadInfeasible } = require("./infeasible.cjs");
 const { directionDecision, directionHealth } = require("./grid_direction.cjs");
 const { createIntentState } = require("./pending_create.cjs");
+const { isOrdinaryTrail, isStopReview, validPendingRisk } = require('./pending_stop.cjs');
+const { isPositionRef } = require('./position_ref.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -108,7 +110,8 @@ let cloudDirectionBlock = null;
   // in the ledger to block creation, while independently evaluating risk exits.
   const unresolvedCreates = Object.fromEntries(Object.entries(pending)
     .map(([market, entry]) => [market, createIntentState(entry)]).filter(([, state]) => state));
-  const pendingForRisk = Object.fromEntries(Object.entries(pending).filter(([market]) => !unresolvedCreates[market]));
+  const pendingTrailRisk = Object.fromEntries(Object.entries(pending).filter(([, entry]) => isOrdinaryTrail(entry) || isStopReview(entry)));
+  const pendingForRisk = Object.fromEntries(Object.entries(pending).filter(([market]) => !unresolvedCreates[market] && !pendingTrailRisk[market]));
 
   // ---------- risk budget: peak equity, warning line, hard breaker (BEFORE tickers) ----------
   const riskPath = path.join(ROOT, "state", "risk.json");
@@ -214,10 +217,28 @@ let cloudDirectionBlock = null;
 
   // ---------- pending stop retries: highest priority actions, no tickers needed ----------
   const deferredTrailingRiskStops = [];
+  const deferredOrdinaryTrailStops = [];
   for (const [mkt, p] of Object.entries(pending)) {
     if (unresolvedCreates[mkt] === 'prepared') {
       actions.push({ act:'clear-prepared-create', market:mkt, intent:{ intentId:p.intentId, planId:p.planId, runId:p.runId } });
       lines.push(`PENDING CREATE ${mkt}: definitely unsent — clear locally without exchange writes`);
+      continue;
+    }
+    if (isStopReview(p)) {
+      actions.push({act:'hold-unknown-stop',market:mkt});
+      lines.push(`PENDING STOP ${mkt}: prior stop outcome retained for review`);
+      const grid = grids.find(g => g.market === mkt);
+      const pos = (obs.positions || []).find(item => item.market === mkt);
+      const observedFlat = !pos || (finiteNumber(pos.size) && Number(pos.size) === 0);
+      const observedRef = obs.positionRefs?.[mkt];
+      const risk = p.riskStop;
+      if (validPendingRisk(risk) && grid && isPositionRef(risk.positionRef) && observedRef === risk.positionRef) {
+        deferredOrdinaryTrailStops.push({act:'stop',market:mkt,range:grid.range,reason:`pending risk stop retry (${risk.reason})`,
+          independentRisk:true,reviewStop:true,retryPendingRisk:true,riskPositionRef:risk.positionRef,expectedPendingHash:hash(p)});
+      } else if (validPendingRisk(risk) && !grid && observedFlat) {
+        deferredOrdinaryTrailStops.push({act:'stop',market:mkt,reason:'verify pending risk stop without exchange writes',
+          independentRisk:true,reviewStop:true,verifyOnly:true,expectedPendingHash:hash(p)});
+      }
       continue;
     }
     if (unresolvedCreates[mkt] === 'unknown') {
@@ -253,8 +274,9 @@ let cloudDirectionBlock = null;
     }
     const pos = (obs.positions || []).find((pp) => pp.market === mkt);
     const hasResidue = pos && Math.abs(num(pos.size)) > 0;
-    actions.push({ act: "stop", market: mkt, range: g.range, ...trailFields, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` });
-    lines.push(`PENDING STOP retry planned for ${mkt} (queued ${p.at})`);
+    const retry = { act: "stop", market: mkt, range: g.range, ...trailFields, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` };
+    if (isOrdinaryTrail(p)) deferredOrdinaryTrailStops.push(retry);
+    else { actions.push(retry); lines.push(`PENDING STOP retry planned for ${mkt} (queued ${p.at})`); }
   }
 
   // ---------- market data (degradable): only range/price logic depends on it ----------
@@ -304,6 +326,7 @@ let cloudDirectionBlock = null;
   // ---------- per-grid rules ----------
   for (const g of grids) { // 阶段标签只控制是否规划新增仓位，风控复评两阶段都做
     if (pendingForRisk[g.market]) continue; // handled by pending-stop retry above
+    const hardRiskOnly = !!pendingTrailRisk[g.market];
     if(heldByUser(g.market)||manualCorrupt){lines.push(`MANUAL HOLD ${g.market}: automatic rotation disabled; account breaker/pending cleanup still active`);continue;}
     const [lo, hi] = g.range.map(Number);
     const price = priceOf(g.market);
@@ -314,14 +337,14 @@ let cloudDirectionBlock = null;
       // Disabled with pnl beyond thresholds = exchange backstop fired -> rotate.
       // Disabled with pnl inside thresholds = manual pause by the user -> leave untouched
       // (pending-stop retries above are the only path that touches those).
-      if (isFinite(effPct) && (effPct >= cfg.takeProfitPct || effPct <= -cfg.stopLossPct)) {
+      if (isFinite(effPct) && ((!hardRiskOnly && effPct >= cfg.takeProfitPct) || effPct <= -cfg.stopLossPct)) {
         reason = `backstop fired (pnl ${effPct.toFixed(2)}%) — rotate`;
       } else {
         lines.push(`GRID ${g.market} DISABLED but pnl ${Number(effPct).toFixed(2)}% within thresholds — likely manual pause, leaving untouched`);
       }
-    } else if (isFinite(effPct) && effPct >= cfg.takeProfitPct) reason = `TP: pnl ${effPct.toFixed(2)}% (funding-adj) >= ${cfg.takeProfitPct}%`;
+    } else if (!hardRiskOnly && isFinite(effPct) && effPct >= cfg.takeProfitPct) reason = `TP: pnl ${effPct.toFixed(2)}% (funding-adj) >= ${cfg.takeProfitPct}%`;
     else if (isFinite(effPct) && effPct <= -cfg.stopLossPct) reason = `SL: pnl ${effPct.toFixed(2)}% (funding-adj) <= -${cfg.stopLossPct}%`;
-    else if (tickersOk && isFinite(price) && isFinite(lo) && isFinite(hi)) {
+    else if (!hardRiskOnly && tickersOk && isFinite(price) && isFinite(lo) && isFinite(hi)) {
       if (price < lo * (1 - cfg.exitBufferPct / 100)) reason = `OUT_OF_RANGE: price ${price} < low ${lo} - ${cfg.exitBufferPct}%`;
       else if (price > hi * (1 + cfg.exitBufferPct / 100)) reason = `OUT_OF_RANGE: price ${price} > high ${hi} + ${cfg.exitBufferPct}%`;
     }
@@ -354,13 +377,30 @@ let cloudDirectionBlock = null;
   // already-planned stop. Does nothing when the gate is off.
   if (cfg.autoExitsEnabled) {
     const { planAutoExits } = require("./auto_exits.cjs");
-    planAutoExits({ ROOT, identity, cfg, obs, grids, pending:pendingForRisk, heldByUser, manualCorrupt, actions, lines });
+    planAutoExits({ ROOT, identity, cfg, obs, grids, pending:pendingForRisk, hardRiskOnly:pendingTrailRisk, heldByUser, manualCorrupt, actions, lines });
   }
   for (const retry of deferredTrailingRiskStops) {
     if (!actions.some(a => a.act === 'stop' && a.market === retry.market)) {
       actions.push(retry);
       lines.push(`PENDING RISK STOP ${retry.market}: retrying an independently planned exit`);
     } else lines.push(`PENDING RISK STOP ${retry.market}: fresh exit takes priority over old trailing retry`);
+  }
+  for (const retry of deferredOrdinaryTrailStops) {
+    if (!actions.some(a => a.act === 'stop' && a.market === retry.market)) {
+      actions.push(retry);
+      lines.push(`PENDING STOP ${retry.market}: retry remains bound to its original position`);
+    } else lines.push(`PENDING STOP ${retry.market}: fresh hard-risk exit takes priority`);
+  }
+  // Fresh hard-risk actions must bind to the exact pending record they supersede.
+  // Ordinary retries retain their original trailing-position guard.
+  for (const action of actions) {
+    const entry = pendingTrailRisk[action.market];
+    if (action.act !== 'stop' || !entry || action.reviewStop || deferredOrdinaryTrailStops.includes(action)) continue;
+    action.independentRisk = true;
+    action.reviewStop = true;
+    action.expectedPendingHash = hash(entry);
+    const ref = obs.positionRefs?.[action.market];
+    action.riskPositionRef = !action.reason.startsWith('circuit breaker:') && isPositionRef(ref) ? ref : null;
   }
 
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------
