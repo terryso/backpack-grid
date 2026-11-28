@@ -1,9 +1,5 @@
-// Cloudflare Worker: receives inspection snapshots (token-protected POST) and serves
-// the dashboard (token-gated read). KV stores the latest snapshot.
-// 2026-11-20 起新增两类职责（与本地管线解耦，全部只读公开数据）：
-//   1) 方向判定影子模式：每小时 cron，逐字移植 direction_watch.cjs 纯函数，
-//      写入独立 KV key `advice_cloud`（影子验证期与本地 advice 比对，不碰权威链路）；
-//   2) 哨兵：5 分钟 cron，KV 快照 + 公开实时行情评估 A/B/C 触发器 → Bark 推送。
+// Public dashboard, authenticated snapshot uploads and direction mailbox;
+// the five-minute sentinel evaluates position risk using public market data.
 export { LikeCounter } from "./likes.js";
 export { DirectionMailbox } from "./direction_mailbox.js";
 import * as patterns from "./patterns.js";
@@ -32,6 +28,14 @@ export default {
         }
       }
       await env.DASH.put("latest", body);
+      // The direction acknowledgment travels on the existing Mac upload.
+      // A mailbox outage must not break the dashboard/sentinel snapshot upload.
+      try {
+        const ack = await mailbox(env).fetch('https://direction.internal/ack', {
+          method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snapshot: parsed }),
+        });
+        if (!ack.ok) console.error('direction acknowledgment rejected:', ack.status);
+      } catch { console.error('direction acknowledgment unavailable'); }
       return new Response("ok");
     }
 
@@ -68,29 +72,32 @@ export default {
       });
     }
 
-    // 方向指令（影子验证期后将成为权威源；现在 advice key 尚无人写，返回 {}）
-    if (url.pathname === "/api/direction-advice") {
+    if (url.pathname === '/api/direction-snapshot' && request.method === 'POST') {
+      if (request.headers.get('x-token') !== writeToken) return new Response('forbidden', { status: 403 });
+      const body = await request.text();
+      if (new TextEncoder().encode(body).length > 8192) return new Response('payload too large', { status: 413 });
+      return mailbox(env).fetch('https://direction.internal/snapshot', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body,
+      });
+    }
+    // Both read routes use the same DO state. Older advice readers keep working.
+    if (url.pathname === "/api/direction-advice" && request.method === 'GET') {
       const state = await mailbox(env).fetch('https://direction.internal/state').then(r => r.json());
       return json(JSON.stringify(state.advice || {}));
     }
     if (url.pathname === '/api/direction-event' && request.method === 'GET') {
       return mailbox(env).fetch('https://direction.internal/state');
     }
-    // 影子判定结果（与本地 direction_watch 比对用）
-    if (url.pathname === "/api/direction-advice-cloud") {
-      const a = await env.DASH.get("advice_cloud");
-      return json(a ?? "{}");
+    if (url.pathname === "/api/direction-advice-cloud" && request.method === 'GET') {
+      const state = await mailbox(env).fetch('https://direction.internal/state').then(r => r.json());
+      return json(JSON.stringify(state.advice || {}));
     }
     // 哨兵状态（最近评估详情 + 各触发器上次推送时间）
     if (url.pathname === "/api/sentinel") {
       const s = await env.DASH.get("sentinel_state");
       return json(s ?? "{}");
     }
-    // 手动触发（测试用，token 保护）：立即执行一次影子判定 / 哨兵评估
-    if (url.pathname === "/api/judge-cloud/run" && request.method === "POST") {
-      if (request.headers.get("x-token") !== writeToken) return new Response("forbidden", { status: 403 });
-      return json(JSON.stringify(await runShadowJudge(env)));
-    }
+    // 手动触发哨兵评估（token 保护）。
     if (url.pathname === "/api/sentinel/run" && request.method === "POST") {
       if (request.headers.get("x-token") !== writeToken) return new Response("forbidden", { status: 403 });
       return json(JSON.stringify(await runSentinel(env, { forcePersist: true })));
@@ -99,11 +106,9 @@ export default {
     return new Response("not found", { status: 404 });
   },
 
-  // cron 触发：*/5 = 哨兵；每小时 11 分 = 影子判定（保持与本地一致的每小时节奏——
-  // 频率是参数：streak「5 连 = 5 小时」的语义依赖每小时判定一次，不可加密）。
+  // cron 触发：*/5 = 持仓风险哨兵。
   async scheduled(event, env, ctx) {
     if (event.cron === "*/5 * * * *") await runSentinel(env);
-    else if (event.cron === "11 * * * *") await runShadowJudge(env);
   },
 };
 
@@ -135,24 +140,6 @@ async function fetchMarks() {
   const m = {};
   for (const it of Array.isArray(arr) ? arr : []) m[it.symbol] = Number(it.markPrice);
   return m;
-}
-
-// 与 scripts/api.cjs getKlines 同参：1h 收盘价序列，取 340 根（t14 需 337+）。
-async function fetchCloses(sym) {
-  const startTime = Math.floor(Date.now() / 1000) - 340 * 3600; // seconds!
-  const u = `${BACKPACK_API}/klines?symbol=${sym}&interval=1h&startTime=${startTime}&limit=340`;
-  for (let attempt = 0; attempt < 2; attempt++) { // 与本地一致：先重试再定性
-    try {
-      const r = await fetch(u, { signal: AbortSignal.timeout(15000) });
-      if (r.ok) {
-        const kl = await r.json();
-        const closes = (Array.isArray(kl) ? kl : []).map((k) => Number(k && k.close)).filter((c) => Number.isFinite(c));
-        if (closes.length >= 25) return closes;
-      }
-    } catch {}
-    if (attempt < 1) await new Promise((r2) => setTimeout(r2, 3000));
-  }
-  return null;
 }
 
 // ---------- 哨兵（5 分钟检查，平稳时 30 分钟持久化心跳） ----------
@@ -264,44 +251,4 @@ async function runSentinel(env, { forcePersist = false } = {}) {
     await persistSentinelState(env, state);
   }
   return state;
-}
-
-// ---------- 影子判定（每小时 cron，写 advice_cloud，不碰权威链路） ----------
-
-async function runShadowJudge(env) {
-  const latest = JSON.parse(await env.DASH.get("latest") || "null");
-  const directive = latest?.direction?.directive;
-  if (!directive) {
-    return { skipped: "no directive in latest snapshot — 无指令不判（DATA_FAIL 精神）" };
-  }
-  // Acknowledgments must not depend on the market-data endpoint being healthy.
-  const initial = await mailbox(env).fetch('https://direction.internal/advance', {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ snapshot: latest }),
-  }).then(r => r.json());
-  if (initial.pending || initial.resolved || initial.skipped === 'versioned snapshot unavailable') return initial;
-  // 在跑网格市场 → 符号（快照 grids 无 symbol 字段，从 market 映射）
-  const markets = [...new Set((Array.isArray(latest.grids) ? latest.grids : []).map((g) => g.market).filter(Boolean))];
-  const running = markets.map((m) => String(m).replace("-PERP", "_USDC_PERP")).filter((s) => s.endsWith("_USDC_PERP"));
-  const symbols = [...new Set(["BTC_USDC_PERP", ...running])];
-  const series = {};
-  await Promise.all(symbols.map(async (s) => { series[s] = await fetchCloses(s); }));
-  const btcM = patterns.metrics(series.BTC_USDC_PERP);
-  if (!btcM) {
-    return { dataFail: true, missing: symbols.filter((s) => !series[s]), note: "no judgement — streak untouched（失败小时不计数）" };
-  }
-  const refSym = running.find((s) => s !== "BTC_USDC_PERP") || null;
-  const refM = refSym ? patterns.metrics(series[refSym]) : null;
-  const note = `btc t7=${btcM.t7?.toFixed(1)}% t14=${Number.isFinite(btcM.t14) ? btcM.t14.toFixed(1) + "%" : "n/a"} pos=${btcM.rangePos.toFixed(2)} bounce=${btcM.bounce.toFixed(1)}%`;
-  const ref = refM ? { symbol: refSym, t7: refM.t7, t14: refM.t14, rangePos: refM.rangePos } : null;
-
-  const result = await mailbox(env).fetch('https://direction.internal/advance', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ snapshot: latest, metrics: btcM, note, ref }),
-  }).then(r => r.json());
-  // KV copies are display-only; the Durable Object is the authority.
-  if (result.advice) {
-    await env.DASH.put("advice", JSON.stringify({ ...result.advice, source: "cloud" }));
-    await env.DASH.put("advice_cloud", JSON.stringify({ ...result.advice, shadow: true }));
-  }
-  return { ...result, symbols };
 }

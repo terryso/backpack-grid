@@ -22,13 +22,14 @@ const record = (id, details) => { rows.push({id,passed:true,...details}); consol
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 async function actualAct(mode) {
   const dir = fixture(), at = new Date().toISOString();
-  const localCfg = mode === 'identity-mismatch' ? { ...cfg, userId: 'expected-owner' } : cfg;
+  const localCfg = { ...cfg, requireDirection:false, ...(mode === 'identity-mismatch' ? { userId:'expected-owner' } : {}) };
   put(dir, 'config.json', localCfg);
   const identity={userId:mode==='identity-mismatch'?'expected-owner':'fixture',subaccountId:3,accountKey:mode==='identity-mismatch'?'expected-owner-3':'fixture-3'};
   put(dir,'state/account_identity.json',identity);
   const runId='safety-'+mode,planId='plan-'+mode;put(dir,'state/run_context.json',{runId,identity,startedAt:at,ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(dir,'state/last_round_status'),'running');
   const actions = mode==='identity-stop'?[{act:'stop',market:'ETH-PERP',reason:'SL'}]:mode==='identity-protect'?[{act:'protect',market:'ETH-PERP',tp:10,sl:6,closeOnStop:true}]:[{ act: 'create', market: 'ETH-PERP', lower: 90, upper: 110, count: 20, value: 500 }];
   if(mode==='final-liquidating')actions.push({act:'create',market:'BTC-PERP',lower:90,upper:110,count:20,value:500});
+  for(const action of actions)if(action.act==='create')action.direction='Neutral';
   const hash = (o) => createHash('sha256').update(JSON.stringify(o)).digest('hex');
   put(dir, 'state/actions.json', actions);
   put(dir, 'state/actions_meta.json', { at, runId,planId,identity, configHash: hash(localCfg), actionsHash: hash(actions), subaccountId: cfg.subaccountId || 3, riskWriteOk: true });

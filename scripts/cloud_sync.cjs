@@ -1,5 +1,5 @@
 'use strict';
-// cloud_sync.cjs — 方向判定云端同步（cutover 11-21：权威源 = Cloudflare Worker 每小时判定）。
+// cloud_sync.cjs — 从现有 Cloudflare 方向邮箱同步外部分链快照。
 // 取数在此；待确认事件的版本校验与本地写入留在 decide.cjs 的事务通道。
 // 云端不持有交易 key；拉取失败时本地保留现有指令。
 

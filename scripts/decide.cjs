@@ -13,7 +13,10 @@ const { riskStructOk, pendingStructOk, finiteNumber, money, plainObject } = requ
 const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, hash, marginEstimate, manualPausesFor } = require("./contracts.cjs");
 const { sizeGrid } = require("./grid_sizing.cjs");
 const { loadInfeasible } = require("./infeasible.cjs");
-const { directionFor } = require("./grid_direction.cjs");
+const { directionDecision, directionHealth } = require("./grid_direction.cjs");
+const { createIntentState } = require("./pending_create.cjs");
+const { isOrdinaryTrail, isStopReview, validPendingRisk } = require('./pending_stop.cjs');
+const { isPositionRef } = require('./position_ref.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -38,18 +41,27 @@ const writeAtomic = (p, data) => {
   fs.renameSync(tmp, p);
 };
 
-// ---------- 云端判定同步（cutover 11-21：权威源 = Cloudflare Worker 每小时判定） ----------
-// Mac 端读取待确认事件，在锁内验证版本并提交或拒绝；下次快照携带结果作为确认。
-// 旧版临时切换标记不作为待确认事件使用。请求失败时沿用本地指令。
+// ---------- 方向邮箱同步 ----------
+// 新版 advice 保留完整快照，pending 是待确认副本；旧版事件仍可在过渡期处理。
+// 请求失败时保留快照，但过期快照不能用于新格。DRYRUN 不应用任何方向。
+let cloudDirectionBlock = null;
 {
   const { dashUrlOf, fetchCloudMailbox } = require("./cloud_sync.cjs");
   const dashUrl = dashUrlOf(path.join(ROOT, "state/dashboard.env"), fs, path);
   if (dashUrl) {
     try {
       const mailbox = fetchCloudMailbox(dashUrl, require("node:child_process"));
-      if (mailbox?.pending && process.env.DRYRUN !== '1') {
-        const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: mailbox.pending });
-        console.log(`CLOUD SWITCH: event ${outcome.status}`);
+      const cloudEvent = mailbox?.advice?.snapshot?.type === 'chain_snapshot'
+        ? mailbox.advice.snapshot : mailbox?.pending;
+      if (cloudEvent && process.env.DRYRUN !== '1') {
+        try {
+          const outcome = require('./grid_direction.cjs').directionTransaction(ROOT, { op: 'cloud', accountKey: identity.accountKey, event: cloudEvent });
+          console.log(`CLOUD SWITCH: event ${outcome.status}`);
+          if (cloudEvent.type === 'chain_snapshot' && outcome.status !== 'applied') cloudDirectionBlock = outcome.status;
+        } catch (e) {
+          if (cloudEvent.type === 'chain_snapshot') cloudDirectionBlock = 'apply-failed';
+          console.error(`CLOUD DIRECTION APPLY FAILED: ${String(e && e.message || e).slice(0, 120)} — keeping local directive`);
+        }
       }
       if (mailbox?.advice && typeof mailbox.advice.at === 'string') writeAtomic(path.join(ROOT, 'state/direction_advice.json'), JSON.stringify(mailbox.advice, null, 1));
       else console.log('CLOUD ADVICE: mailbox unavailable — keeping local directive');
@@ -94,6 +106,12 @@ const writeAtomic = (p, data) => {
     if (fs.existsSync(pendPath)) { pendCorrupt = true; pending = {}; }
   }
   if (pendCorrupt) lines.push("PENDING LEDGER INVALID: parse or structure failed — treated as corrupt; new-risk blocked (act archives it on its next stop)");
+  // An unissued or uncertain create is not itself a stop instruction. Keep it
+  // in the ledger to block creation, while independently evaluating risk exits.
+  const unresolvedCreates = Object.fromEntries(Object.entries(pending)
+    .map(([market, entry]) => [market, createIntentState(entry)]).filter(([, state]) => state));
+  const pendingTrailRisk = Object.fromEntries(Object.entries(pending).filter(([, entry]) => isOrdinaryTrail(entry) || isStopReview(entry)));
+  const pendingForRisk = Object.fromEntries(Object.entries(pending).filter(([market]) => !unresolvedCreates[market] && !pendingTrailRisk[market]));
 
   // ---------- risk budget: peak equity, warning line, hard breaker (BEFORE tickers) ----------
   const riskPath = path.join(ROOT, "state", "risk.json");
@@ -198,7 +216,49 @@ const writeAtomic = (p, data) => {
   }
 
   // ---------- pending stop retries: highest priority actions, no tickers needed ----------
+  const deferredTrailingRiskStops = [];
+  const deferredOrdinaryTrailStops = [];
   for (const [mkt, p] of Object.entries(pending)) {
+    if (unresolvedCreates[mkt] === 'prepared') {
+      actions.push({ act:'clear-prepared-create', market:mkt, intent:{ intentId:p.intentId, planId:p.planId, runId:p.runId } });
+      lines.push(`PENDING CREATE ${mkt}: definitely unsent — clear locally without exchange writes`);
+      continue;
+    }
+    if (isStopReview(p)) {
+      actions.push({act:'hold-unknown-stop',market:mkt});
+      lines.push(`PENDING STOP ${mkt}: prior stop outcome retained for review`);
+      const grid = grids.find(g => g.market === mkt);
+      const pos = (obs.positions || []).find(item => item.market === mkt);
+      const observedFlat = !pos || (finiteNumber(pos.size) && Number(pos.size) === 0);
+      const observedRef = obs.positionRefs?.[mkt];
+      const risk = p.riskStop;
+      if (validPendingRisk(risk) && grid && isPositionRef(risk.positionRef) && observedRef === risk.positionRef) {
+        deferredOrdinaryTrailStops.push({act:'stop',market:mkt,range:grid.range,reason:`pending risk stop retry (${risk.reason})`,
+          independentRisk:true,reviewStop:true,retryPendingRisk:true,riskPositionRef:risk.positionRef,expectedPendingHash:hash(p)});
+      } else if (validPendingRisk(risk) && !grid && observedFlat) {
+        deferredOrdinaryTrailStops.push({act:'stop',market:mkt,reason:'verify pending risk stop without exchange writes',
+          independentRisk:true,reviewStop:true,verifyOnly:true,expectedPendingHash:hash(p)});
+      }
+      continue;
+    }
+    if (unresolvedCreates[mkt] === 'unknown') {
+      actions.push({ act:'hold-unknown-create', market:mkt });
+      lines.push(`PENDING CREATE ${mkt}: outcome unknown — manual review required; no automatic stop`);
+      if (p.riskStop && p.riskStop.status === 'pending' && typeof p.riskStop.reason === 'string' &&
+          p.riskStop.reason && Number.isFinite(Date.parse(p.riskStop.at)) &&
+          !actions.some(a => a.act === 'stop' && a.market === mkt)) {
+        const grid = grids.find(g => g.market === mkt);
+        const trailFields = Object.prototype.hasOwnProperty.call(p, 'trailPositionRef')
+          ? { trailPositionRef:p.trailPositionRef } : /AUTO_TRAIL/.test(p.riskStop.reason) ? { trailPositionRef:null } : {};
+        const retry = { act:'stop', market:mkt, ...(grid ? {range:grid.range} : {}), ...trailFields,
+          reason:`pending risk stop retry (${p.riskStop.reason})`, independentRisk:true, retryPendingRisk:true };
+        // A trailing retry is bound to its original position. Give fresh risk
+        // rules a chance to stop a replacement position before retrying it.
+        if (Object.prototype.hasOwnProperty.call(trailFields, 'trailPositionRef')) deferredTrailingRiskStops.push(retry);
+        else { actions.push(retry); lines.push(`PENDING RISK STOP ${mkt}: retrying an independently planned exit`); }
+      }
+      continue;
+    }
     const g = grids.find((x) => x.market === mkt);
     // Older pending trail stops predate position references. Mark them as
     // trailing even when the grid is absent from the observation: the grid may
@@ -214,8 +274,9 @@ const writeAtomic = (p, data) => {
     }
     const pos = (obs.positions || []).find((pp) => pp.market === mkt);
     const hasResidue = pos && Math.abs(num(pos.size)) > 0;
-    actions.push({ act: "stop", market: mkt, range: g.range, ...trailFields, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` });
-    lines.push(`PENDING STOP retry planned for ${mkt} (queued ${p.at})`);
+    const retry = { act: "stop", market: mkt, range: g.range, ...trailFields, reason: `pending stop retry (${p.reason})${hasResidue ? " — residue position present" : ""}` };
+    if (isOrdinaryTrail(p)) deferredOrdinaryTrailStops.push(retry);
+    else { actions.push(retry); lines.push(`PENDING STOP retry planned for ${mkt} (queued ${p.at})`); }
   }
 
   // ---------- market data (degradable): only range/price logic depends on it ----------
@@ -251,7 +312,7 @@ const writeAtomic = (p, data) => {
   // ---------- backstop reconciliation: enabled/disabled grids must carry native protection ----------
   const wantTP = Number(cfg.takeProfitPct), wantSL = Number(cfg.stopLossPct);
   for (const g of grids) {
-    if (pending[g.market] || heldByUser(g.market) || manualCorrupt) continue; // do not override explicit user intention
+    if ((pending[g.market] && unresolvedCreates[g.market] !== 'prepared') || heldByUser(g.market) || manualCorrupt) continue; // do not override explicit user intention
     const bad = g.nativeTP === null || g.nativeSL === null
       || Number(g.nativeTP) !== wantTP || Number(g.nativeSL) !== wantSL
       || g.nativeCloseOnStop !== true;
@@ -264,7 +325,8 @@ const writeAtomic = (p, data) => {
 
   // ---------- per-grid rules ----------
   for (const g of grids) { // 阶段标签只控制是否规划新增仓位，风控复评两阶段都做
-    if (pending[g.market]) continue; // handled by pending-stop retry above
+    if (pendingForRisk[g.market]) continue; // handled by pending-stop retry above
+    const hardRiskOnly = !!pendingTrailRisk[g.market];
     if(heldByUser(g.market)||manualCorrupt){lines.push(`MANUAL HOLD ${g.market}: automatic rotation disabled; account breaker/pending cleanup still active`);continue;}
     const [lo, hi] = g.range.map(Number);
     const price = priceOf(g.market);
@@ -275,14 +337,14 @@ const writeAtomic = (p, data) => {
       // Disabled with pnl beyond thresholds = exchange backstop fired -> rotate.
       // Disabled with pnl inside thresholds = manual pause by the user -> leave untouched
       // (pending-stop retries above are the only path that touches those).
-      if (isFinite(effPct) && (effPct >= cfg.takeProfitPct || effPct <= -cfg.stopLossPct)) {
+      if (isFinite(effPct) && ((!hardRiskOnly && effPct >= cfg.takeProfitPct) || effPct <= -cfg.stopLossPct)) {
         reason = `backstop fired (pnl ${effPct.toFixed(2)}%) — rotate`;
       } else {
         lines.push(`GRID ${g.market} DISABLED but pnl ${Number(effPct).toFixed(2)}% within thresholds — likely manual pause, leaving untouched`);
       }
-    } else if (isFinite(effPct) && effPct >= cfg.takeProfitPct) reason = `TP: pnl ${effPct.toFixed(2)}% (funding-adj) >= ${cfg.takeProfitPct}%`;
+    } else if (!hardRiskOnly && isFinite(effPct) && effPct >= cfg.takeProfitPct) reason = `TP: pnl ${effPct.toFixed(2)}% (funding-adj) >= ${cfg.takeProfitPct}%`;
     else if (isFinite(effPct) && effPct <= -cfg.stopLossPct) reason = `SL: pnl ${effPct.toFixed(2)}% (funding-adj) <= -${cfg.stopLossPct}%`;
-    else if (tickersOk && isFinite(price) && isFinite(lo) && isFinite(hi)) {
+    else if (!hardRiskOnly && tickersOk && isFinite(price) && isFinite(lo) && isFinite(hi)) {
       if (price < lo * (1 - cfg.exitBufferPct / 100)) reason = `OUT_OF_RANGE: price ${price} < low ${lo} - ${cfg.exitBufferPct}%`;
       else if (price > hi * (1 + cfg.exitBufferPct / 100)) reason = `OUT_OF_RANGE: price ${price} > high ${hi} + ${cfg.exitBufferPct}%`;
     }
@@ -315,7 +377,30 @@ const writeAtomic = (p, data) => {
   // already-planned stop. Does nothing when the gate is off.
   if (cfg.autoExitsEnabled) {
     const { planAutoExits } = require("./auto_exits.cjs");
-    planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, manualCorrupt, actions, lines });
+    planAutoExits({ ROOT, identity, cfg, obs, grids, pending:pendingForRisk, hardRiskOnly:pendingTrailRisk, heldByUser, manualCorrupt, actions, lines });
+  }
+  for (const retry of deferredTrailingRiskStops) {
+    if (!actions.some(a => a.act === 'stop' && a.market === retry.market)) {
+      actions.push(retry);
+      lines.push(`PENDING RISK STOP ${retry.market}: retrying an independently planned exit`);
+    } else lines.push(`PENDING RISK STOP ${retry.market}: fresh exit takes priority over old trailing retry`);
+  }
+  for (const retry of deferredOrdinaryTrailStops) {
+    if (!actions.some(a => a.act === 'stop' && a.market === retry.market)) {
+      actions.push(retry);
+      lines.push(`PENDING STOP ${retry.market}: retry remains bound to its original position`);
+    } else lines.push(`PENDING STOP ${retry.market}: fresh hard-risk exit takes priority`);
+  }
+  // Fresh hard-risk actions must bind to the exact pending record they supersede.
+  // Ordinary retries retain their original trailing-position guard.
+  for (const action of actions) {
+    const entry = pendingTrailRisk[action.market];
+    if (action.act !== 'stop' || !entry || action.reviewStop || deferredOrdinaryTrailStops.includes(action)) continue;
+    action.independentRisk = true;
+    action.reviewStop = true;
+    action.expectedPendingHash = hash(entry);
+    const ref = obs.positionRefs?.[action.market];
+    action.riskPositionRef = !action.reason.startsWith('circuit breaker:') && isPositionRef(ref) ? ref : null;
   }
 
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------
@@ -354,7 +439,7 @@ const writeAtomic = (p, data) => {
   try { writeAtomic(activityPath, JSON.stringify(activity, null, 2)); }
   catch (e) { activitySaved = false; lines.push(`GRID ACTIVITY WRITE FAILED: ${String(e.message).slice(0, 140)} — dead-grid rotation skipped; risk exits preserved`); }
   for (const g of activitySaved ? grids : []) {
-    if (manualCorrupt || g.status === "Disabled" || pending[g.market] || heldByUser(g.market)) continue;
+    if (manualCorrupt || g.status === "Disabled" || (pending[g.market] && unresolvedCreates[g.market] !== 'prepared') || heldByUser(g.market)) continue;
     if (!freshActivity.has(g.symbol)) continue; // no current ledger observation means activity is unknown
     if (actions.some((a) => a.market === g.market && a.act === "stop")) continue;
     const e = activity[g.symbol];
@@ -372,6 +457,8 @@ const writeAtomic = (p, data) => {
   for (let i = actions.length - 1; i >= 0; i--) {
     if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
   }
+  // These stops came from independent risk rules, never from the create intent.
+  for (const a of actions) if (a.act === 'stop' && unresolvedCreates[a.market]) a.independentRisk = true;
 
   // ---------- plan replacements for freed slots ----------
   const stops = actions.filter((a) => a.act === "stop").map((a) => a.market);
@@ -379,7 +466,8 @@ const writeAtomic = (p, data) => {
   const slots = cfg.maxGrids - remaining.length;
   const ecoOf = (perpName) => {
     const base = perpBase(perpName);
-    for (const [eco, list] of Object.entries(cfg.ecosystems || {})) if (list.includes(base)) return eco;
+    const ecos = cfg.ecosystems && typeof cfg.ecosystems === 'object' && !Array.isArray(cfg.ecosystems) ? cfg.ecosystems : {};
+    for (const [eco, list] of Object.entries(ecos)) if (Array.isArray(list) && list.includes(base)) return eco;
     return base; // unknown symbols cluster by themselves
   };
   // analysis cache (used by replacement planning and paper directional tracking)
@@ -397,8 +485,11 @@ const writeAtomic = (p, data) => {
   // or a queued pending stop (cleanup before new risk) all veto creation
   const corruptFlagExists = fs.existsSync(path.join(ROOT, "state", "pending_corrupt.json"));
   if (orphanPositions.length) lines.push(`ORPHAN POSITIONS (no grid): ${orphanPositions.map((p) => p.market).join(", ")} — new-risk blocked; pending verification still runs`);
+  const chainHealth = directionHealth(ROOT, identity.accountKey, cfg);
+  if (chainHealth.blocked) lines.push(`DIRECTION BLOCKED: ${chainHealth.reason} — no new grids; existing risk exits remain active`);
+  if (cloudDirectionBlock) lines.push(`DIRECTION BLOCKED: cloud event ${cloudDirectionBlock} — no new grids; existing risk exits remain active`);
   const mayCreate = !manualCorrupt && !manualPauses["*"] && obs.marketDataAvailable !== false && breaker === null && riskWriteOk && !riskCorrupt && !pendCorrupt && !corruptFlagExists && tickersOk
-    && Object.keys(pending).length === 0 && orphanPositions.length === 0;
+    && Object.keys(pending).length === 0 && orphanPositions.length === 0 && !chainHealth.blocked && !cloudDirectionBlock;
   // phase semantics: risk exits must never wait for market analysis. When stops are
   // planned, defer creation to phase 2 (run_round re-observes, then BG_PHASE=creates);
   // when nothing needs to stop, plan creations inline. Phase 2 only creates.
@@ -467,13 +558,18 @@ const writeAtomic = (p, data) => {
       // quality gate: sorted desc by score — first failing candidate means the rest are worse
       if (!finiteNumber(cand.score)) { lines.push(`PLAN skip ${mkt}: score unavailable`); continue; }
       if (cand.score < cfg.minScore) { lines.push(`PLAN stop: best remaining score ${cand.score} < min ${cfg.minScore} — slot stays empty`); break; }
-      const dir = directionFor(ROOT, identity.accountKey, mkt); // 手动方向指令（grid_direction.cjs set），默认 Neutral
+      const directive = directionDecision(ROOT, identity.accountKey, mkt, cfg);
+      if (directive.blocked) {
+        lines.push(`PLAN skip ${mkt}: direction blocked (${directive.reason})`);
+        continue;
+      }
+      const dir = directive.direction;
       // 方向强制策略（2026-11-28 用户拍板）：中性格不再建——指令为 Neutral 时槽位
       // 保持空置（观望语义），只有 Long/Short 才建格。config requireDirection=true
       // 开启；存量中性格不受影响（指令只作用于新格）。
       if (cfg.requireDirection === true && dir === "Neutral") {
-        lines.push(`PLAN stop: neutral directive + requireDirection — no-direction grids disabled, slot stays empty`);
-        break;
+        lines.push(`PLAN skip ${mkt}: neutral directive + requireDirection — no-direction grids disabled`);
+        continue;
       }
       // Short 格费率硬门：空头扎堆的币（深负费率）持仓即持续付费——ADA 11-16 案例
       // （-0.104%/次 × 八轮）实亏。只拦极端值（fundingShortBanPct=-0.05%，常态

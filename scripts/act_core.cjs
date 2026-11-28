@@ -5,6 +5,9 @@
 
 const { pendingStructOk, finiteNumber, plainObject, positionListOk } = require("./state_schema.cjs");
 const { isPositionRef } = require("./position_ref.cjs");
+const { createIntentState } = require("./pending_create.cjs");
+const { isStopReview, hasDurablePreparedTrail } = require('./pending_stop.cjs');
+const { makeReviewStopGrid } = require('./review_stop.cjs');
 
 // io: {
 //   jget(pathname), jpatch(pathname, body),      — session-authenticated exchange access
@@ -13,22 +16,44 @@ const { isPositionRef } = require("./position_ref.cjs");
 //   loadPending(), savePending(pending),         — pending ledger (corrupt handling in wrapper)
 // }
 function makeStopGrid(io) {
+  const reviewStopGrid = makeReviewStopGrid(io);
   return async function stopGrid(market, range, reason, results, options = {}) {
+    if (options.reviewStop === true) return reviewStopGrid(market, range, reason, results, options);
     if(io.assertAccount) await io.assertAccount();
     const symbol = String(market).replace("-PERP", "_USDC_PERP");
     const loaded = await io.loadPending();
     const pending = loaded.pending;
     const existing = pending[market];
+    if (isStopReview(existing)) {
+      results.push({act:'hold-unknown-stop',market,done:false,manualRequired:true,unconfirmed:true,
+        error:'stop outcome requires review; stale stop plan refused'});
+      return {done:false};
+    }
+    const createState = createIntentState(existing);
+    if (createState && options.independentRisk !== true) {
+      if (createState === 'prepared') {
+        delete pending[market];
+        await io.savePending(pending);
+        results.push({ act:'clear-prepared-create', market, done:true, note:'unissued create intent cleared without exchange write' });
+        return { done:true };
+      }
+      results.push({ act:'hold-unknown-create', market, done:false, unconfirmed:true, manualRequired:true,
+        error:'create outcome unknown; no automatic stop without an independent risk exit' });
+      return { done:false };
+    }
+    const unknownCreate = createState === 'unknown';
+    const retryingRisk = options.retryPendingRisk === true || /^pending risk stop retry \(/.test(String(reason || ''));
+    const supersedingRisk = unknownCreate && existing?.riskStop?.status === 'pending' && !retryingRisk;
     const isTrail = Object.prototype.hasOwnProperty.call(options, 'trailPositionRef') || /AUTO_TRAIL/.test(String(reason || ''));
     let trailRef = null;
     if (isTrail) {
       const requested = options.trailPositionRef;
-      const stored = existing?.trailPositionRef;
+      const stored = supersedingRisk ? null : existing?.trailPositionRef;
       if ((requested != null && !isPositionRef(requested)) || (stored != null && !isPositionRef(stored))
           || (requested && stored && requested !== stored)) throw new Error('trail position identity invalid');
       trailRef = requested || stored;
       if (!isPositionRef(trailRef) || typeof io.getTrailPositionRef !== 'function') throw new Error('trail position identity unavailable');
-      if (existing?.trailPhase != null && !['prepared', 'issued'].includes(existing.trailPhase)) throw new Error('trail position phase invalid');
+      if (!supersedingRisk && existing?.trailPhase != null && !['prepared', 'issued'].includes(existing.trailPhase)) throw new Error('trail position phase invalid');
     }
     const trailState = async () => {
       const current = await io.getTrailPositionRef(symbol);
@@ -37,35 +62,75 @@ function makeStopGrid(io) {
       return 'unknown';
     };
     const skipPrepared = async message => {
-      if (pending[market]) { delete pending[market]; await io.savePending(pending); }
+      // A newly planned trail that is already stale cannot cancel an older,
+      // possibly issued risk stop before its replacement is persisted.
+      if (pending[market] && !supersedingRisk) {
+        if (unknownCreate) {
+          const { trailPositionRef, trailPhase, trailIntentVersion, ...create } = pending[market];
+          pending[market] = { ...create, riskStop:{ at:new Date().toISOString(), reason:message, status:'cancelled' } };
+        }
+        else delete pending[market];
+        await io.savePending(pending, {durable:true});
+      }
       results.push({ act: 'stop', market, done: false, skipped: true, error: message });
       return { done: false, skipped: true };
     };
     if (isTrail) {
       const current = await trailState();
       if (current === 'unknown') throw new Error('trail position identity unavailable');
-      if ((current === 'flat' || current === 'changed') && existing?.trailPhase === 'prepared')
+      const priorTrailPhase = supersedingRisk ? null : existing?.trailPhase;
+      const knownUnsent = !supersedingRisk && hasDurablePreparedTrail(existing);
+      if ((current === 'flat' || current === 'changed') && knownUnsent)
         return await skipPrepared('trailing position changed before any exchange request');
-      if (current === 'flat' && !existing) return await skipPrepared('trailing position already flat');
+      if (current === 'flat' && priorTrailPhase === 'prepared' && !knownUnsent)
+        throw new Error('legacy trailing outcome unknown; manual review required');
+      if (current === 'flat' && (!existing || (createState && priorTrailPhase !== 'issued'))) return await skipPrepared('trailing position already flat');
       if (current === 'changed') throw new Error('trail position identity changed');
     }
     // WRITE-AHEAD: persist the stop intent BEFORE any exchange write, so a lost response
     // can never leave the grid stopped on-exchange with an empty pending ledger
-    if (!pending[market]) {
+    if (createState === 'prepared') {
+      // An independent risk exit may replace a definitely-unsent create, but
+      // only after its own stop intent has been persisted.
+      pending[market] = { at:new Date().toISOString(), reason,
+        ...(isTrail ? { trailPositionRef:trailRef, trailPhase:'prepared', trailIntentVersion:2 } : {}) };
+      await io.savePending(pending, isTrail ? {durable:true} : undefined);
+    } else if (unknownCreate) {
+      // Do not discard an unknown create outcome when independently managing risk.
+      let retained = existing;
+      const reuseTrail = isTrail && !supersedingRisk && existing?.trailPositionRef === trailRef && existing?.trailPhase != null;
+      if (supersedingRisk) {
+        const { trailPositionRef, trailPhase, trailIntentVersion, ...create } = existing;
+        const history = Array.isArray(existing.previousRiskStops) ? existing.previousRiskStops
+          : existing.previousRiskStops == null ? [] : [{ unrecognizedHistory:existing.previousRiskStops }];
+        retained = { ...create, previousRiskStops:[...history,
+          { ...existing.riskStop, ...(trailPositionRef != null ? { trailPositionRef } : {}),
+            ...(trailPhase != null ? { trailPhase } : {}),
+            ...(trailIntentVersion != null ? { trailIntentVersion } : {}), supersededAt:new Date().toISOString() }] };
+      }
+      pending[market] = { ...retained, riskStop:{ at:new Date().toISOString(), reason, status:'pending' },
+        ...(isTrail ? { trailPositionRef:trailRef,
+          trailPhase:reuseTrail ? existing.trailPhase : 'prepared',
+          ...(reuseTrail ? (existing.trailIntentVersion === 2 ? {trailIntentVersion:2} : {}) : {trailIntentVersion:2}) } : {}) };
+      await io.savePending(pending, isTrail ? {durable:true} : undefined);
+    } else if (!pending[market]) {
       pending[market] = { at: new Date().toISOString(), reason,
-        ...(isTrail ? { trailPositionRef: trailRef, trailPhase: 'prepared' } : {}) };
-      await io.savePending(pending);
+        ...(isTrail ? { trailPositionRef: trailRef, trailPhase: 'prepared', trailIntentVersion:2 } : {}) };
+      await io.savePending(pending, isTrail ? {durable:true} : undefined);
     }
     const updatePending = nextReason => {
       const prior = pending[market] || {};
-      pending[market] = { at: new Date().toISOString(), reason: nextReason,
-        ...(isPositionRef(prior.trailPositionRef) ? { trailPositionRef: prior.trailPositionRef, trailPhase: prior.trailPhase || 'issued' } : {}) };
+      pending[market] = unknownCreate
+        ? { ...prior, riskStop:{ at:new Date().toISOString(), reason:nextReason, status:'pending' } }
+        : { at: new Date().toISOString(), reason: nextReason,
+          ...(isPositionRef(prior.trailPositionRef) ? { trailPositionRef: prior.trailPositionRef, trailPhase: prior.trailPhase || 'issued',
+            ...(prior.trailIntentVersion === 2 ? {trailIntentVersion:2} : {}) } : {}) };
     };
     const auto1 = await io.getAutomation();
     if (!Array.isArray(auto1.params?.symbols)) throw new Error("automation response malformed; intent retained");
     const entry = auto1.params.symbols.find((s) => s.symbol === symbol);
     if (!entry) {
-      if(pending[market]?.kind==="create" && pending[market]?.phase==="issued") {
+      if (unknownCreate) {
         results.push({act:"stop",market,done:false,unconfirmed:true,manualRequired:true});
         console.log(`STOP ${market}: creation response unknown and config absent; intent remains latched until an applied grid or authoritative rejection is confirmed`);
         return {done:false};
@@ -103,7 +168,8 @@ function makeStopGrid(io) {
     // 1) ensure disabled with close-positions-on-stop
     const beforeDisable = isTrail ? async () => {
       const wasPrepared = pending[market]?.trailPhase === 'prepared';
-      if (wasPrepared) { pending[market].trailPhase = 'issued'; await io.savePending(pending); }
+      const knownUnsent = hasDurablePreparedTrail(pending[market]);
+      if (wasPrepared) { pending[market].trailPhase = 'issued'; await io.savePending(pending, {durable:true}); }
       try {
         const current = await trailState();
         if (current === 'unknown' || current === 'changed' || (current === 'flat' && wasPrepared))
@@ -111,7 +177,7 @@ function makeStopGrid(io) {
       } catch (e) {
         // This callback has not returned to jpatch, so no exchange request was
         // sent by this attempt; keep a prepared intent if that state can be saved.
-        if (wasPrepared) { pending[market].trailPhase = 'prepared'; await io.savePending(pending); }
+        if (wasPrepared && knownUnsent) { pending[market].trailPhase = 'prepared'; await io.savePending(pending, {durable:true}); }
         throw e;
       }
     } : undefined;
@@ -180,9 +246,14 @@ function makeStopGrid(io) {
       results.push({ act: "stop", market, done: false, unconfirmed: true });
       return { done: false }; // config disappeared, but final flatness must still be known
     }
-    delete pending[market];
+    if (unknownCreate) {
+      const { trailPositionRef, trailPhase, trailIntentVersion, ...create } = pending[market];
+      pending[market] = { ...create, riskStop:{ at:new Date().toISOString(), reason, status:'completed',
+        ...(isTrail ? { trailPositionRef:trailRef } : {}) } };
+    } else delete pending[market];
     await io.savePending(pending);
-    results.push({ act: "stop", market, reason, done: true });
+    results.push({ act: "stop", market, reason, done: true,
+      ...(unknownCreate ? { note:'risk exit completed; create outcome remains unknown' } : {}) });
     console.log(`STOPPED ${market} — ${reason}`);
     return { done: true };
   };

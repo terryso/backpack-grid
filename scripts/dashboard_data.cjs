@@ -5,6 +5,8 @@ const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cj
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
 const { trailStatus } = require('./trail_status.cjs');
+const { createIntentState } = require('./pending_create.cjs');
+const { isStopReview } = require('./pending_stop.cjs');
 const {identityOk,manualPausesFor,validateConfig,expectedIdentity}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
@@ -28,33 +30,40 @@ const activeResults=read('state/act_results.json');
 const results=Array.isArray(activeResults?.results)&&activeResults.results.length?activeResults:read('state/last_action.json');
 const writeState = read('state/risk_write_status.json');
 const grids = Array.isArray(obs?.gridRows) ? obs.gridRows : [];
-// 方向任务状态（本机 launchd direction_watch 每小时判定 + 5 连同向自动切换）：
-// healthy=最近判定 ≤2h；failed=最近 24 行日志含失败标记
+// Direction advice is the latest received mailbox record. The applied
+// chainSnapshot below comes from the account-bound local transaction.
 const advice = read('state/direction_advice.json');
 let direction = null;
 if (advice && Number.isFinite(Date.parse(advice.at))) {
   let failed = false;
-  try {
-    const tail = fs.readFileSync(file('state/direction_watch.log'), 'utf8').trim().split('\n').filter(Boolean).slice(-24);
-    failed = tail.some((l) => /DATA_FAIL|SWITCH_SET_FAILED|ERROR/.test(l));
-  } catch {}
+  if (advice.type !== 'chain_snapshot') {
+    try {
+      const tail = fs.readFileSync(file('state/direction_watch.log'), 'utf8').trim().split('\n').filter(Boolean).slice(-24);
+      failed = tail.some((l) => /DATA_FAIL|SWITCH_SET_FAILED|ERROR/.test(l));
+    } catch {}
+  }
   const ageMs = Date.now() - Date.parse(advice.at);
   direction = {
     directive: advice.directive || null, rec: advice.rec || null, streak: Number(advice.streak) || 0, threshold: 5,
     verdict: advice.verdict || null, judgedAt: advice.at, judgedAgeMin: Math.round(ageMs / 60000),
-    healthy: ageMs <= 2 * 3600000, failed,
+    healthy: ageMs >= -60000 && ageMs <= 2 * 3600000, failed,
     note: advice.note || null,
     lastSwitch: Array.isArray(advice.switchLog) && advice.switchLog.length ? advice.switchLog[advice.switchLog.length - 1] : null,
+    source: advice.source || null,
+    reportedSnapshotId: advice.type === 'chain_snapshot' ? advice.snapshot?.id || null : null,
   };
 }
 // The mailbox compares this exact revision with the file under the local lock.
 // Invalid/foreign direction state must never be advertised as a valid version.
+let snapshotHealth = null;
 try {
   if (identityValid) {
-    const current = require('./grid_direction.cjs').directionSnapshot(ROOT, identity.accountKey);
-    direction = { ...(direction || {}), ...current };
+    const { directionSnapshot, directionHealth } = require('./grid_direction.cjs');
+    snapshotHealth = directionHealth(ROOT, identity.accountKey, cfg);
+    const current = directionSnapshot(ROOT, identity.accountKey);
+    direction = { ...(direction || {}), ...current, snapshotHealth };
   }
-} catch { direction = null; }
+} catch { direction = snapshotHealth?.active ? { ...(direction || {}), snapshotHealth } : null; }
 // ⚡ 显示守卫：lastSwitch 只在切换目标 === 当前指令时有效。stale KV 副本的旧切换
 // 不能挂在已变化的指令上——11-27 指令已切 Neutral 而副本 switchLog 末条仍是
 // to=Short，页面会显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾。
@@ -71,6 +80,10 @@ const dataValid = identityValid && !!obs && !obs.error && age !== null && Number
 const riskStateValid = riskStructOk(risk)&&(!risk.accountKey||risk.accountKey===identity?.accountKey);
 const pendingValid = (pendingStructOk(pending)&&Object.values(pending).every(p=>p.accountKey===identity?.accountKey)) || (!fs.existsSync(file('state/pending_stops.json')));
 const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
+const pendingCreateUnknown = pendingCorrupt ? null : Object.entries(pending || {})
+  .filter(([, entry]) => createIntentState(entry) === 'unknown').map(([market]) => market);
+const pendingStopReview = pendingCorrupt ? null : Object.entries(pending || {})
+  .filter(([, entry]) => isStopReview(entry)).map(([market]) => market);
 let manualPauses=[],manualPauseValid=true;
 try{manualPauses=Object.keys(manualPausesFor(ROOT,identity));}catch{manualPauseValid=false;}
 // A missing peak file is a fresh state; unreadable files and broken symlinks are
@@ -170,7 +183,7 @@ const snapshot = {
     dwellMin: cfg.breachDwellMin === undefined ? 10 : num(cfg.breachDwellMin),
     bufferPct: cfg.breachBufferPct === undefined ? 0.5 : num(cfg.breachBufferPct) },
   direction,
-  pending: pendingValid ? Object.keys(pending || {}) : null,
+  pending: pendingValid ? Object.keys(pending || {}) : null, pendingCreateUnknown, pendingStopReview,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
   lastAction, lastActionNote, curve,
 };

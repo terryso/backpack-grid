@@ -127,6 +127,22 @@ async function main() {
   d = fixture(); put(d, 'state/risk.json', { peakEquity: null }); put(d, 'state/pending_stops.json', []); put(d, 'state/act_results.json', { at: new Date().toISOString(), results: [{ act: 'protect', market: 'X', done: false, error: 'bad' }, { act: 'stop', market: 'Y', done: true }] });
   spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(d), encoding: 'utf8' }); let snap = json(d, 'state/dashboard.json');
   check('dashboard refuses malformed state and aggregates prior failure', () => { assert.equal(snap.riskStateValid, false); assert.equal(snap.pendingCorrupt, true); assert.equal(snap.drawdownPct, null); assert.match(snap.lastAction, /失败/); assert.equal(snap.strategyTotalPnl, null); });
+  {
+    const dir3=fixture(),acct='fixture-'+(cfg.subaccountId??3);
+    put(dir3,'state/pending_stops.json',{
+      'UNI-PERP':{kind:'create',phase:'issued',accountKey:acct},
+      'ETH-PERP':{kind:'create',phase:'prepared',accountKey:acct,planId:'plan',runId:'run',intentId:'123e4567-e89b-42d3-a456-426614174000'},
+      'BTC-PERP':{kind:'create',phase:'acknowledged',accountKey:acct},
+      'SOL-PERP':{kind:'stop_review',accountKey:acct,previousRiskStops:[{positionRef:'private-fixture-reference'}]},
+    });
+    const dashboard=spawnSync(process.execPath,[path.join(ROOT,'scripts/dashboard_data.cjs')],{env:env(dir3),encoding:'utf8'});
+    check('dashboard identifies unknown create outcomes without exposing intent metadata',()=>{
+      assert.equal(dashboard.status,0,dashboard.stderr);
+      const result=json(dir3,'state/dashboard.json');assert.deepEqual(result.pendingCreateUnknown,['UNI-PERP']);
+      assert.deepEqual(result.pendingStopReview,['SOL-PERP']);assert(!JSON.stringify(result).includes('private-fixture-reference'));
+      assert(!JSON.stringify(result).includes('123e4567-e89b-42d3-a456-426614174000'));
+    });
+  }
   // ⚡ 显示守卫：指令已被云端切换（override=Neutral）而 stale 副本 switchLog 末条 to=Short
   // → lastSwitch 必须置 null（不得显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾）
   {
@@ -171,7 +187,7 @@ async function main() {
   // and real anchored core imports. Includes intent/gate/cleanup interactions.
   for (const mode of ['success', 'upsert-lost', 'protect-read-fails', 'cleanup-incomplete', 'budget-changed', 'stale-plan']) {
     d = fixture(); fs.cpSync(path.join(ROOT, 'scripts'), path.join(d, 'scripts'), { recursive: true });
-    const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500 }));
+    const actions = ['ETH', 'BTC'].map((m) => ({ act: 'create', market: m + '-PERP', lower: 90, upper: 110, count: 20, value: 500, direction: 'Neutral' }));
     const { createHash } = require('node:crypto'); const h = (x) => createHash('sha256').update(JSON.stringify(x)).digest('hex');
     const identity=json(d,'state/account_identity.json');const runId='accept-'+mode;put(d,'state/run_context.json',{runId,identity,startedAt:new Date().toISOString(),ownerPid:process.pid,ownerStart:require('../scripts/execution_lease.cjs').ownerStart(process.pid)});fs.writeFileSync(path.join(d,'state/last_round_status'),'running');
     put(d, 'state/actions.json', actions); put(d, 'state/actions_meta.json', { planId:'plan-'+mode,runId,identity, at: mode === 'stale-plan' ? '2020-01-01' : new Date().toISOString(), configHash: h({ ...cfg, requireDirection: false }), actionsHash: h(actions), riskWriteOk: true, subaccountId: cfg.subaccountId || 3 }); // 与 fixture config 内容一致（fixture 已解耦策略键）
@@ -246,6 +262,33 @@ async function main() {
   uiContext.snapshot={...display,stopBudget:{valid:true,pct:125,usedUsd:100,budgetUsd:80,remainingUsd:-20,bufferUsd:15,riskBudgetPct:80,overBudget:true}};
   vm.runInNewContext('render(snapshot)',uiContext);
   check('production UI names nominal budget and exposes excess without clipping',()=>{const output=elements.get('content').innerHTML;assert.match(output,/止损预算占用/);assert.match(output,/125\.0%/);assert.match(output,/超出 20\.00/);assert.match(output,/配置估算，非实际回撤/);});
+  const chainEntries = Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c,{direction:c==='ETH'?'Neutral':'Long'}]));
+  uiContext.snapshot={...display,direction:{healthy:true,chainSnapshot:{id:'applied',asOf:new Date().toISOString(),chains:chainEntries},reportedSnapshotId:'incoming',lastCloudEvent:{id:'incoming',status:'expired'}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI shows applied chain directions and rejected new snapshot',()=>{const output=elements.get('dirBanner').innerHTML;assert.match(output,/BTC Long/);assert.match(output,/ETH Neutral/);assert.match(output,/TRX Long/);assert.match(output,/最新快照尚未应用：expired/);});
+  uiContext.snapshot={...display,direction:{chainSnapshot:{id:'applied',asOf:new Date().toISOString(),chains:chainEntries}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI distinguishes missing advice from an expired snapshot',()=>assert.match(elements.get('dirBanner').innerHTML,/未收到最新方向快照/));
+  uiContext.snapshot={...display,direction:{healthy:true,chainSnapshot:{id:'old',asOf:new Date(Date.now()-7201000).toISOString(),chains:chainEntries},
+    reportedSnapshotId:'new',snapshotHealth:{active:true,blocked:true,reason:'expired-snapshot'}}};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI warns when applied directions expire despite newer advice',()=>assert.match(elements.get('dirBanner').innerHTML,/新格已暂停：已应用快照超过两小时/));
+  uiContext.snapshot={...display,pending:['UNI-PERP'],pendingCreateUnknown:['UNI-PERP']};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI prominently requests review for an unknown create outcome',()=>{
+    assert.match(elements.get('content').innerHTML,/建格结果未知 1 · 需人工核对/);
+    assert(!elements.get('content').innerHTML.includes('风控正常'));
+    assert.equal(elements.get('unknownCreateBanner').hidden,false);
+    assert.match(elements.get('unknownCreateBanner').innerHTML,/结果未知 · 需人工核对/);
+  });
+  uiContext.snapshot=display;vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI hides the unknown-create warning after resolution',()=>assert.equal(elements.get('unknownCreateBanner').hidden,true));
+  uiContext.snapshot={...display,pending:['UNI-PERP'],pendingStopReview:['UNI-PERP']};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI warns when a prior stop requires review',()=>{
+    assert.match(elements.get('content').innerHTML,/停格结果待核对 1/);
+    assert(!elements.get('content').innerHTML.includes('风控正常'));
+  });
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

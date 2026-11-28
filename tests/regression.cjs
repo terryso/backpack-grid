@@ -76,7 +76,9 @@ T("T1d solana cap blocks BONK", (ecoCount1[ecoOf("BONK_USDC_PERP")] || 0) >= (cf
   T("T9a SL grid gets stop, protect dropped", actions.length === 1 && actions[0].act === "stop");
 }
 T("T9b no suppress-guard on stop (old bug gone)", !decideSrc.includes('(a.act === "stop" || a.act === "protect")'));
-T("T9c act phases: stop before protect before create", actSrc.indexOf("const PHASE = { stop: 0, protect: 1, create: 2 };") !== -1);
+const phaseMatch = actSrc.match(/const PHASE = (\{[^}]+\});/);
+const phases = phaseMatch ? Function('return (' + phaseMatch[1] + ')')() : {};
+T("T9c act phases: stop before protect before create", phases.stop < phases.protect && phases.protect < phases.create);
 T("T9d act wires production core", actSrc.includes("const stopGrid = makeStopGrid(io);") && actSrc.includes("evaluateCreateGate("));
 
 // ---------- T10: pending ledger integrity ----------
@@ -724,6 +726,94 @@ T("T25f actions staleness gate in act", actSrc.includes("STALE ACTIONS") && actS
     const r = runDecide(dir, false, tick(dir));
     const actions = JSON.parse(fs.readFileSync(path.join(dir, "state", "actions.json"), "utf8"));
     T("INT14c policy off preserves legacy neutral grids", r.status === 0 && actions.filter((a) => a.act === "create").length === 1 && actions.find((a) => a.act === "create").direction === "Neutral");
+  }
+  // 分链后，中性只跳过该候选，后面的其他生态仍可建格。
+  {
+    const dir = mk(true, "Short"), regFile = path.join(dir, "state/direction_override.json");
+    const reg = JSON.parse(fs.readFileSync(regFile));
+    const chains = Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c, { judgment: c === 'ETH' ? 'Neutral' : 'Long', direction: c === 'ETH' ? 'Neutral' : 'Long' }]));
+    reg.chainSnapshot = { id: 'mixed', asOf: new Date().toISOString(), chains };
+    fs.writeFileSync(regFile, JSON.stringify(reg));
+    const analysisFile = path.join(dir, "state/analysis.json"), analysis = JSON.parse(fs.readFileSync(analysisFile));
+    analysis.top.push({ ...analysis.top[0], symbol: 'SOL_USDC_PERP', score: 13 });
+    fs.writeFileSync(analysisFile, JSON.stringify(analysis));
+    const t = path.join(dir, 'state/tickers.json');
+    fs.writeFileSync(t, JSON.stringify([{ symbol: 'ETH_USDC_PERP', lastPrice: '1616' }, { symbol: 'SOL_USDC_PERP', lastPrice: '1616' }]));
+    const r = runDecide(dir, false, t), actions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14d neutral ecosystem is skipped and another directional ecosystem can create", r.status === 0
+      && !actions.some(a => a.act === 'create' && a.market === 'ETH-PERP')
+      && actions.some(a => a.act === 'create' && a.market === 'SOL-PERP' && a.direction === 'Long'));
+  }
+  // Missing ecosystem config or a missing member must not fall through to *.
+  for (const mode of ['missing-ecosystems','missing-member']) {
+    const dir = mk(true, 'Short'), cfgFile = path.join(dir,'config.json'), testCfg = JSON.parse(fs.readFileSync(cfgFile));
+    if (mode === 'missing-ecosystems') delete testCfg.ecosystems;
+    else testCfg.ecosystems.solana = testCfg.ecosystems.solana.filter(s => s !== 'PENGU');
+    fs.writeFileSync(cfgFile,JSON.stringify(testCfg));
+    const regFile = path.join(dir,'state/direction_override.json'), reg = JSON.parse(fs.readFileSync(regFile));
+    reg.chainSnapshot = {id:'fixture',asOf:new Date().toISOString(),chains:Object.fromEntries(
+      ['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c,{judgment:c==='SOL'?'Neutral':'Long',direction:c==='SOL'?'Neutral':'Long'}]))};
+    fs.writeFileSync(regFile,JSON.stringify(reg));
+    const anaFile=path.join(dir,'state/analysis.json'), ana=JSON.parse(fs.readFileSync(anaFile));
+    ana.top[0].symbol='PENGU_USDC_PERP'; ana.configHash=require('../scripts/contracts.cjs').analysisConfigHash(testCfg);
+    fs.writeFileSync(anaFile,JSON.stringify(ana));
+    const t=path.join(dir,'state/tickers.json');fs.writeFileSync(t,JSON.stringify([{symbol:'PENGU_USDC_PERP',lastPrice:'1616'}]));
+    const r=runDecide(dir,false,t), actions=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T('INT14 ecosystem failure blocks global fallback: '+mode,r.status===0 && !actions.some(a=>a.act==='create')
+      && r.stdout.includes(mode==='missing-ecosystems'?'invalid-ecosystems':'unmapped-market'));
+  }
+  // A previously applied snapshot expires for creation even if the legacy
+  // requireDirection flag is disabled; a fresh snapshot restores planning.
+  {
+    const dir=mk(false,'Short'), regFile=path.join(dir,'state/direction_override.json'), reg=JSON.parse(fs.readFileSync(regFile));
+    reg.chainSnapshot={id:'stale',asOf:new Date(Date.now()-7201000).toISOString(),chains:Object.fromEntries(
+      ['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c=>[c,{judgment:'Long',direction:'Long'}]))};
+    fs.writeFileSync(regFile,JSON.stringify(reg)); const t=tick(dir);
+    const stale=runDecide(dir,false,t), blocked=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T('INT14 expired applied snapshot blocks creates even with legacy policy off',stale.status===0
+      && stale.stdout.includes('expired-snapshot') && !blocked.some(a=>a.act==='create'));
+    reg.chainSnapshot.asOf=new Date().toISOString();fs.writeFileSync(regFile,JSON.stringify(reg));
+    const fresh=runDecide(dir,false,t), restored=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T('INT14 fresh applied snapshot restores directional creates',fresh.status===0
+      && restored.some(a=>a.act==='create'&&a.market==='ETH-PERP'&&a.direction==='Long'));
+    reg.lastCloudEvent={id:'future',status:'deferred',reason:'future-time'};fs.writeFileSync(regFile,JSON.stringify(reg));
+    const deferred=runDecide(dir,false,t), pending=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T('INT14 deferred newer event blocks creates despite a fresh older snapshot',deferred.status===0
+      && deferred.stdout.includes('pending-snapshot') && !pending.some(a=>a.act==='create'));
+  }
+  // A direction update only changes future creates. Existing risk exits still run.
+  {
+    const now = Date.now(), grid = { market:'SOL-PERP', symbol:'SOL_USDC_PERP', direction:'Short', range:[90,110],
+      allocationRaw:600, pnlRaw:0, pnlPct:0, status:'Triggered', nativeTP:10, nativeSL:6, nativeCloseOnStop:true };
+    const dir = makeFixture({ 'config.json': { ...cfg, maxGrids:1, requireDirection:true },
+      'state/observed.json': { at:new Date().toISOString(), gridRows:[grid], positions:[], ledger:[],
+        margin:{ totalEquity:'500', availableEquity:'400', openPnl:'0' } } });
+    const key = 'fixture-' + (cfg.subaccountId ?? 3), transact = require('../scripts/grid_direction.cjs').directionTransaction;
+    const chains = direction => Object.fromEntries(['BTC','ETH','SOL','BNB','SUI','HYPE','TRX'].map(c => [c, { judgment: direction, direction }]));
+    const event = (id, direction, offset) => ({ type:'chain_snapshot', id, at:new Date(now).toISOString(), asOf:new Date(now + offset).toISOString(), chains:chains(direction) });
+    const first = transact(dir, { op:'cloud', accountKey:key, event:event('first','Short',-2000) });
+    const t = path.join(dir, 'state/tickers.json'); fs.writeFileSync(t, JSON.stringify([{symbol:'SOL_USDC_PERP', lastPrice:'100'}]));
+    const before = runDecide(dir, false, t);
+    const second = transact(dir, { op:'cloud', accountKey:key, event:event('second','Long',-1000) });
+    const after = runDecide(dir, false, t), actions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14e applying an opposite chain direction does not stop an existing grid", first.status === 'applied' && second.status === 'applied'
+      && before.status === 0 && after.status === 0 && !actions.some(a => a.act === 'stop'));
+    const obsFile = path.join(dir, 'state/observed.json'), obs = JSON.parse(fs.readFileSync(obsFile));
+    obs.gridRows[0].pnlRaw = -60; obs.gridRows[0].pnlPct = -10; fs.writeFileSync(obsFile, JSON.stringify(obs));
+    const exit = runDecide(dir, false, t), exitActions = JSON.parse(fs.readFileSync(path.join(dir, 'state/actions.json')));
+    T("INT14f existing stop-loss rules still stop the grid", exit.status === 0 && exitActions.some(a => a.act === 'stop' && a.market === 'SOL-PERP' && a.reason.startsWith('SL:')));
+    const regFile=path.join(dir,'state/direction_override.json'), reg=JSON.parse(fs.readFileSync(regFile));
+    reg.chainSnapshot.asOf=new Date(Date.now()-7201000).toISOString();fs.writeFileSync(regFile,JSON.stringify(reg));
+    const staleExit=runDecide(dir,false,t), staleActions=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T("INT14g expired direction never blocks an existing grid's stop-loss",staleExit.status===0
+      && staleActions.some(a=>a.act==='stop'&&a.market==='SOL-PERP'&&a.reason.startsWith('SL:')));
+    reg.chainSnapshot.asOf=new Date().toISOString();fs.writeFileSync(regFile,JSON.stringify(reg));
+    const cfgFile=path.join(dir,'config.json'),invalidCfg=JSON.parse(fs.readFileSync(cfgFile));
+    invalidCfg.ecosystems.solana={};fs.writeFileSync(cfgFile,JSON.stringify(invalidCfg));
+    const invalidExit=runDecide(dir,false,t), invalidActions=JSON.parse(fs.readFileSync(path.join(dir,'state/actions.json')));
+    T("INT14h invalid ecosystems never block an existing grid's stop-loss",invalidExit.status===0
+      && invalidExit.stdout.includes('invalid-ecosystems')
+      && invalidActions.some(a=>a.act==='stop'&&a.market==='SOL-PERP'&&a.reason.startsWith('SL:')));
   }
 }
 

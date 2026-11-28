@@ -58,12 +58,12 @@ async function check(name, fn) { await fn(); console.log('PASS ' + name); }
     assert.deepEqual(f.read().patches, []); assert.equal(f.read().pending[market].trailPositionRef, A);
   });
   await check('a prepared trailing intent is cleared without a patch if the position is already flat', async () => {
-    const f = fixture({ refs: [flat], initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'prepared' } } });
+    const f = fixture({ refs: [flat], initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'prepared', trailIntentVersion:2 } } });
     const result = await f.stop(market, null, 'pending stop retry (' + reason + ')', [], { trailPositionRef: A });
     assert.equal(result.skipped, true); assert.deepEqual(f.read().patches, []); assert.deepEqual(f.read().pending, {});
   });
   await check('a prepared trailing intent is cleared without a patch for a replacement position', async () => {
-    const f = fixture({ refs: [known(B)], initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'prepared' } } });
+    const f = fixture({ refs: [known(B)], initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'prepared', trailIntentVersion:2 } } });
     const result = await f.stop(market, null, 'pending stop retry (' + reason + ')', [], { trailPositionRef: A });
     assert.equal(result.skipped, true); assert.deepEqual(f.read().patches, []); assert.deepEqual(f.read().pending, {});
   });
@@ -71,6 +71,21 @@ async function check(name, fn) { await fn(); console.log('PASS ' + name); }
     const f = fixture({ refs: [flat, flat, flat], initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'issued' } } });
     const result = await f.stop(market, null, 'pending stop retry (' + reason + ')', [], { trailPositionRef: A });
     assert.equal(result.done, true); assert.deepEqual(f.read().patches, ['Upsert', 'Delete']); assert.deepEqual(f.read().pending, {});
+  });
+  await check('a legacy prepared trail remains unknown if the position changes before dispatch', async () => {
+    const f = fixture({refs:[known(A),known(B)],initialPending:{[market]:{reason,trailPositionRef:A,trailPhase:'prepared'}}});
+    await assert.rejects(f.stop(market,null,'pending stop retry ('+reason+')',[],{trailPositionRef:A}),/trail position/i);
+    assert.deepEqual(f.read().patches,[]);assert.equal(f.read().pending[market].trailPhase,'issued');
+    assert.equal(f.read().pending[market].trailIntentVersion,undefined);
+  });
+  await check('a legacy prepared trail on an unknown create is never upgraded to known-unsent', async () => {
+    const old={kind:'create',phase:'issued',accountKey:'fixture-3',trailPositionRef:A,trailPhase:'prepared',
+      riskStop:{status:'pending',reason,at:new Date().toISOString()}};
+    const f=fixture({refs:[known(A),known(B)],initialPending:{[market]:old}});
+    await assert.rejects(f.stop(market,null,'pending risk stop retry ('+reason+')',[],
+      {trailPositionRef:A,independentRisk:true,retryPendingRisk:true}),/trail position/i);
+    assert.deepEqual(f.read().patches,[]);assert.equal(f.read().pending[market].trailPhase,'issued');
+    assert.equal(f.read().pending[market].trailIntentVersion,undefined);
   });
   await check('a new position appearing before deletion blocks deletion and retains pending state', async () => {
     const f = fixture({ refs: [known(A), known(A), known(B)] });
@@ -86,5 +101,46 @@ async function check(name, fn) { await fn(); console.log('PASS ' + name); }
     const f = fixture({ initialPending: { [market]: { reason, trailPositionRef: A, trailPhase: 'issued' } } });
     const result = await f.stop(market, null, 'circuit breaker: account drawdown beyond budget', []);
     assert.equal(result.done, true); assert.deepEqual(f.read().patches, ['Upsert', 'Delete']); assert.equal(f.read().guardCalls, 0);
+  });
+  await check('an issued trailing risk stop completes while retaining an unknown create outcome', async () => {
+    const pending = { kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',riskStop:{status:'pending',reason,at:new Date().toISOString()} };
+    const f = fixture({ refs:[flat,flat,flat], initialPending:{[market]:pending} });
+    const result = await f.stop(market,null,'pending risk stop retry ('+reason+')',[],{trailPositionRef:A,independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.equal(f.read().pending[market].phase,'issued');assert.equal(f.read().pending[market].riskStop.status,'completed');
+    assert.equal(f.read().pending[market].trailPositionRef,undefined);
+  });
+  await check('a fresh position trail supersedes an old issued trail while preserving its history', async () => {
+    const old = {kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',riskStop:{status:'pending',reason,at:new Date().toISOString()}};
+    const f=fixture({refs:[known(B),known(B),flat],initialPending:{[market]:old}});
+    const result=await f.stop(market,null,reason,[],{trailPositionRef:B,independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    const saved=f.read().pending[market];assert.equal(saved.phase,'issued');assert.equal(saved.riskStop.status,'completed');
+    assert.equal(saved.previousRiskStops[0].trailPositionRef,A);assert.equal(saved.previousRiskStops[0].trailPhase,'issued');
+    assert.equal(saved.riskStop.trailPositionRef,B);
+  });
+  await check('malformed older risk history is retained without blocking a fresh stop-loss', async () => {
+    const old = {kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',previousRiskStops:{legacy:'evidence'},
+      riskStop:{status:'pending',reason,at:new Date().toISOString()}};
+    const f=fixture({initialPending:{[market]:old}});
+    const result=await f.stop(market,null,'SL: current grid loss',[],{independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.deepEqual(f.read().pending[market].previousRiskStops[0].unrecognizedHistory,{legacy:'evidence'});
+    assert.equal(f.read().pending[market].previousRiskStops[1].trailPositionRef,A);
+  });
+  await check('a cancelled prepared trail keeps unknown create but releases its old position binding', async () => {
+    const pending = { kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'prepared',trailIntentVersion:2,riskStop:{status:'pending',reason,at:new Date().toISOString()} };
+    const f = fixture({ refs:[known(B),known(B),known(B),flat], initialPending:{[market]:pending} });
+    const first=await f.stop(market,null,'pending risk stop retry ('+reason+')',[],{trailPositionRef:A,independentRisk:true});
+    assert.equal(first.skipped,true);assert.deepEqual(f.read().patches,[]);
+    assert.equal(f.read().pending[market].riskStop.status,'cancelled');assert.equal(f.read().pending[market].trailPositionRef,undefined);
+    const second=await f.stop(market,null,reason,[],{trailPositionRef:B,independentRisk:true});
+    assert.equal(second.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.equal(f.read().pending[market].phase,'issued');assert.equal(f.read().pending[market].riskStop.status,'completed');
+    assert.equal(f.read().pending[market].trailPositionRef,undefined);
   });
 })().catch(error => { console.error(error); process.exitCode = 1; });

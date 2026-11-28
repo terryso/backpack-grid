@@ -58,6 +58,7 @@
   .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
   .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
   .dirbanner { border: 1px solid #1f2737; border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; background: #101623; }
+  .dirbanner[hidden] { display: none; }
   .dirbanner .db-title { font-size: 10px; color: #8b94a7; letter-spacing: 2px; white-space: nowrap; }
   .dirbanner .db-main { font-size: 15px; font-weight: 600; color: #c9d2e3; }
   .dirbanner .db-sub { font-size: 11px; color: #8b94a7; }
@@ -86,8 +87,9 @@
 <body>
 <div class="wrap">
   <h1>Backpack 网格自动驾驶 <span class="livebadge" id="liveBadge"><span class="dot"></span>实盘</span></h1>
-  <div class="sub">每 15 分钟自动更新 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
+  <div class="sub">巡检每 5 分钟 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div id="dirBanner" class="dirbanner ok"><span class="db-title">方向哨兵</span><span class="db-main">加载中…</span></div>
+  <div id="unknownCreateBanner" class="dirbanner bad" role="status" hidden></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
     <a href="/ops.html" title="建格/停格决策、全部成交与巡检轮次记录">📜 操作历史</a>
@@ -143,6 +145,7 @@ function autoExitRow(p, s) {
   const held = (s.manualPauses || []).includes("*") || (s.manualPauses || []).includes(p.market);
   let state = "";
   if (!grid) state = "未覆盖 · 该持仓无对应网格";
+  else if ((s.pendingStopReview || []).includes(p.market)) state = "待核对 · 先前停格结果未知或待确认";
   else if ((s.pending || []).includes(p.market)) state = "待清理 · 停格已在重试";
   else if (s.manualPauseValid === false) state = "状态未知 · 手动暂停记录损坏，自动处理受阻";
   else if (held) state = "已暂停 · 手动 hold";
@@ -164,8 +167,14 @@ function render(s) {
     : Array.isArray(v) ? v.map(escape) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, escape(x)])) : v;
   s = escape(s);
   const c = document.getElementById("content");
+  const createWarning = document.getElementById("unknownCreateBanner");
   c.classList.remove("err"); // the loading/错误样式带 40px padding，渲染后必须移除
-  if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
+  if (!s || !s.updatedAt) { if (createWarning) createWarning.hidden = true; c.textContent = "暂无数据"; return; }
+  if (createWarning) {
+    const unknown = Array.isArray(s.pendingCreateUnknown) ? s.pendingCreateUnknown : [];
+    createWarning.hidden = unknown.length === 0;
+    createWarning.innerHTML = unknown.length ? `<span class="db-title">建格确认</span><span class="db-main">结果未知 · 需人工核对</span><span class="db-sub">${unknown.join("、")} · 新格已暂停，不会仅凭意图自动停格</span>` : "";
+  }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
   const lb = document.getElementById("liveBadge");
@@ -215,7 +224,7 @@ function render(s) {
     chips.push(`<span class="chip bad">${label}</span>`);
   }
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
-    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false, trailUnknown].filter(Boolean).length;
+    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false, trailUnknown, (s.pendingCreateUnknown || []).length, (s.pendingStopReview || []).length].filter(Boolean).length;
   const drawdownKnown = typeof s.drawdownPct === "number" && Number.isFinite(s.drawdownPct) && s.drawdownPct >= 0;
   const warningKnown = typeof s.warnDrawdownPct === "number" && Number.isFinite(s.warnDrawdownPct) && s.warnDrawdownPct >= 0 && s.warnDrawdownPct <= 100;
   chips.push(s.riskPaused === true ? `<span class="chip bad">风控熔断已锁</span>`
@@ -223,6 +232,8 @@ function render(s) {
     : (s.drawdownPct >= s.warnDrawdownPct ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%（阈值 ${fmt(s.warnDrawdownPct, 1)}%）</span>`
     : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`))));
   chips.push(s.pendingCorrupt ? `<span class="chip bad">待清理状态未知</span>` : (s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
+  if (s.pendingCreateUnknown?.length) chips.push(`<span class="chip bad">建格结果未知 ${s.pendingCreateUnknown.length} · 需人工核对</span>`);
+  if (s.pendingStopReview?.length) chips.push(`<span class="chip bad">停格结果待核对 ${s.pendingStopReview.length}</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
   if (s.autoExits) chips.push(s.autoExits.enabled
@@ -234,9 +245,30 @@ function render(s) {
     const d = s.direction;
     let cls = "ok", main = "", sub = "";
     if (!d) { cls = "bad"; main = "方向哨兵：无数据"; sub = "direction_advice.json 缺失或损坏"; }
+    else if (d.chainSnapshot || d.reportedSnapshotId || d.snapshotHealth?.active) {
+      const applied = d.chainSnapshot, pending = d.reportedSnapshotId && d.reportedSnapshotId !== applied?.id;
+      cls = d.snapshotHealth?.blocked ? "bad" : !d.healthy || pending ? "warn" : "ok";
+      if (!applied) main = "分链方向待应用";
+      else {
+        main = ["BTC", "ETH", "SOL", "BNB", "SUI", "HYPE", "TRX"]
+          .map(chain => `${chain} ${applied.chains?.[chain]?.direction ?? "未知"}`).join(" · ");
+      }
+      const bits = [];
+      if (applied?.asOf) bits.push(`已应用快照 ${new Date(applied.asOf).toLocaleString("zh-CN", { hour12: false })}`);
+      if (d.snapshotHealth?.blocked) {
+        const why = { 'expired-snapshot':'已应用快照超过两小时', 'future-snapshot':'已应用快照时间超前',
+          'invalid-snapshot':'已应用快照无效', 'invalid-ecosystems':'生态配置无效',
+          'invalid-direction-state':'本机方向状态不可用', 'missing-snapshot':'尚无可用分链快照',
+          'pending-snapshot':'新快照等待时钟恢复' }[d.snapshotHealth.reason] || '方向状态不可用';
+        bits.push(`新格已暂停：${why}`);
+      }
+      if (pending) bits.push(`最新快照尚未应用${d.lastCloudEvent?.id === d.reportedSnapshotId ? "：" + d.lastCloudEvent.status : ""}`);
+      if (!d.healthy) bits.push(d.judgedAgeMin == null ? "未收到最新方向快照，请检查同步链路" : "方向快照已过期或时间异常，请检查写入方和同步链路");
+      sub = bits.join(" · ");
+    }
     else {
       if (d.failed) sub = "近 24 轮含失败行（数据链路/切换写入），详情看 direction_advice.json（switchingObserved/DATA_FAIL 标记） · ";
-      if (!d.healthy) { cls = "bad"; main = `⚠️ 方向任务记录已 ${d.judgedAgeMin} 分钟未更新`; sub += "检查云端判定（judge-cloud scheduled）与网络链路"; }
+      if (!d.healthy) { cls = "bad"; main = `⚠️ 方向任务记录已 ${d.judgedAgeMin} 分钟未更新`; sub += "检查外部分链快照写入与网络链路"; }
       else {
         const st = Number(d.streak) || 0, th = d.threshold || 5;
         cls = st >= 4 ? "bad" : st >= 1 ? "warn" : "ok";

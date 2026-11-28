@@ -2,7 +2,7 @@
 
 **[English](README.md) | [中文](README.zh-CN.md)**
 
-An autonomous crypto grid-trading system that designs its own strategy, runs on a **live Backpack perpetual-futures account with real money**, and re-balances itself every 15 minutes — no human in the loop.
+An autonomous crypto grid-trading system that designs its own strategy, runs on a **live Backpack perpetual-futures account with real money**, and checks its grids every 5 minutes — no human in the loop.
 
 > **📌 Account prerequisite**: Backpack perp grids are **only available on Bot-type subaccounts** — regular subaccounts have no grid feature and cannot be managed by this system. Every grid create/stop call here runs against a Bot subaccount; to replicate, log that bot account into the ego lite browser so the system can reuse its session.
 
@@ -12,7 +12,7 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
   </a>
 </p>
 
-🔗 **[Live dashboard](https://grid.terryso.dev)** — real equity, positions, per-grid health and volume progress, updated every 15 minutes. Public, read-only. The screenshot above is re-captured daily at 09:00 by a scheduled job and committed automatically when it changed.
+🔗 **[Live dashboard](https://grid.terryso.dev)** — real equity, positions, per-grid health and volume progress, updated after monitoring rounds. Public, read-only. The screenshot above is re-captured daily at 09:00 by a scheduled job and committed automatically when it changed.
 
 > ⚠️ This is a personal live-trading experiment, not financial advice. Perps trading is extremely risky.
 
@@ -22,7 +22,7 @@ An autonomous crypto grid-trading system that designs its own strategy, runs on 
 
 Backpack provides native grid bots with exchange-side protection. This project adds selection, rotation, account risk rules, and recovery around those bots:
 
-- **Runs its own strategy**: scans every USDC perp, scores markets by mean-reversion suitability (multi-window chop × liquidity − drift − funding), and picks up to 4 neutral grids
+- **Runs its own strategy**: scans every USDC perp, scores markets by mean-reversion suitability (multi-window chop × liquidity − drift − funding), and picks up to 4 grids with directions from the external chain snapshot
 - **Trades with real money**: ~$590 account, 4 grids, automatic rotation when a grid hits +5% take-profit, −6% stop-loss, exits its range, or drifts near liquidation — plus position-level auto-exits at ±150% margin-relative PnL and dwell-tracked range-breach stops
 - **Protects itself in layers**: exchange-side native backstop on every grid (survives a dead machine) → portfolio-level risk budget → equity-drawdown circuit breaker (90% warn / 100% kill-switch, deliberately pinned to ride through drawdowns) → write-ahead intent ledger so a crashed process never leaves half-done trades
 - **Reports publicly**: a Cloudflare Worker + KV dashboard updated after every round
@@ -31,7 +31,9 @@ It has been running unattended since 2026-09-30 — hundreds of autonomous round
 
 ## Architecture
 
-No API keys, no trading library — the system drives Backpack through the **same authenticated session the web app uses** (browser-context `fetch` with cookies), executed by a local launchd job every 15 minutes:
+No API keys, no trading library — the system drives Backpack through the **same authenticated session the web app uses** (browser-context `fetch` with cookies), executed by a local launchd job every 5 minutes:
+
+For the authenticated external chain-direction mailbox, ecosystem inheritance, and rollout steps, see [the direction snapshot guide](docs/chain-direction-mailbox.md).
 
 ```
 observe   session-authenticated APIs: grid ledgers, positions, equity, fills
@@ -78,7 +80,7 @@ Layer A: pure-logic replicas + source canaries. Layer B: **executes the producti
 
 ## Operations
 
-Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloudflare OAuth), launchd timers for the 15-minute round and the 1-minute peak sampler plus a resident keep-awake agent (idle sleep would silently stop the whole trading loop), full runbook in-repo — including post-reboot recovery (the ego browser task space is lost; recreate it programmatically, then one manual login re-attaches the session — see the Chinese runbook's "ego 空间丢失恢复"). See [README.zh-CN.md](README.zh-CN.md) for the complete Chinese operations manual.
+Single-command deployment of the dashboard (`scripts/deploy_dashboard.sh`, Cloudflare OAuth), launchd timers for the 5-minute round and the 1-minute peak sampler plus a resident keep-awake agent (idle sleep would silently stop the whole trading loop), full runbook in-repo — including post-reboot recovery (the ego browser task space is lost; recreate it programmatically, then one manual login re-attaches the session — see the Chinese runbook's "ego 空间丢失恢复"). See [README.zh-CN.md](README.zh-CN.md) for the complete Chinese operations manual.
 
 ## Validation and accounting
 

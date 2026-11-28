@@ -1,7 +1,9 @@
 'use strict';
 // Mirror ego_dispatch placeholder expansion without invoking the real browser.
 const fs=require('node:fs'),path=require('node:path');
-function dispatchSource(source,root){return source.replace(/(["'])__BG_ROOT__\1/g,()=>JSON.stringify(root));}
+function dispatchSource(source,root){return source.replace(/(["'])__BG_ROOT__\1/g,()=>JSON.stringify(root))
+ .replace(/(["'])__PY_BIN__\1/g,()=>JSON.stringify(require('./env.cjs').PY))
+ .replace(/(["'])__NODE_BIN__\1/g,()=>JSON.stringify(process.env.NODE_BIN || process.execPath));}
 function mockEgo(root){
  const cfg=JSON.parse(fs.readFileSync(path.join(root,'config.json')));
  return {async listTaskSpaces(){return {taskSpaces:[{id:cfg.watch.spaceId,name:'backpack-bot'}]};},async createTaskSpace(){throw Error('Unexpected fixture space creation');}};

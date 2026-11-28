@@ -7,5 +7,6 @@ cd "$(dirname "$0")/.." || exit 1
 if [ -f .env ]; then . ./.env; fi
 BG_ROOT="${BG_ROOT:-$PWD}"
 PY_BIN="${PY_BIN:-python3}"
+NODE_BIN="${NODE_BIN:-$(command -v node)}"
 export PATH="${NODE_BIN:+$(dirname "$NODE_BIN"):}$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
-sed -e "s|__BG_ROOT__|$BG_ROOT|g" -e "s|__PY_BIN__|$PY_BIN|g" "$1" | ego-browser nodejs
+sed -e "s|__BG_ROOT__|$BG_ROOT|g" -e "s|__PY_BIN__|$PY_BIN|g" -e "s|__NODE_BIN__|$NODE_BIN|g" "$1" | ego-browser nodejs

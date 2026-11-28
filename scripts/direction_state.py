@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 import tempfile
 import uuid
@@ -16,6 +17,15 @@ file = state / 'direction_override.json'
 request = json.load(sys.stdin)
 key = request['accountKey']
 valid = ('Long', 'Short', 'Neutral')
+chains = ('BTC', 'ETH', 'SOL', 'BNB', 'SUI', 'HYPE', 'TRX')
+mapping = {'偏多': 'Long', '偏空': 'Short', '中性': 'Neutral',
+           '中性偏空': 'Short', '中性偏多': 'Long',
+           'Long': 'Long', 'Short': 'Short', 'Neutral': 'Neutral'}
+
+def utc_time(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z', value):
+        raise ValueError('invalid snapshot time')
+    return datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 with (state / 'direction_override.lock').open('a+') as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
@@ -41,6 +51,60 @@ with (state / 'direction_override.lock').open('a+') as lock:
         if direction == 'Neutral': directions.pop(market, None)
         else: directions[market] = direction
         outcome = {'status': 'manual'}
+    elif request['op'] == 'cloud' and isinstance(request.get('event'), dict) and request['event'].get('type') == 'chain_snapshot':
+        event = request['event']
+        if not isinstance(event.get('id'), str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,128}', event['id']):
+            raise ValueError('invalid snapshot id')
+        created = utc_time(event.get('at'))
+        as_of = utc_time(event.get('asOf'))
+        values = event.get('chains')
+        if not isinstance(values, dict) or set(values) != set(chains):
+            raise ValueError('invalid snapshot chains')
+        for chain in chains:
+            entry = values[chain]
+            if not isinstance(entry, dict) or set(entry) != {'judgment', 'direction'}:
+                raise ValueError('invalid snapshot entry')
+            judgment, direction = entry['judgment'], entry['direction']
+            if not isinstance(judgment, str) or mapping.get(judgment) != direction or direction not in valid:
+                raise ValueError('invalid snapshot judgment')
+        previous = reg.get('lastCloudEvent')
+        same_event = isinstance(previous, dict) and previous.get('id') == event['id']
+        current_snapshot = reg.get('chainSnapshot')
+        snapshot_matches = (isinstance(current_snapshot, dict) and current_snapshot.get('id') == event['id']
+                            and current_snapshot.get('asOf') == event['asOf'] and current_snapshot.get('chains') == values)
+        if same_event and (previous.get('status') == 'conflict' or (previous.get('status') == 'applied' and snapshot_matches)):
+            if reg.get('chainAuthority') is True:
+                print(json.dumps(previous)); sys.exit(0)
+            outcome = previous  # upgrade an older receipt with the authority marker
+        else:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            age = (now - as_of).total_seconds()
+            created_age = (now - created).total_seconds()
+            if current_snapshot is not None and not isinstance(current_snapshot, dict):
+                raise ValueError('invalid applied snapshot')
+            current_as_of = utc_time(current_snapshot.get('asOf')) if current_snapshot else None
+            # Future timestamps may become valid after clock correction. This
+            # nonterminal receipt is not acknowledged by the mailbox and must retry.
+            if age < -60 or created_age < -60:
+                outcome = {'id': event['id'], 'status': 'deferred', 'reason': 'future-time'}
+                if same_event and previous.get('status') == 'deferred' and reg.get('chainAuthority') is True:
+                    print(json.dumps(outcome)); sys.exit(0)
+            elif age > 7200 or created_age > 7200:
+                if same_event and previous.get('status') == 'expired' and reg.get('chainAuthority') is True:
+                    print(json.dumps(previous)); sys.exit(0)
+                outcome = {'id': event['id'], 'status': 'expired'}
+            elif current_snapshot and current_snapshot.get('id') == event['id'] and current_as_of == as_of and current_snapshot.get('chains') == values:
+                outcome = {'id': event['id'], 'status': 'applied'}
+            elif current_as_of is not None and as_of <= current_as_of:
+                outcome = {'id': event['id'], 'status': 'conflict'}
+            else:
+                # All seven directions are replaced atomically. Neutral is explicit.
+                reg['chainSnapshot'] = {'id': event['id'], 'asOf': event['asOf'], 'chains': values}
+                outcome = {'id': event['id'], 'status': 'applied'}
+        # Once a chain event has been processed, losing the applied snapshot
+        # must never resurrect a legacy global direction for new grids.
+        reg['chainAuthority'] = True
+        reg['lastCloudEvent'] = outcome
     elif request['op'] in ('cloud', 'local'):
         event = request['event']
         if not isinstance(event, dict) or not isinstance(event.get('id'), str) or not event['id'] or event.get('from') not in valid or event.get('to') not in valid or event['from'] == event['to'] or not isinstance(event.get('version'), str) or not isinstance(event.get('at'), str):
