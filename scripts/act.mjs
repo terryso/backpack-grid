@@ -34,7 +34,7 @@ if (ageMin > 15) {
   process.exit(2); // report refused execution, do not mark the round successful
 }
 const actions = JSON.parse(await fs.readFile(actionsFile, "utf8"));
-const { createHash } = await import("node:crypto");
+const { createHash, randomUUID } = await import("node:crypto");
 const meta = JSON.parse(await fs.readFile(path.join(ROOT, "state/actions_meta.json"), "utf8"));
 assertIdentity(identity, meta.identity);
 if(meta.runId !== runContext.runId || typeof meta.planId !== "string") throw Error("plan/run binding failed");
@@ -59,12 +59,13 @@ async function jget(pathname) {
   if (r.status !== 200) throw new Error(`GET ${pathname} -> ${r.status}`);
   return JSON.parse(r.body);
 }
-async function jpatch(pathname, body, beforeSend, finalGuard) {
+async function jpatch(pathname, body, beforeSend, finalGuard, onDispatch) {
   await assertExecutionLease();
   await accountCheck();
   if (beforeSend) await beforeSend();
   await assertExecutionLease();
   if (finalGuard) finalGuard(); // synchronous: no other await before dispatch
+  if (onDispatch) onDispatch();
   const r = await page.fetch(API + pathname, {
     method: "PATCH", credentials: "include", timeout: 15000,
     headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -97,6 +98,8 @@ const writeAtomic = (p, data) => fs.writeFile(p + ".tmp", data).then(() => fs.re
 const { makeStopGrid, evaluateCreateGate, pendingStructOk } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./act_core.cjs");
 const { writeDemotion } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./infeasible.cjs");
 const { directionDecision } = createRequire(path.join(ROOT, "scripts/act.mjs"))("./grid_direction.cjs");
+const { createIntentState, samePreparedCreate } = requireLocal("./pending_create.cjs");
+const fsSync = requireLocal("node:fs");
 
 function requirePlannedDirection(action) {
   const current = directionDecision(ROOT, identity.accountKey, action.market, cfg);
@@ -104,6 +107,40 @@ function requirePlannedDirection(action) {
     const error = new Error(`direction changed after planning or is Neutral${current.reason ? ': ' + current.reason : ''}; create must be replanned`);
     error.code = 'DIRECTION_REPLAN';
     throw error;
+  }
+}
+
+// Persist the issued transition durably with no asynchronous gap before the
+// exchange dispatch. If it fails after rename, the outcome remains uncertain;
+// recovery never treats an uncertain create as authority to stop another grid.
+function issuePreparedCreateIntent(action, expected) {
+  const target = path.join(ROOT, "state/pending_stops.json");
+  let temporary = null, fd = null;
+  try {
+    requirePlannedDirection(action);
+    const pending = JSON.parse(fsSync.readFileSync(target, "utf8"));
+    if (!pendingStructOk(pending) || Object.keys(pending).length !== 1 ||
+        !samePreparedCreate(pending[action.market], expected, identity.accountKey)) throw Error("prepared intent changed");
+    pending[action.market] = { ...pending[action.market], phase:"issued", reason:"create intent (outcome unconfirmed)" };
+    temporary = target + "." + randomUUID() + ".tmp";
+    fd = fsSync.openSync(temporary, "wx", 0o600);
+    fsSync.writeFileSync(fd, JSON.stringify(pending, null, 2));
+    fsSync.fsyncSync(fd);
+    fsSync.closeSync(fd); fd = null;
+    requirePlannedDirection(action);
+    fsSync.renameSync(temporary, target); temporary = null;
+    const dir = fsSync.openSync(path.dirname(target), "r");
+    try { fsSync.fsyncSync(dir); } finally { fsSync.closeSync(dir); }
+    requirePlannedDirection(action);
+  } catch (error) {
+    if (error?.code === 'DIRECTION_REPLAN') throw error;
+    const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(error.code) ? error.code : 'unknown';
+    const wrapped = new Error(`create intent transition failed (${code})`);
+    wrapped.code = 'INTENT_TRANSITION_FAILED';
+    throw wrapped;
+  } finally {
+    if (fd !== null) try { fsSync.closeSync(fd); } catch {}
+    if (temporary) try { fsSync.unlinkSync(temporary); } catch {}
   }
 }
 
@@ -187,7 +224,7 @@ const stopGrid = makeStopGrid(io);
 // execution phases: all stops first (risk exits), then protects, then creates.
 // An incomplete stop blocks ALL creates in this run; per-action failures are recorded
 // and do not abort the remaining actions.
-const PHASE = { stop: 0, protect: 1, create: 2 };
+const PHASE = { stop: 0, protect: 1, 'clear-prepared-create': 2, 'hold-unknown-create': 2, create: 3 };
 actions.sort((x, y) => (PHASE[x.act] ?? 3) - (PHASE[y.act] ?? 3));
 let stopIncomplete = false;
 let protectIncomplete = false;
@@ -197,9 +234,40 @@ let riskChanged = false;
 for (const a of actions) {
   const result = await (async () => {
     try {
+      if (a.act === 'clear-prepared-create' || a.act === 'hold-unknown-create') {
+        const ledger = await loadPending(), entry = ledger.pending[a.market];
+        if (ledger.corrupt) throw Error('pending ledger unavailable');
+        if (!entry) {
+          results.push({ act:a.act, market:a.market, done:true, note:'intent already resolved' });
+          return { done:true };
+        }
+        if (a.act === 'clear-prepared-create') {
+          if (!samePreparedCreate(entry, a.intent, identity.accountKey)) {
+            results.push({ act:a.act, market:a.market, done:false, skipped:true, error:'intent changed; preserved for next round' });
+            return { done:false, skipped:true };
+          }
+          delete ledger.pending[a.market];
+          try { await savePending(ledger.pending); }
+          catch (error) {
+            const code = typeof error?.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(error.code) ? error.code : 'unknown';
+            throw Error(`unissued create cleanup failed (${code})`);
+          }
+          results.push({ act:a.act, market:a.market, done:true, reason:'unissued create cleared locally' });
+          return { done:true };
+        }
+        if (createIntentState(entry) !== 'unknown') {
+          results.push({ act:a.act, market:a.market, done:false, skipped:true, error:'intent changed; preserved for next round' });
+          return { done:false, skipped:true };
+        }
+        const reason = 'create outcome unknown; manual review required; no automatic stop';
+        results.push({ act:a.act, market:a.market, done:false, manualRequired:true, unconfirmed:true, reason, error:reason });
+        anyFailure = true;
+        return { done:false };
+      }
       await accountCheck(); // every action, including stops/protects, belongs to the pinned owner
       if (a.act === "stop") {
-        const options = Object.prototype.hasOwnProperty.call(a, 'trailPositionRef') ? { trailPositionRef: a.trailPositionRef } : {};
+        const options = { ...(Object.prototype.hasOwnProperty.call(a, 'trailPositionRef') ? { trailPositionRef:a.trailPositionRef } : {}),
+          ...(a.independentRisk === true ? { independentRisk:true } : {}) };
         const r = await stopGrid(a.market, a.range, a.reason, results, options);
         if (!r || r.done !== true) stopIncomplete = true;
         return { done: true };
@@ -259,7 +327,7 @@ for (const a of actions) {
         const latestRisk = positionsRisk(livePositions, cfg, identity);
         if (latestRisk.blocked) {
           riskChanged = true;
-          if (latestRisk.market) await stopGrid(latestRisk.market, null, latestRisk.reason, results);
+          if (latestRisk.market) await stopGrid(latestRisk.market, null, latestRisk.reason, results, { independentRisk:true });
           throw Error("new risk veto: " + latestRisk.reason);
         }
         const colAll = await jget("/wapi/v1/portfolio/collateral");
@@ -317,7 +385,8 @@ for (const a of actions) {
         }
         // WRITE-AHEAD create intent is persisted after account/lease checks, immediately before
         // the write. Unknown write outcomes still retain the write-ahead record.
-        let r, intentWritten = false;
+        let r, intentWritten = false, requestDispatched = false;
+        const expectedIntent = { intentId:randomUUID(), planId:meta.planId, runId:meta.runId };
         try {
           r = await jpatch(`/wapi/v1/subaccount/${SUB}/automation`, {
             params: { strategyType: "Grid", symbols: [{ operation: "Upsert", ...base, enabled: true, initialPrice: mark }] },
@@ -325,18 +394,21 @@ for (const a of actions) {
             requirePlannedDirection(a);
             const intent = await loadPending();
             if (intent.corrupt || Object.keys(intent.pending).length) throw Error("pending changed before create");
-            intent.pending[a.market] = { kind:"create",phase:"issued",accountKey: identity.accountKey, planId: meta.planId, runId: meta.runId, at: new Date().toISOString(), reason: "create intent (unconfirmed)" };
+            intent.pending[a.market] = { kind:"create",phase:"prepared",accountKey:identity.accountKey, ...expectedIntent,
+              at:new Date().toISOString(), reason:"create intent (not yet sent)" };
             await savePending(intent.pending);
             intentWritten = true;
-          }, () => requirePlannedDirection(a));
+          }, () => issuePreparedCreateIntent(a, expectedIntent), () => { requestDispatched = true; });
         } catch (error) {
-          if (error?.code === 'DIRECTION_REPLAN' && intentWritten) {
-            // The final guard rejected the request: no Upsert was dispatched.
+          if (!requestDispatched && intentWritten) {
+            // No Upsert was dispatched. A failed cleanup retains prepared state
+            // or an uncertain issued state, neither of which authorizes a stop.
             // Remove only this run's own unissued intent; never clear others.
             try {
               const ledger = await loadPending(), entry = ledger.pending[a.market];
-              if (ledger.corrupt || !entry || entry.kind !== 'create' || entry.phase !== 'issued' ||
-                  entry.accountKey !== identity.accountKey || entry.planId !== meta.planId || entry.runId !== meta.runId) {
+              if (ledger.corrupt || !entry || entry.kind !== 'create' || !['prepared','issued'].includes(entry.phase) ||
+                  entry.accountKey !== identity.accountKey || entry.intentId !== expectedIntent.intentId ||
+                  entry.planId !== expectedIntent.planId || entry.runId !== expectedIntent.runId) {
                 throw Error('create intent ownership changed');
               }
               delete ledger.pending[a.market];
@@ -344,14 +416,19 @@ for (const a of actions) {
             } catch (cleanupError) {
               unresolvedCleanup = true; stopIncomplete = true;
               const code = typeof cleanupError.code === 'string' && /^[A-Z0-9_]{1,32}$/.test(cleanupError.code) ? cleanupError.code : 'unknown';
-              throw Error(`direction replan refused before send; create intent cleanup failed (${code})`);
+              throw Error(`create was not sent; intent cleanup failed (${code})`);
             }
           }
           throw error;
         }
         if (r.status !== 200) throw new Error(`create ${a.market}: upsert failed ${r.status} ${r.body}`);
         const acknowledged=await loadPending();
-        acknowledged.pending[a.market].phase="acknowledged";await savePending(acknowledged.pending);
+        const sent=acknowledged.pending[a.market];
+        if (acknowledged.corrupt || !sent || sent.kind !== 'create' || sent.phase !== 'issued' ||
+            sent.intentId !== expectedIntent.intentId || sent.planId !== expectedIntent.planId || sent.runId !== expectedIntent.runId) {
+          throw Error('issued create intent ownership changed');
+        }
+        sent.phase="acknowledged";await savePending(acknowledged.pending);
         const ok = await waitFor(async () => {
           const auto2 = await getAutomation();
           const e = (auto2.params?.symbols || []).find((s) => s.symbol === symbol);

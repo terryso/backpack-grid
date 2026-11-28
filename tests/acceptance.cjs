@@ -127,6 +127,20 @@ async function main() {
   d = fixture(); put(d, 'state/risk.json', { peakEquity: null }); put(d, 'state/pending_stops.json', []); put(d, 'state/act_results.json', { at: new Date().toISOString(), results: [{ act: 'protect', market: 'X', done: false, error: 'bad' }, { act: 'stop', market: 'Y', done: true }] });
   spawnSync(process.execPath, [path.join(ROOT, 'scripts/dashboard_data.cjs')], { env: env(d), encoding: 'utf8' }); let snap = json(d, 'state/dashboard.json');
   check('dashboard refuses malformed state and aggregates prior failure', () => { assert.equal(snap.riskStateValid, false); assert.equal(snap.pendingCorrupt, true); assert.equal(snap.drawdownPct, null); assert.match(snap.lastAction, /失败/); assert.equal(snap.strategyTotalPnl, null); });
+  {
+    const dir3=fixture(),acct='fixture-'+(cfg.subaccountId??3);
+    put(dir3,'state/pending_stops.json',{
+      'UNI-PERP':{kind:'create',phase:'issued',accountKey:acct},
+      'ETH-PERP':{kind:'create',phase:'prepared',accountKey:acct,planId:'plan',runId:'run',intentId:'123e4567-e89b-42d3-a456-426614174000'},
+      'BTC-PERP':{kind:'create',phase:'acknowledged',accountKey:acct},
+    });
+    const dashboard=spawnSync(process.execPath,[path.join(ROOT,'scripts/dashboard_data.cjs')],{env:env(dir3),encoding:'utf8'});
+    check('dashboard identifies unknown create outcomes without exposing intent metadata',()=>{
+      assert.equal(dashboard.status,0,dashboard.stderr);
+      const result=json(dir3,'state/dashboard.json');assert.deepEqual(result.pendingCreateUnknown,['UNI-PERP']);
+      assert(!JSON.stringify(result).includes('123e4567-e89b-42d3-a456-426614174000'));
+    });
+  }
   // ⚡ 显示守卫：指令已被云端切换（override=Neutral）而 stale 副本 switchLog 末条 to=Short
   // → lastSwitch 必须置 null（不得显示"指令 Neutral · ⚡已自动切至 Short"自相矛盾）
   {
@@ -257,6 +271,16 @@ async function main() {
     reportedSnapshotId:'new',snapshotHealth:{active:true,blocked:true,reason:'expired-snapshot'}}};
   vm.runInNewContext('render(snapshot)',uiContext);
   check('production UI warns when applied directions expire despite newer advice',()=>assert.match(elements.get('dirBanner').innerHTML,/新格已暂停：已应用快照超过两小时/));
+  uiContext.snapshot={...display,pending:['UNI-PERP'],pendingCreateUnknown:['UNI-PERP']};
+  vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI prominently requests review for an unknown create outcome',()=>{
+    assert.match(elements.get('content').innerHTML,/建格结果未知 1 · 需人工核对/);
+    assert(!elements.get('content').innerHTML.includes('风控正常'));
+    assert.equal(elements.get('unknownCreateBanner').hidden,false);
+    assert.match(elements.get('unknownCreateBanner').innerHTML,/结果未知 · 需人工核对/);
+  });
+  uiContext.snapshot=display;vm.runInNewContext('render(snapshot)',uiContext);
+  check('production UI hides the unknown-create warning after resolution',()=>assert.equal(elements.get('unknownCreateBanner').hidden,true));
   // Production Durable Object with a serializing mock storage gate.
   const src = fs.readFileSync(path.join(ROOT, 'cloudflare/likes.js'), 'utf8').replace('export class', 'class');
   const LikeCounter = new Function('Response', src + '\nreturn LikeCounter;')(Response);

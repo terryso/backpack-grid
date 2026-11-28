@@ -58,6 +58,7 @@
   .chip.bad { border-color: #7f1d1d; color: #f87171; background: #2a1215; }
   .chip.ok { border-color: #14532d; color: #4ade80; background: #0f1f16; }
   .dirbanner { border: 1px solid #1f2737; border-radius: 10px; padding: 10px 14px; margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; background: #101623; }
+  .dirbanner[hidden] { display: none; }
   .dirbanner .db-title { font-size: 10px; color: #8b94a7; letter-spacing: 2px; white-space: nowrap; }
   .dirbanner .db-main { font-size: 15px; font-weight: 600; color: #c9d2e3; }
   .dirbanner .db-sub { font-size: 11px; color: #8b94a7; }
@@ -88,6 +89,7 @@
   <h1>Backpack 网格自动驾驶 <span class="livebadge" id="liveBadge"><span class="dot"></span>实盘</span></h1>
   <div class="sub">巡检每 5 分钟 · <span id="runStats">-</span> · 数据快照 <span id="ago">-</span></div>
   <div id="dirBanner" class="dirbanner ok"><span class="db-title">方向哨兵</span><span class="db-main">加载中…</span></div>
+  <div id="unknownCreateBanner" class="dirbanner bad" role="status" hidden></div>
   <div class="toolbar">
     <button id="likeBtn">👍 点赞 <span id="likeCount">-</span></button>
     <a href="/ops.html" title="建格/停格决策、全部成交与巡检轮次记录">📜 操作历史</a>
@@ -164,8 +166,14 @@ function render(s) {
     : Array.isArray(v) ? v.map(escape) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, escape(x)])) : v;
   s = escape(s);
   const c = document.getElementById("content");
+  const createWarning = document.getElementById("unknownCreateBanner");
   c.classList.remove("err"); // the loading/错误样式带 40px padding，渲染后必须移除
-  if (!s || !s.updatedAt) { c.textContent = "暂无数据"; return; }
+  if (!s || !s.updatedAt) { if (createWarning) createWarning.hidden = true; c.textContent = "暂无数据"; return; }
+  if (createWarning) {
+    const unknown = Array.isArray(s.pendingCreateUnknown) ? s.pendingCreateUnknown : [];
+    createWarning.hidden = unknown.length === 0;
+    createWarning.innerHTML = unknown.length ? `<span class="db-title">建格确认</span><span class="db-main">结果未知 · 需人工核对</span><span class="db-sub">${unknown.join("、")} · 新格已暂停，不会仅凭意图自动停格</span>` : "";
+  }
   const ageMin = Math.max(0, (Date.now() - new Date(s.updatedAt).getTime()) / 60000);
   document.getElementById("ago").textContent = `${new Date(s.updatedAt).toLocaleString("zh-CN", { hour12: false })}（${ageMin < 1 ? "刚刚" : Math.round(ageMin) + " 分钟前"}）`;
   const lb = document.getElementById("liveBadge");
@@ -215,7 +223,7 @@ function render(s) {
     chips.push(`<span class="chip bad">${label}</span>`);
   }
   const badChips = [s.lastRoundStatus && s.lastRoundStatus !== "ok" && s.lastRoundStatus !== "dryrun",
-    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false, trailUnknown].filter(Boolean).length;
+    s.dataValid !== true, s.riskStateValid !== true, s.pendingCorrupt, s.riskWriteValid !== true, s.identityValid===false, s.manualPauseValid===false, ageMin > 20, !s.lastRoundStatus, s.quotaExceeded, s.marketDataAvailable===false, trailUnknown, (s.pendingCreateUnknown || []).length].filter(Boolean).length;
   const drawdownKnown = typeof s.drawdownPct === "number" && Number.isFinite(s.drawdownPct) && s.drawdownPct >= 0;
   const warningKnown = typeof s.warnDrawdownPct === "number" && Number.isFinite(s.warnDrawdownPct) && s.warnDrawdownPct >= 0 && s.warnDrawdownPct <= 100;
   chips.push(s.riskPaused === true ? `<span class="chip bad">风控熔断已锁</span>`
@@ -223,6 +231,7 @@ function render(s) {
     : (s.drawdownPct >= s.warnDrawdownPct ? `<span class="chip bad">回撤预警 ${fmt(s.drawdownPct, 1)}%（阈值 ${fmt(s.warnDrawdownPct, 1)}%）</span>`
     : (badChips ? `<span class="chip bad">存在异常（见上）</span>` : `<span class="chip ok">风控正常</span>`))));
   chips.push(s.pendingCorrupt ? `<span class="chip bad">待清理状态未知</span>` : (s.pending || []).length ? `<span class="chip bad">待清理 ${s.pending.length}</span>` : `<span class="chip ok">无待清理</span>`);
+  if (s.pendingCreateUnknown?.length) chips.push(`<span class="chip bad">建格结果未知 ${s.pendingCreateUnknown.length} · 需人工核对</span>`);
   chips.push((s.orphans || []).length ? `<span class="chip bad">孤儿持仓 ${s.orphans.length}</span>` : "");
   chips.push(s.lastAction ? `<span class="chip">最近动作 ${s.lastAction}</span>` : `<span class="chip">近期无动作</span>`);
   if (s.autoExits) chips.push(s.autoExits.enabled

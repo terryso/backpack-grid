@@ -5,6 +5,7 @@ const { money: num, riskStructOk, pendingStructOk } = require('./state_schema.cj
 const { attribution } = require('./accounting.cjs');
 const { historyMetrics, confirmedRuns, stopBudgetUsage } = require('./dashboard_metrics.cjs');
 const { trailStatus } = require('./trail_status.cjs');
+const { createIntentState } = require('./pending_create.cjs');
 const {identityOk,manualPausesFor,validateConfig,expectedIdentity}=require('./contracts.cjs');
 const {validateWindow,reconcile}=require('./verified_window.cjs');
 const ROOT = process.env.BG_ROOT || path.join(__dirname, '..');
@@ -78,6 +79,8 @@ const dataValid = identityValid && !!obs && !obs.error && age !== null && Number
 const riskStateValid = riskStructOk(risk)&&(!risk.accountKey||risk.accountKey===identity?.accountKey);
 const pendingValid = (pendingStructOk(pending)&&Object.values(pending).every(p=>p.accountKey===identity?.accountKey)) || (!fs.existsSync(file('state/pending_stops.json')));
 const pendingCorrupt = !pendingValid || fs.existsSync(file('state/pending_corrupt.json'));
+const pendingCreateUnknown = pendingCorrupt ? null : Object.entries(pending || {})
+  .filter(([, entry]) => createIntentState(entry) === 'unknown').map(([market]) => market);
 let manualPauses=[],manualPauseValid=true;
 try{manualPauses=Object.keys(manualPausesFor(ROOT,identity));}catch{manualPauseValid=false;}
 // A missing peak file is a fresh state; unreadable files and broken symlinks are
@@ -177,7 +180,7 @@ const snapshot = {
     dwellMin: cfg.breachDwellMin === undefined ? 10 : num(cfg.breachDwellMin),
     bufferPct: cfg.breachBufferPct === undefined ? 0.5 : num(cfg.breachBufferPct) },
   direction,
-  pending: pendingValid ? Object.keys(pending || {}) : null,
+  pending: pendingValid ? Object.keys(pending || {}) : null, pendingCreateUnknown,
   orphans: positions.filter((p) => !grids.some((g) => g.market === p.market)).map((p) => p.market),
   lastAction, lastActionNote, curve,
 };

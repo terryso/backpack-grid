@@ -5,6 +5,7 @@
 
 const { pendingStructOk, finiteNumber, plainObject, positionListOk } = require("./state_schema.cjs");
 const { isPositionRef } = require("./position_ref.cjs");
+const { createIntentState } = require("./pending_create.cjs");
 
 // io: {
 //   jget(pathname), jpatch(pathname, body),      — session-authenticated exchange access
@@ -19,6 +20,19 @@ function makeStopGrid(io) {
     const loaded = await io.loadPending();
     const pending = loaded.pending;
     const existing = pending[market];
+    const createState = createIntentState(existing);
+    if (createState && options.independentRisk !== true) {
+      if (createState === 'prepared') {
+        delete pending[market];
+        await io.savePending(pending);
+        results.push({ act:'clear-prepared-create', market, done:true, note:'unissued create intent cleared without exchange write' });
+        return { done:true };
+      }
+      results.push({ act:'hold-unknown-create', market, done:false, unconfirmed:true, manualRequired:true,
+        error:'create outcome unknown; no automatic stop without an independent risk exit' });
+      return { done:false };
+    }
+    const unknownCreate = createState === 'unknown';
     const isTrail = Object.prototype.hasOwnProperty.call(options, 'trailPositionRef') || /AUTO_TRAIL/.test(String(reason || ''));
     let trailRef = null;
     if (isTrail) {
@@ -37,7 +51,14 @@ function makeStopGrid(io) {
       return 'unknown';
     };
     const skipPrepared = async message => {
-      if (pending[market]) { delete pending[market]; await io.savePending(pending); }
+      if (pending[market]) {
+        if (unknownCreate) {
+          const { trailPositionRef, trailPhase, ...create } = pending[market];
+          pending[market] = { ...create, riskStop:{ at:new Date().toISOString(), reason:message, status:'cancelled' } };
+        }
+        else delete pending[market];
+        await io.savePending(pending);
+      }
       results.push({ act: 'stop', market, done: false, skipped: true, error: message });
       return { done: false, skipped: true };
     };
@@ -46,26 +67,40 @@ function makeStopGrid(io) {
       if (current === 'unknown') throw new Error('trail position identity unavailable');
       if ((current === 'flat' || current === 'changed') && existing?.trailPhase === 'prepared')
         return await skipPrepared('trailing position changed before any exchange request');
-      if (current === 'flat' && !existing) return await skipPrepared('trailing position already flat');
+      if (current === 'flat' && (!existing || (createState && existing.trailPhase !== 'issued'))) return await skipPrepared('trailing position already flat');
       if (current === 'changed') throw new Error('trail position identity changed');
     }
     // WRITE-AHEAD: persist the stop intent BEFORE any exchange write, so a lost response
     // can never leave the grid stopped on-exchange with an empty pending ledger
-    if (!pending[market]) {
+    if (createState === 'prepared') {
+      // An independent risk exit may replace a definitely-unsent create, but
+      // only after its own stop intent has been persisted.
+      pending[market] = { at:new Date().toISOString(), reason,
+        ...(isTrail ? { trailPositionRef:trailRef, trailPhase:'prepared' } : {}) };
+      await io.savePending(pending);
+    } else if (unknownCreate) {
+      // Do not discard an unknown create outcome when independently managing risk.
+      pending[market] = { ...existing, riskStop:{ at:new Date().toISOString(), reason, status:'pending' },
+        ...(isTrail ? { trailPositionRef:trailRef,
+          trailPhase:existing?.trailPositionRef === trailRef && existing?.trailPhase === 'issued' ? 'issued' : 'prepared' } : {}) };
+      await io.savePending(pending);
+    } else if (!pending[market]) {
       pending[market] = { at: new Date().toISOString(), reason,
         ...(isTrail ? { trailPositionRef: trailRef, trailPhase: 'prepared' } : {}) };
       await io.savePending(pending);
     }
     const updatePending = nextReason => {
       const prior = pending[market] || {};
-      pending[market] = { at: new Date().toISOString(), reason: nextReason,
-        ...(isPositionRef(prior.trailPositionRef) ? { trailPositionRef: prior.trailPositionRef, trailPhase: prior.trailPhase || 'issued' } : {}) };
+      pending[market] = unknownCreate
+        ? { ...prior, riskStop:{ at:new Date().toISOString(), reason:nextReason, status:'pending' } }
+        : { at: new Date().toISOString(), reason: nextReason,
+          ...(isPositionRef(prior.trailPositionRef) ? { trailPositionRef: prior.trailPositionRef, trailPhase: prior.trailPhase || 'issued' } : {}) };
     };
     const auto1 = await io.getAutomation();
     if (!Array.isArray(auto1.params?.symbols)) throw new Error("automation response malformed; intent retained");
     const entry = auto1.params.symbols.find((s) => s.symbol === symbol);
     if (!entry) {
-      if(pending[market]?.kind==="create" && pending[market]?.phase==="issued") {
+      if (unknownCreate) {
         results.push({act:"stop",market,done:false,unconfirmed:true,manualRequired:true});
         console.log(`STOP ${market}: creation response unknown and config absent; intent remains latched until an applied grid or authoritative rejection is confirmed`);
         return {done:false};
@@ -180,9 +215,14 @@ function makeStopGrid(io) {
       results.push({ act: "stop", market, done: false, unconfirmed: true });
       return { done: false }; // config disappeared, but final flatness must still be known
     }
-    delete pending[market];
+    if (unknownCreate) {
+      const { trailPositionRef, trailPhase, ...create } = pending[market];
+      pending[market] = { ...create, riskStop:{ at:new Date().toISOString(), reason, status:'completed',
+        ...(isTrail ? { trailPositionRef:trailRef } : {}) } };
+    } else delete pending[market];
     await io.savePending(pending);
-    results.push({ act: "stop", market, reason, done: true });
+    results.push({ act: "stop", market, reason, done: true,
+      ...(unknownCreate ? { note:'risk exit completed; create outcome remains unknown' } : {}) });
     console.log(`STOPPED ${market} — ${reason}`);
     return { done: true };
   };

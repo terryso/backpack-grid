@@ -76,7 +76,9 @@ T("T1d solana cap blocks BONK", (ecoCount1[ecoOf("BONK_USDC_PERP")] || 0) >= (cf
   T("T9a SL grid gets stop, protect dropped", actions.length === 1 && actions[0].act === "stop");
 }
 T("T9b no suppress-guard on stop (old bug gone)", !decideSrc.includes('(a.act === "stop" || a.act === "protect")'));
-T("T9c act phases: stop before protect before create", actSrc.indexOf("const PHASE = { stop: 0, protect: 1, create: 2 };") !== -1);
+const phaseMatch = actSrc.match(/const PHASE = (\{[^}]+\});/);
+const phases = phaseMatch ? Function('return (' + phaseMatch[1] + ')')() : {};
+T("T9c act phases: stop before protect before create", phases.stop < phases.protect && phases.protect < phases.create);
 T("T9d act wires production core", actSrc.includes("const stopGrid = makeStopGrid(io);") && actSrc.includes("evaluateCreateGate("));
 
 // ---------- T10: pending ledger integrity ----------

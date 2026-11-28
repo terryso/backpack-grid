@@ -150,7 +150,7 @@ test('manual CLI explains when an applied snapshot is too old for new grids', ()
 const actSrc = fs.readFileSync(path.join(ROOT, 'scripts/act.mjs'), 'utf8');
 test('act rechecks the directive at execution time', () => {
   assert(actSrc.includes('directionDecision(ROOT, identity.accountKey, action.market, cfg)'));
-  assert(actSrc.includes('}, () => requirePlannedDirection(a)'));
+  assert(actSrc.includes('issuePreparedCreateIntent(a, expectedIntent)'));
   assert(actSrc.includes('direction: a.direction'));
   assert(!actSrc.includes('direction: "Neutral"'));
 });

@@ -87,4 +87,25 @@ async function check(name, fn) { await fn(); console.log('PASS ' + name); }
     const result = await f.stop(market, null, 'circuit breaker: account drawdown beyond budget', []);
     assert.equal(result.done, true); assert.deepEqual(f.read().patches, ['Upsert', 'Delete']); assert.equal(f.read().guardCalls, 0);
   });
+  await check('an issued trailing risk stop completes while retaining an unknown create outcome', async () => {
+    const pending = { kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'issued',riskStop:{status:'pending',reason,at:new Date().toISOString()} };
+    const f = fixture({ refs:[flat,flat,flat], initialPending:{[market]:pending} });
+    const result = await f.stop(market,null,'pending risk stop retry ('+reason+')',[],{trailPositionRef:A,independentRisk:true});
+    assert.equal(result.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.equal(f.read().pending[market].phase,'issued');assert.equal(f.read().pending[market].riskStop.status,'completed');
+    assert.equal(f.read().pending[market].trailPositionRef,undefined);
+  });
+  await check('a cancelled prepared trail keeps unknown create but releases its old position binding', async () => {
+    const pending = { kind:'create',phase:'issued',accountKey:'fixture-3',reason:'create outcome unknown',
+      trailPositionRef:A,trailPhase:'prepared',riskStop:{status:'pending',reason,at:new Date().toISOString()} };
+    const f = fixture({ refs:[known(B),known(B),known(B),flat], initialPending:{[market]:pending} });
+    const first=await f.stop(market,null,'pending risk stop retry ('+reason+')',[],{trailPositionRef:A,independentRisk:true});
+    assert.equal(first.skipped,true);assert.deepEqual(f.read().patches,[]);
+    assert.equal(f.read().pending[market].riskStop.status,'cancelled');assert.equal(f.read().pending[market].trailPositionRef,undefined);
+    const second=await f.stop(market,null,reason,[],{trailPositionRef:B,independentRisk:true});
+    assert.equal(second.done,true);assert.deepEqual(f.read().patches,['Upsert','Delete']);
+    assert.equal(f.read().pending[market].phase,'issued');assert.equal(f.read().pending[market].riskStop.status,'completed');
+    assert.equal(f.read().pending[market].trailPositionRef,undefined);
+  });
 })().catch(error => { console.error(error); process.exitCode = 1; });

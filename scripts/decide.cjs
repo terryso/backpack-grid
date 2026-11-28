@@ -14,6 +14,7 @@ const { expectedIdentity, assertIdentity, validateConfig, analysisConfigHash, ha
 const { sizeGrid } = require("./grid_sizing.cjs");
 const { loadInfeasible } = require("./infeasible.cjs");
 const { directionDecision, directionHealth } = require("./grid_direction.cjs");
+const { createIntentState } = require("./pending_create.cjs");
 const ROOT = process.env.BG_ROOT || path.join(__dirname, "..");
 const read = (p) => JSON.parse(fs.readFileSync(path.join(ROOT, p), "utf8"));
 const cfg = read("config.json");
@@ -103,6 +104,11 @@ let cloudDirectionBlock = null;
     if (fs.existsSync(pendPath)) { pendCorrupt = true; pending = {}; }
   }
   if (pendCorrupt) lines.push("PENDING LEDGER INVALID: parse or structure failed — treated as corrupt; new-risk blocked (act archives it on its next stop)");
+  // An unissued or uncertain create is not itself a stop instruction. Keep it
+  // in the ledger to block creation, while independently evaluating risk exits.
+  const unresolvedCreates = Object.fromEntries(Object.entries(pending)
+    .map(([market, entry]) => [market, createIntentState(entry)]).filter(([, state]) => state));
+  const pendingForRisk = Object.fromEntries(Object.entries(pending).filter(([market]) => !unresolvedCreates[market]));
 
   // ---------- risk budget: peak equity, warning line, hard breaker (BEFORE tickers) ----------
   const riskPath = path.join(ROOT, "state", "risk.json");
@@ -208,6 +214,26 @@ let cloudDirectionBlock = null;
 
   // ---------- pending stop retries: highest priority actions, no tickers needed ----------
   for (const [mkt, p] of Object.entries(pending)) {
+    if (unresolvedCreates[mkt] === 'prepared') {
+      actions.push({ act:'clear-prepared-create', market:mkt, intent:{ intentId:p.intentId, planId:p.planId, runId:p.runId } });
+      lines.push(`PENDING CREATE ${mkt}: definitely unsent — clear locally without exchange writes`);
+      continue;
+    }
+    if (unresolvedCreates[mkt] === 'unknown') {
+      actions.push({ act:'hold-unknown-create', market:mkt });
+      lines.push(`PENDING CREATE ${mkt}: outcome unknown — manual review required; no automatic stop`);
+      if (p.riskStop && p.riskStop.status === 'pending' && typeof p.riskStop.reason === 'string' &&
+          p.riskStop.reason && Number.isFinite(Date.parse(p.riskStop.at)) &&
+          !actions.some(a => a.act === 'stop' && a.market === mkt)) {
+        const grid = grids.find(g => g.market === mkt);
+        const trailFields = Object.prototype.hasOwnProperty.call(p, 'trailPositionRef')
+          ? { trailPositionRef:p.trailPositionRef } : /AUTO_TRAIL/.test(p.riskStop.reason) ? { trailPositionRef:null } : {};
+        actions.push({ act:'stop', market:mkt, ...(grid ? {range:grid.range} : {}), ...trailFields,
+          reason:`pending risk stop retry (${p.riskStop.reason})`, independentRisk:true });
+        lines.push(`PENDING RISK STOP ${mkt}: retrying an independently planned exit`);
+      }
+      continue;
+    }
     const g = grids.find((x) => x.market === mkt);
     // Older pending trail stops predate position references. Mark them as
     // trailing even when the grid is absent from the observation: the grid may
@@ -260,7 +286,7 @@ let cloudDirectionBlock = null;
   // ---------- backstop reconciliation: enabled/disabled grids must carry native protection ----------
   const wantTP = Number(cfg.takeProfitPct), wantSL = Number(cfg.stopLossPct);
   for (const g of grids) {
-    if (pending[g.market] || heldByUser(g.market) || manualCorrupt) continue; // do not override explicit user intention
+    if ((pending[g.market] && unresolvedCreates[g.market] !== 'prepared') || heldByUser(g.market) || manualCorrupt) continue; // do not override explicit user intention
     const bad = g.nativeTP === null || g.nativeSL === null
       || Number(g.nativeTP) !== wantTP || Number(g.nativeSL) !== wantSL
       || g.nativeCloseOnStop !== true;
@@ -273,7 +299,7 @@ let cloudDirectionBlock = null;
 
   // ---------- per-grid rules ----------
   for (const g of grids) { // 阶段标签只控制是否规划新增仓位，风控复评两阶段都做
-    if (pending[g.market]) continue; // handled by pending-stop retry above
+    if (pendingForRisk[g.market]) continue; // handled by pending-stop retry above
     if(heldByUser(g.market)||manualCorrupt){lines.push(`MANUAL HOLD ${g.market}: automatic rotation disabled; account breaker/pending cleanup still active`);continue;}
     const [lo, hi] = g.range.map(Number);
     const price = priceOf(g.market);
@@ -324,7 +350,7 @@ let cloudDirectionBlock = null;
   // already-planned stop. Does nothing when the gate is off.
   if (cfg.autoExitsEnabled) {
     const { planAutoExits } = require("./auto_exits.cjs");
-    planAutoExits({ ROOT, identity, cfg, obs, grids, pending, heldByUser, manualCorrupt, actions, lines });
+    planAutoExits({ ROOT, identity, cfg, obs, grids, pending:pendingForRisk, heldByUser, manualCorrupt, actions, lines });
   }
 
   // ---------- dead grid rotation: ledger flat for deadGridHours -> rotate out ----------
@@ -363,7 +389,7 @@ let cloudDirectionBlock = null;
   try { writeAtomic(activityPath, JSON.stringify(activity, null, 2)); }
   catch (e) { activitySaved = false; lines.push(`GRID ACTIVITY WRITE FAILED: ${String(e.message).slice(0, 140)} — dead-grid rotation skipped; risk exits preserved`); }
   for (const g of activitySaved ? grids : []) {
-    if (manualCorrupt || g.status === "Disabled" || pending[g.market] || heldByUser(g.market)) continue;
+    if (manualCorrupt || g.status === "Disabled" || (pending[g.market] && unresolvedCreates[g.market] !== 'prepared') || heldByUser(g.market)) continue;
     if (!freshActivity.has(g.symbol)) continue; // no current ledger observation means activity is unknown
     if (actions.some((a) => a.market === g.market && a.act === "stop")) continue;
     const e = activity[g.symbol];
@@ -381,6 +407,8 @@ let cloudDirectionBlock = null;
   for (let i = actions.length - 1; i >= 0; i--) {
     if (actions[i].act === "protect" && actions.some((a) => a.act === "stop" && a.market === actions[i].market)) actions.splice(i, 1);
   }
+  // These stops came from independent risk rules, never from the create intent.
+  for (const a of actions) if (a.act === 'stop' && unresolvedCreates[a.market]) a.independentRisk = true;
 
   // ---------- plan replacements for freed slots ----------
   const stops = actions.filter((a) => a.act === "stop").map((a) => a.market);
